@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.CreditInstitutionMaster { public class DeleteCreditInstitutionMasterRequest { public int CreditInstitutionMasterID { get; set; } } public class DeleteCreditInstitutionMasterRequestValidator : AbstractValidator<DeleteCreditInstitutionMasterRequest> { public DeleteCreditInstitutionMasterRequestValidator() { RuleFor(x => x.CreditInstitutionMasterID).GreaterThan(0); } } }

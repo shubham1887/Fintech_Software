@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.TransactionProviderHistory { public class CreateTransactionProviderHistoryRequest { public int ProviderID { get; set; } public int OperatorID { get; set; } public int TransactionMasterID { get; set; } public string ProviderRequestID { get; set; } = string.Empty; } public class CreateTransactionProviderHistoryRequestValidator : AbstractValidator<CreateTransactionProviderHistoryRequest> { public CreateTransactionProviderHistoryRequestValidator() {  } } }

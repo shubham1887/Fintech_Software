@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ConsumerTypeMaster { public class UpdateConsumerTypeMasterRequest { public int ConsumerTypeMasterID { get; set; } public string ConsumerType { get; set; } = string.Empty; } public class UpdateConsumerTypeMasterRequestValidator : AbstractValidator<UpdateConsumerTypeMasterRequest> { public UpdateConsumerTypeMasterRequestValidator() { RuleFor(x => x.ConsumerTypeMasterID).GreaterThan(0); } } }

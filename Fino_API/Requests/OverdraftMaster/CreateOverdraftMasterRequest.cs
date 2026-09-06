@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.OverdraftMaster { public class CreateOverdraftMasterRequest { public int UserID { get; set; } public decimal Overdraft { get; set; } public decimal MaxOverdraft { get; set; } public int WalletID { get; set; } public bool IsActive { get; set; } } public class CreateOverdraftMasterRequestValidator : AbstractValidator<CreateOverdraftMasterRequest> { public CreateOverdraftMasterRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

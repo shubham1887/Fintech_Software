@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\Shubham\\\\OneDrive\\\\Desktop\\\\new Fintech application\\\\API\\\\FinovativeAPI\\\\Controllers\\\\\" | Sort-Object Name | ForEach-Object { $_.Name -replace 'Controller\\\\.cs$','' })"
+    ]
+  }
+}

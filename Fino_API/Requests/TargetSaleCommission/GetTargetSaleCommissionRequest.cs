@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.TargetSaleCommission { public class GetTargetSaleCommissionRequest { public int TargetSaleCommissionID { get; set; } public int UserID { get; set; } } public class GetTargetSaleCommissionRequestValidator : AbstractValidator<GetTargetSaleCommissionRequest> { public GetTargetSaleCommissionRequestValidator() { RuleFor(x => x.TargetSaleCommissionID).GreaterThan(0); } } }

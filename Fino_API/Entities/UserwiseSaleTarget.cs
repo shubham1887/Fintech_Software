@@ -1,0 +1,16 @@
+﻿namespace FintechApp.Entities
+{
+    public class UserwiseSaleTarget : BaseEntity
+    {
+        public int UserwiseSaleTargetID { get; set; }
+        public int UserID { get; set; }
+        public int WalletID { get; set; }
+        public int ParentID { get; set; }
+        public decimal TargetAmount { get; set; }
+        public decimal Commission { get; set; }
+        public string CommissionType { get; set; } = string.Empty;
+        public bool IsDelete { get; set; }
+        public UserMaster UserMaster { get; set; } = null!;
+        public WalletMaster WalletMaster { get; set; } = null!;
+    }
+}

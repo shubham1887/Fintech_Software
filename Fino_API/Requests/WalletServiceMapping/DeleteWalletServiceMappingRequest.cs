@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.WalletServiceMapping { public class DeleteWalletServiceMappingRequest { public int WalletServiceMappingID { get; set; } } public class DeleteWalletServiceMappingRequestValidator : AbstractValidator<DeleteWalletServiceMappingRequest> { public DeleteWalletServiceMappingRequestValidator() { RuleFor(x => x.WalletServiceMappingID).GreaterThan(0); } } }

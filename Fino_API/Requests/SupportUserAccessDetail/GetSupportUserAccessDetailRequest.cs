@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.SupportUserAccessDetail { public class GetSupportUserAccessDetailRequest { public int SupportUserAccessDetailID { get; set; } public int UserID { get; set; } } public class GetSupportUserAccessDetailRequestValidator : AbstractValidator<GetSupportUserAccessDetailRequest> { public GetSupportUserAccessDetailRequestValidator() { RuleFor(x => x.SupportUserAccessDetailID).GreaterThan(0); } } }

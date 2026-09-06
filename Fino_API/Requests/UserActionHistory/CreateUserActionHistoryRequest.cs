@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserActionHistory { public class CreateUserActionHistoryRequest { public int UserID { get; set; } public string Action { get; set; } = string.Empty; public string Description { get; set; } = string.Empty; public string Status { get; set; } = string.Empty; public string IPAddress { get; set; } = string.Empty; } public class CreateUserActionHistoryRequestValidator : AbstractValidator<CreateUserActionHistoryRequest> { public CreateUserActionHistoryRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

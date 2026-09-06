@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.LastChangeUserDetails { public class DeleteLastChangeUserDetailsRequest { public int LastChangeUserDetailsID { get; set; } } public class DeleteLastChangeUserDetailsRequestValidator : AbstractValidator<DeleteLastChangeUserDetailsRequest> { public DeleteLastChangeUserDetailsRequestValidator() { RuleFor(x => x.LastChangeUserDetailsID).GreaterThan(0); } } }

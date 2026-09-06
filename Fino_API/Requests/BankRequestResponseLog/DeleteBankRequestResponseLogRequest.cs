@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.BankRequestResponseLog { public class DeleteBankRequestResponseLogRequest { public int BankRequestResponseLogID { get; set; } } public class DeleteBankRequestResponseLogRequestValidator : AbstractValidator<DeleteBankRequestResponseLogRequest> { public DeleteBankRequestResponseLogRequestValidator() { RuleFor(x => x.BankRequestResponseLogID).GreaterThan(0); } } }

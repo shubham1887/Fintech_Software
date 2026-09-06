@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.SDKBBPSUserMapping { public class GetSDKBBPSUserMappingRequest { public int SDKBBPSUserMappingID { get; set; } public int UserID { get; set; } } public class GetSDKBBPSUserMappingRequestValidator : AbstractValidator<GetSDKBBPSUserMappingRequest> { public GetSDKBBPSUserMappingRequestValidator() { RuleFor(x => x.SDKBBPSUserMappingID).GreaterThan(0); } } }

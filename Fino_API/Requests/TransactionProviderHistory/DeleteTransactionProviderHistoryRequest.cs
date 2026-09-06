@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.TransactionProviderHistory { public class DeleteTransactionProviderHistoryRequest { public int RechargeProviderHistoryID { get; set; } } public class DeleteTransactionProviderHistoryRequestValidator : AbstractValidator<DeleteTransactionProviderHistoryRequest> { public DeleteTransactionProviderHistoryRequestValidator() { RuleFor(x => x.RechargeProviderHistoryID).GreaterThan(0); } } }

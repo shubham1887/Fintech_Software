@@ -1,0 +1,30 @@
+namespace FintechApp.Responses.InvoiceSetting
+{
+    public class InvoiceSettingResponse
+    {
+        public int InvoiceSettingID { get; set; }
+        public string CompanyName { get; set; } = string.Empty;
+        public string LogoURL { get; set; } = string.Empty;
+        public string CompanyPrefix { get; set; } = string.Empty;
+        public string Address { get; set; } = string.Empty;
+        public string ShortAddress { get; set; } = string.Empty;
+        public string PinCode { get; set; } = string.Empty;
+        public string District { get; set; } = string.Empty;
+        public string Country { get; set; } = string.Empty;
+        public string GSTIN { get; set; } = string.Empty;
+        public string PAN { get; set; } = string.Empty;
+        public string CIN { get; set; } = string.Empty;
+        public string State { get; set; } = string.Empty;
+        public string AccountNo { get; set; } = string.Empty;
+        public string AccountType { get; set; } = string.Empty;
+        public string IFSC { get; set; } = string.Empty;
+        public string AccountHolderName { get; set; } = string.Empty;
+        public string BankName { get; set; } = string.Empty;
+        public string BranchName { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string WebsiteName { get; set; } = string.Empty;
+        public string Note { get; set; } = string.Empty;
+        public string FullAddress { get; set; } = string.Empty;
+        public string SignatureURL { get; set; } = string.Empty;
+    }
+}

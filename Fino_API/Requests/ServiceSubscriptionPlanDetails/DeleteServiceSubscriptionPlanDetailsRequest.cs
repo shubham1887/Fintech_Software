@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ServiceSubscriptionPlanDetails { public class DeleteServiceSubscriptionPlanDetailsRequest { public int ServiceSubscriptionPlanDetailsID { get; set; } } public class DeleteServiceSubscriptionPlanDetailsRequestValidator : AbstractValidator<DeleteServiceSubscriptionPlanDetailsRequest> { public DeleteServiceSubscriptionPlanDetailsRequestValidator() { RuleFor(x => x.ServiceSubscriptionPlanDetailsID).GreaterThan(0); } } }

@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.DailyAuthenticationMaster { public class DeleteDailyAuthenticationMasterRequest { public int AuthenticationID { get; set; } } public class DeleteDailyAuthenticationMasterRequestValidator : AbstractValidator<DeleteDailyAuthenticationMasterRequest> { public DeleteDailyAuthenticationMasterRequestValidator() { RuleFor(x => x.AuthenticationID).GreaterThan(0); } } }

@@ -1,0 +1,95 @@
+﻿using Project.BAL;
+using Project.DAL;
+using Project.Model;
+using Project.Requests.Transaction;
+using Project.StaticModel;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+namespace Project.Processing
+{
+    public class UPITransferStatusCheckProcessing
+    {
+        public void StatusCheck()
+        {
+            try
+            {
+                bool isDevelopment = new Util().isDevelopment();
+                if (isDevelopment == true)
+                {
+                    return;
+                }
+
+                string failureMessage = new Validation().ServerDownTime();
+
+                if (!failureMessage.EqualsIgnoreCase(StatusType.Ok))
+                {
+                    return; // "At ServerDownTime, status check not allowed";
+                }
+
+                failureMessage = new Validation().BankDownTime();
+
+                if (!failureMessage.EqualsIgnoreCase(StatusType.Ok))
+                {
+                    return; // "At BankDownTime, mostly bank down at night
+                }
+
+                List<TransactionMaster> list = null;
+                try
+                {
+                    list = new TransactionDAL().SelectPendingUPITransferTransaction();
+                }
+                catch (Exception ex)
+                {
+                    new Logger().Write(ex); return;
+                }
+
+                if (list == null)
+                    return;
+
+                if (list.Count <= 0)
+                    return;
+
+                List<TransactionMaster> random50 = list.OrderBy(x => Guid.NewGuid()).Take(50).ToList();
+
+                var parallelOptions = new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = Math.Max(3 * Environment.ProcessorCount / 4, 1)
+                };
+                failureMessage = "";
+                Parallel.ForEach(random50.AsEnumerable(), parallelOptions, item =>
+                {
+                    try
+                    {
+                        double seconds = DateTimeExtensions.DifferenceInSeconds(item.DOC);
+
+                        double ExpectedSecond = 120.0D; //2 min = 2 * 60
+
+                        if (seconds <= ExpectedSecond)
+                        {
+                            return;
+                        }
+                        string faileureMessage = new TransactionBal().isValidForBulkStatusCheck(item);
+                        if (!faileureMessage.EqualsIgnoreCase(StatusType.Ok))
+                            return;
+
+                        UPITransctionStatusRequest mainRequest = new UPITransctionStatusRequest();
+                        mainRequest.ID = item.TransactionMasterID.ToString();
+                        new UPITransferProcessing().UPITransactionStatusCheck(mainRequest, Company.AdminUserID);
+                    }
+                    catch (Exception ex)
+                    {
+                        new Logger().Write(ex);
+                    }
+                }
+                );
+            }
+            catch (Exception ex)
+            {
+                new Logger().Write(ex);
+            }
+        }
+    }
+}

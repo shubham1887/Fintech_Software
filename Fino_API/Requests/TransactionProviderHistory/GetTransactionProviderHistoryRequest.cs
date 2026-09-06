@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.TransactionProviderHistory { public class GetTransactionProviderHistoryRequest { public int RechargeProviderHistoryID { get; set; } } public class GetTransactionProviderHistoryRequestValidator : AbstractValidator<GetTransactionProviderHistoryRequest> { public GetTransactionProviderHistoryRequestValidator() { RuleFor(x => x.RechargeProviderHistoryID).GreaterThan(0); } } }

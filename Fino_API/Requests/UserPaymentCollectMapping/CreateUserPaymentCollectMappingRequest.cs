@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserPaymentCollectMapping { public class CreateUserPaymentCollectMappingRequest { public string ProviderName { get; set; } = string.Empty; public int UserID { get; set; } public string Key { get; set; } = string.Empty; public string Value { get; set; } = string.Empty; } public class CreateUserPaymentCollectMappingRequestValidator : AbstractValidator<CreateUserPaymentCollectMappingRequest> { public CreateUserPaymentCollectMappingRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

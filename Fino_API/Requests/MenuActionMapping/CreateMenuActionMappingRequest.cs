@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.MenuActionMapping { public class CreateMenuActionMappingRequest { public string Controller { get; set; } = string.Empty; public string Action { get; set; } = string.Empty; public string Description { get; set; } = string.Empty; public string MenuMasterGUID { get; set; } = string.Empty; } public class CreateMenuActionMappingRequestValidator : AbstractValidator<CreateMenuActionMappingRequest> { public CreateMenuActionMappingRequestValidator() {  } } }

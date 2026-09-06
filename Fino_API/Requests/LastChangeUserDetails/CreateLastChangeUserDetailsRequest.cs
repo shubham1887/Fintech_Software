@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.LastChangeUserDetails { public class CreateLastChangeUserDetailsRequest { public int OnboardingUserID { get; set; } public string Change { get; set; } = string.Empty; public string OldChanges { get; set; } = string.Empty; public string NewChanges { get; set; } = string.Empty; } public class CreateLastChangeUserDetailsRequestValidator : AbstractValidator<CreateLastChangeUserDetailsRequest> { public CreateLastChangeUserDetailsRequestValidator() {  } } }

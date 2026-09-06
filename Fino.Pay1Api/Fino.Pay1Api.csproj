@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Fino.Pay1Api</RootNamespace>
+    <AssemblyName>Fino.Pay1Api</AssemblyName>
+    <!-- Package metadata so the library can be published independently (dotnet pack) -->
+    <PackageId>Fino.Pay1Api</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Fino</Authors>
+    <Description>Pay1 Utility / BBPS provider integration (recharges.pay1.in) for the Fino platform. Self-contained, configuration-driven, no host dependencies.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Brings IHttpClientFactory, IConfiguration, IServiceCollection, ILogger from the shared framework -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

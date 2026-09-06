@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.BlackListBankMaster { public class CreateBlackListBankMasterRequest { public string BankName { get; set; } = string.Empty; public string IFSC { get; set; } = string.Empty; public string AccountNumber { get; set; } = string.Empty; } public class CreateBlackListBankMasterRequestValidator : AbstractValidator<CreateBlackListBankMasterRequest> { public CreateBlackListBankMasterRequestValidator() {  } } }

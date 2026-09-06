@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ReferralRegistration { public class DeleteReferralRegistrationRequest { public int ReferralRegistrationID { get; set; } } public class DeleteReferralRegistrationRequestValidator : AbstractValidator<DeleteReferralRegistrationRequest> { public DeleteReferralRegistrationRequestValidator() { RuleFor(x => x.ReferralRegistrationID).GreaterThan(0); } } }

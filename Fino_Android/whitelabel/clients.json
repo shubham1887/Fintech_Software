@@ -1,0 +1,44 @@
+{
+  "_comment": "One codebase, many clients. To add a client, append a block to this array (or run tools/new-client.ps1). Each client gets its own APK: gradlew assemble<Client>Release",
+  "defaults": {
+    "versionCode": 1,
+    "versionName": "1.0.0",
+    "colorPrimary": "#1D4ED8",
+    "colorAccent": "#0EA5E9",
+    "colorSplash": "#0B1220",
+    "remoteConfigPath": "/app-config.json",
+    "blockScreenshots": true,
+    "pullToRefresh": false,
+    "supportWhatsApp": "",
+    "supportEmail": "",
+    "supportPhone": "",
+    "startPath": "/login"
+  },
+  "clients": [
+    {
+      "id": "fino",
+      "appName": "Fino Console",
+      "applicationId": "com.finoconsole.app",
+      "portalUrl": "https://ui.ripay.co.in",
+      "colorPrimary": "#7C3AED",
+      "colorAccent": "#A78BFA",
+      "colorSplash": "#1E1B4B",
+      "supportWhatsApp": "919920427176",
+      "supportEmail": "support@ripay.co.in",
+      "versionCode": 1,
+      "versionName": "1.0.0"
+    },
+    {
+      "id": "demo",
+      "appName": "Fintech Wallet",
+      "applicationId": "com.fintech.wallet",
+      "portalUrl": "https://portal.example.com",
+      "colorPrimary": "#0F766E",
+      "colorAccent": "#14B8A6",
+      "colorSplash": "#052E2B",
+      "supportWhatsApp": "911234567890",
+      "versionCode": 1,
+      "versionName": "1.0.0"
+    }
+  ]
+}

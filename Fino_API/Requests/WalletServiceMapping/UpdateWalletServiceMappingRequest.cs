@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.WalletServiceMapping { public class UpdateWalletServiceMappingRequest { public int WalletServiceMappingID { get; set; } public int WalletID { get; set; } public int ServiceID { get; set; } } public class UpdateWalletServiceMappingRequestValidator : AbstractValidator<UpdateWalletServiceMappingRequest> { public UpdateWalletServiceMappingRequestValidator() { RuleFor(x => x.WalletServiceMappingID).GreaterThan(0); } } }

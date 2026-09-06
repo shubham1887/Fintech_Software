@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserPaymentCollectMapping { public class DeleteUserPaymentCollectMappingRequest { public int UserPaymentCollectMappingID { get; set; } } public class DeleteUserPaymentCollectMappingRequestValidator : AbstractValidator<DeleteUserPaymentCollectMappingRequest> { public DeleteUserPaymentCollectMappingRequestValidator() { RuleFor(x => x.UserPaymentCollectMappingID).GreaterThan(0); } } }

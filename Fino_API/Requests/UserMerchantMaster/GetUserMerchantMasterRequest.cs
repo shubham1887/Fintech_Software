@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserMerchantMaster { public class GetUserMerchantMasterRequest { public int UserMerchantMasterID { get; set; } public int UserID { get; set; } } public class GetUserMerchantMasterRequestValidator : AbstractValidator<GetUserMerchantMasterRequest> { public GetUserMerchantMasterRequestValidator() { RuleFor(x => x.UserMerchantMasterID).GreaterThan(0); } } }

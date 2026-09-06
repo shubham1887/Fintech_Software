@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- app_name is generated per client from whitelabel/clients.json (resValue), not here. -->
+    <string name="brand_logo">Logo</string>
+    <string name="splash_tagline">Secure fintech console</string>
+    <string name="offline_title">No internet connection</string>
+    <string name="offline_message">Check your network and try again.</string>
+    <string name="retry">Try again</string>
+    <string name="contact_support">Contact support</string>
+</resources>

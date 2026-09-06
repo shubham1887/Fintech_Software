@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserwiseServiceChargeMaster { public class GetUserwiseServiceChargeMasterRequest { public int UserwiseServiceChargeMasterID { get; set; } public int UserID { get; set; } } public class GetUserwiseServiceChargeMasterRequestValidator : AbstractValidator<GetUserwiseServiceChargeMasterRequest> { public GetUserwiseServiceChargeMasterRequestValidator() { RuleFor(x => x.UserwiseServiceChargeMasterID).GreaterThan(0); } } }

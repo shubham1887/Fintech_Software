@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ServiceSubscriptionCreatePlanMaster { public class GetServiceSubscriptionCreatePlanMasterRequest { public int ServiceSubscriptionCreatePlanMasterID { get; set; } } public class GetServiceSubscriptionCreatePlanMasterRequestValidator : AbstractValidator<GetServiceSubscriptionCreatePlanMasterRequest> { public GetServiceSubscriptionCreatePlanMasterRequestValidator() { RuleFor(x => x.ServiceSubscriptionCreatePlanMasterID).GreaterThan(0); } } }

@@ -1,0 +1,89 @@
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\bin\Debug\net9.0\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\bin\Debug\net9.0\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\bin\Debug\net9.0\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\bin\Debug\net9.0\Fino.JaiJuiApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Debug\net9.0\Fino.JaiJuiApi.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Debug\net9.0\Fino.JaiJuiApi.AssemblyInfoInputs.cache
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Debug\net9.0\Fino.JaiJuiApi.AssemblyInfo.cs
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Debug\net9.0\Fino.JaiJuiApi.csproj.CoreCompileInputs.cache
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Debug\net9.0\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Debug\net9.0\refint\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Debug\net9.0\Fino.JaiJuiApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Debug\net9.0\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Debug\net9.0\ref\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\fino_verify_build\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\fino_verify_build\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\fino_verify_build\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\fino_verify_build\Fino.JaiJuiApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\dmtbuild\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\dmtbuild\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\dmtbuild\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\dmtbuild\Fino.JaiJuiApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\800690b8-9b6a-46ea-a891-48ecddb96a77\scratchpad\binverify\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\800690b8-9b6a-46ea-a891-48ecddb96a77\scratchpad\binverify\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\800690b8-9b6a-46ea-a891-48ecddb96a77\scratchpad\binverify\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\800690b8-9b6a-46ea-a891-48ecddb96a77\scratchpad\binverify\Fino.JaiJuiApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e4cd239f-d55e-4990-b69e-667a7340f590\scratchpad\dmtbuild\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e4cd239f-d55e-4990-b69e-667a7340f590\scratchpad\dmtbuild\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e4cd239f-d55e-4990-b69e-667a7340f590\scratchpad\dmtbuild\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e4cd239f-d55e-4990-b69e-667a7340f590\scratchpad\dmtbuild\Fino.JaiJuiApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\9c9da271-8072-4f12-9ba5-935d3c1aa395\scratchpad\buildcheck\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\9c9da271-8072-4f12-9ba5-935d3c1aa395\scratchpad\buildcheck\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\9c9da271-8072-4f12-9ba5-935d3c1aa395\scratchpad\buildcheck\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\9c9da271-8072-4f12-9ba5-935d3c1aa395\scratchpad\buildcheck\Fino.JaiJuiApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\72119b40-ceb2-4b29-a515-088841eb0f33\scratchpad\build_out\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\72119b40-ceb2-4b29-a515-088841eb0f33\scratchpad\build_out\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\72119b40-ceb2-4b29-a515-088841eb0f33\scratchpad\build_out\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\72119b40-ceb2-4b29-a515-088841eb0f33\scratchpad\build_out\Fino.JaiJuiApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check\Fino.JaiJuiApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check2\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check2\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check2\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check2\Fino.JaiJuiApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_verify_bin\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_verify_bin\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_verify_bin\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_verify_bin\Fino.JaiJuiApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\verify\Debug\net9.0\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\verify\Debug\net9.0\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\verify\Debug\net9.0\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\verify\Debug\net9.0\Fino.JaiJuiApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\reportbuild\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\reportbuild\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\reportbuild\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\reportbuild\Fino.JaiJuiApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\verify2\Debug\net9.0\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\verify2\Debug\net9.0\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\verify2\Debug\net9.0\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\verify2\Debug\net9.0\Fino.JaiJuiApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\finalcheck\Debug\net9.0\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\finalcheck\Debug\net9.0\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\finalcheck\Debug\net9.0\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\finalcheck\Debug\net9.0\Fino.JaiJuiApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck\Fino.JaiJuiApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck2\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck2\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck2\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck2\Fino.JaiJuiApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck3\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck3\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck3\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\slabcheck3\Fino.JaiJuiApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\build_usercode\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\build_usercode\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\build_usercode\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\build_usercode\Fino.JaiJuiApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\build_final\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\build_final\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\build_final\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\build_final\Fino.JaiJuiApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\ad776c24-3e92-41bf-9860-320580da0987\scratchpad\build_out\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\ad776c24-3e92-41bf-9860-320580da0987\scratchpad\build_out\Fino.JaiJuiApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\ad776c24-3e92-41bf-9860-320580da0987\scratchpad\build_out\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\ad776c24-3e92-41bf-9860-320580da0987\scratchpad\build_out\Fino.JaiJuiApi.xml

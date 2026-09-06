@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ProviderOperatorCircleMaster { public class CreateProviderOperatorCircleMasterRequest { public int ProviderID { get; set; } public int OperatorID { get; set; } public int StateID { get; set; } public string Opcode { get; set; } = string.Empty; public bool IsActive { get; set; } } public class CreateProviderOperatorCircleMasterRequestValidator : AbstractValidator<CreateProviderOperatorCircleMasterRequest> { public CreateProviderOperatorCircleMasterRequestValidator() {  } } }

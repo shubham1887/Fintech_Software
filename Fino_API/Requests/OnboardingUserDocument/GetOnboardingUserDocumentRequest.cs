@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.OnboardingUserDocument { public class GetOnboardingUserDocumentRequest { public int OnboardingUserDocumentID { get; set; } } public class GetOnboardingUserDocumentRequestValidator : AbstractValidator<GetOnboardingUserDocumentRequest> { public GetOnboardingUserDocumentRequestValidator() { RuleFor(x => x.OnboardingUserDocumentID).GreaterThan(0); } } }

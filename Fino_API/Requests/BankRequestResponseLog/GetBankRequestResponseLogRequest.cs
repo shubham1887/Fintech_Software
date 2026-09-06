@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.BankRequestResponseLog { public class GetBankRequestResponseLogRequest { public int BankRequestResponseLogID { get; set; } public int UserID { get; set; } } public class GetBankRequestResponseLogRequestValidator : AbstractValidator<GetBankRequestResponseLogRequest> { public GetBankRequestResponseLogRequestValidator() { RuleFor(x => x.BankRequestResponseLogID).GreaterThan(0); } } }

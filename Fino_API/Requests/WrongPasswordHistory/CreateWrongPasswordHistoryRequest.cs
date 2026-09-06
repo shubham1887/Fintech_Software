@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.WrongPasswordHistory { public class CreateWrongPasswordHistoryRequest { public int UserID { get; set; } public string MobileNumber { get; set; } = string.Empty; public string IPAddress { get; set; } = string.Empty; } public class CreateWrongPasswordHistoryRequestValidator : AbstractValidator<CreateWrongPasswordHistoryRequest> { public CreateWrongPasswordHistoryRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

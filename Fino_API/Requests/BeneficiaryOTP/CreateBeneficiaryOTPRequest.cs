@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.BeneficiaryOTP { public class CreateBeneficiaryOTPRequest { public string SenderMobile { get; set; } = string.Empty; public string OTP { get; set; } = string.Empty; public int SenderID { get; set; } public int BeneficiaryID { get; set; } public int UserID { get; set; } public bool IsOTPVerified { get; set; } } public class CreateBeneficiaryOTPRequestValidator : AbstractValidator<CreateBeneficiaryOTPRequest> { public CreateBeneficiaryOTPRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

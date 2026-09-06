@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.PrepaidActivation { public class GetPrepaidActivationRequest { public int PrepaidActivationID { get; set; } public int UserID { get; set; } } public class GetPrepaidActivationRequestValidator : AbstractValidator<GetPrepaidActivationRequest> { public GetPrepaidActivationRequestValidator() { RuleFor(x => x.PrepaidActivationID).GreaterThan(0); } } }

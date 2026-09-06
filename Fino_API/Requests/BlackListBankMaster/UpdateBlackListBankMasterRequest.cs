@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.BlackListBankMaster { public class UpdateBlackListBankMasterRequest { public int BlackListBankMasterID { get; set; } public string BankName { get; set; } = string.Empty; public string IFSC { get; set; } = string.Empty; public string AccountNumber { get; set; } = string.Empty; } public class UpdateBlackListBankMasterRequestValidator : AbstractValidator<UpdateBlackListBankMasterRequest> { public UpdateBlackListBankMasterRequestValidator() { RuleFor(x => x.BlackListBankMasterID).GreaterThan(0); } } }

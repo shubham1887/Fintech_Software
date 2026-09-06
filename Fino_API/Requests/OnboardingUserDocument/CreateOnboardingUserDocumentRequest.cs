@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.OnboardingUserDocument { public class CreateOnboardingUserDocumentRequest { public string Ref_ID { get; set; } = string.Empty; public int Type { get; set; } public string OldImage { get; set; } = string.Empty; public string NewImage { get; set; } = string.Empty; public int OnboardingUserID { get; set; } } public class CreateOnboardingUserDocumentRequestValidator : AbstractValidator<CreateOnboardingUserDocumentRequest> { public CreateOnboardingUserDocumentRequestValidator() {  } } }

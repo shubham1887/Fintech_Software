@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.LoanTypeMaster { public class UpdateLoanTypeMasterRequest { public int LoanTypeMasterID { get; set; } public string LoanType { get; set; } = string.Empty; } public class UpdateLoanTypeMasterRequestValidator : AbstractValidator<UpdateLoanTypeMasterRequest> { public UpdateLoanTypeMasterRequestValidator() { RuleFor(x => x.LoanTypeMasterID).GreaterThan(0); } } }

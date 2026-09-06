@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.SenderOTP { public class CreateSenderOTPRequest { public string Mobile { get; set; } = string.Empty; public string OTP { get; set; } = string.Empty; public int SenderID { get; set; } public int UserID { get; set; } public bool IsOTPVerified { get; set; } } public class CreateSenderOTPRequestValidator : AbstractValidator<CreateSenderOTPRequest> { public CreateSenderOTPRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.TrustableDevice { public class CreateTrustableDeviceRequest { public string IPAddress { get; set; } = string.Empty; public int UserID { get; set; } public bool IsVerified { get; set; } public string Browser { get; set; } = string.Empty; public string Device { get; set; } = string.Empty; } public class CreateTrustableDeviceRequestValidator : AbstractValidator<CreateTrustableDeviceRequest> { public CreateTrustableDeviceRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

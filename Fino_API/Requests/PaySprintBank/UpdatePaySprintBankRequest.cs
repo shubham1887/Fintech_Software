@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.PaySprintBank { public class UpdatePaySprintBankRequest { public int ID { get; set; } public string BankName { get; set; } = string.Empty; public int Sequence { get; set; } } public class UpdatePaySprintBankRequestValidator : AbstractValidator<UpdatePaySprintBankRequest> { public UpdatePaySprintBankRequestValidator() { RuleFor(x => x.ID).GreaterThan(0); } } }

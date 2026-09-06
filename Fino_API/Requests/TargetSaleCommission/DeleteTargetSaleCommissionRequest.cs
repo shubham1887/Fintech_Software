@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.TargetSaleCommission { public class DeleteTargetSaleCommissionRequest { public int TargetSaleCommissionID { get; set; } } public class DeleteTargetSaleCommissionRequestValidator : AbstractValidator<DeleteTargetSaleCommissionRequest> { public DeleteTargetSaleCommissionRequestValidator() { RuleFor(x => x.TargetSaleCommissionID).GreaterThan(0); } } }

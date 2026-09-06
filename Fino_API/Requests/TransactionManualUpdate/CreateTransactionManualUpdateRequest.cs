@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.TransactionManualUpdate { public class CreateTransactionManualUpdateRequest { public int TransactionMasterID { get; set; } public int ManualUpdatedBy { get; set; } public string ProviderrefNo { get; set; } = string.Empty; public string OldStatus { get; set; } = string.Empty; public string NewStatus { get; set; } = string.Empty; } public class CreateTransactionManualUpdateRequestValidator : AbstractValidator<CreateTransactionManualUpdateRequest> { public CreateTransactionManualUpdateRequestValidator() {  } } }

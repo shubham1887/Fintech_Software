@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.LeadGenerationMaster { public class DeleteLeadGenerationMasterRequest { public int LeadGenerationMasterID { get; set; } } public class DeleteLeadGenerationMasterRequestValidator : AbstractValidator<DeleteLeadGenerationMasterRequest> { public DeleteLeadGenerationMasterRequestValidator() { RuleFor(x => x.LeadGenerationMasterID).GreaterThan(0); } } }

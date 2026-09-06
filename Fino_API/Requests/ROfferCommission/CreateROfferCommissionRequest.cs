@@ -1,0 +1,6 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ROfferCommission
+{
+    public class CreateROfferCommissionRequest { public int SlabMasterID { get; set; } public int ServiceID { get; set; } public int OperatorID { get; set; } public decimal Amount { get; set; } public decimal RetailerComm { get; set; } public string RetailerCommType { get; set; } = string.Empty; public string RetailerCommissionCategory { get; set; } = string.Empty; public decimal DistributorComm { get; set; } public string DistributorCommType { get; set; } = string.Empty; public string DistributorCommissionCategory { get; set; } = string.Empty; public decimal SuperDistributorComm { get; set; } public string SuperDistributorCommType { get; set; } = string.Empty; public string SuperDistributorCommissionCategory { get; set; } = string.Empty; public decimal ClientComm { get; set; } public string ClientCommType { get; set; } = string.Empty; public string ClientCommissionCategory { get; set; } = string.Empty; public bool IsActive { get; set; } public bool IsDelete { get; set; } }
+    public class CreateROfferCommissionRequestValidator : AbstractValidator<CreateROfferCommissionRequest> { public CreateROfferCommissionRequestValidator() { RuleFor(x => x.OperatorID).GreaterThan(0); } }
+}

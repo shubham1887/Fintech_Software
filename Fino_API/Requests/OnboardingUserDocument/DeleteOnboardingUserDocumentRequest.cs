@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.OnboardingUserDocument { public class DeleteOnboardingUserDocumentRequest { public int OnboardingUserDocumentID { get; set; } } public class DeleteOnboardingUserDocumentRequestValidator : AbstractValidator<DeleteOnboardingUserDocumentRequest> { public DeleteOnboardingUserDocumentRequestValidator() { RuleFor(x => x.OnboardingUserDocumentID).GreaterThan(0); } } }

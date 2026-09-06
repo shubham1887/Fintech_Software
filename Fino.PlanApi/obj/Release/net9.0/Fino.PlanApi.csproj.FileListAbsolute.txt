@@ -1,0 +1,13 @@
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\bin\Release\net9.0\Fino.PlanApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\bin\Release\net9.0\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\bin\Release\net9.0\Fino.PlanApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\bin\Release\net9.0\Fino.PlanApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Release\net9.0\Fino.PlanApi.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Release\net9.0\Fino.PlanApi.AssemblyInfoInputs.cache
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Release\net9.0\Fino.PlanApi.AssemblyInfo.cs
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Release\net9.0\Fino.PlanApi.csproj.CoreCompileInputs.cache
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Release\net9.0\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Release\net9.0\refint\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Release\net9.0\Fino.PlanApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Release\net9.0\Fino.PlanApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Release\net9.0\ref\Fino.PlanApi.dll

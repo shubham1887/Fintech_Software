@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ThirdPartyServiceProvider { public class GetThirdPartyServiceProviderRequest { public int ThirdPartyServiceProviderID { get; set; } } public class GetThirdPartyServiceProviderRequestValidator : AbstractValidator<GetThirdPartyServiceProviderRequest> { public GetThirdPartyServiceProviderRequestValidator() { RuleFor(x => x.ThirdPartyServiceProviderID).GreaterThan(0); } } }

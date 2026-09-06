@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.CategoryChannelMapping { public class GetCategoryChannelMappingRequest { public int CategoryChannelMappingID { get; set; } } public class GetCategoryChannelMappingRequestValidator : AbstractValidator<GetCategoryChannelMappingRequest> { public GetCategoryChannelMappingRequestValidator() { RuleFor(x => x.CategoryChannelMappingID).GreaterThan(0); } } }

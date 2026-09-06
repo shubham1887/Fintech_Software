@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.CategoryChannelMapping { public class CreateCategoryChannelMappingRequest { public int ChannelCategoryID { get; set; } public string ChannelName { get; set; } = string.Empty; public string ChannelImagePath { get; set; } = string.Empty; public bool IsDelete { get; set; } } public class CreateCategoryChannelMappingRequestValidator : AbstractValidator<CreateCategoryChannelMappingRequest> { public CreateCategoryChannelMappingRequestValidator() {  } } }

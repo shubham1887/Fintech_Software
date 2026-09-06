@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.AuthorizationMaster { public class UpdateAuthorizationMasterRequest { public int AuthorizationMasterID { get; set; } public string Controller { get; set; } = string.Empty; public string Action { get; set; } = string.Empty; public int UserTypeID { get; set; } public bool IsActive { get; set; } } public class UpdateAuthorizationMasterRequestValidator : AbstractValidator<UpdateAuthorizationMasterRequest> { public UpdateAuthorizationMasterRequestValidator() { RuleFor(x => x.AuthorizationMasterID).GreaterThan(0); } } }

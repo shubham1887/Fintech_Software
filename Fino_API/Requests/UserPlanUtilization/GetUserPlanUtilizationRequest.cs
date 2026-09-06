@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserPlanUtilization { public class GetUserPlanUtilizationRequest { public int UserPlanUtilizationID { get; set; } public int UserID { get; set; } } public class GetUserPlanUtilizationRequestValidator : AbstractValidator<GetUserPlanUtilizationRequest> { public GetUserPlanUtilizationRequestValidator() { RuleFor(x => x.UserPlanUtilizationID).GreaterThan(0); } } }

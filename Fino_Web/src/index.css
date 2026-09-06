@@ -1,0 +1,244 @@
+@import 'tailwindcss';
+
+/* ----------------------------------------------------------------------------
+   Fino Console — original design language (not derived from the legacy MUI UI)
+   Deep-ink sidebar · azure-indigo brand · soft premium light surfaces
+---------------------------------------------------------------------------- */
+@theme {
+  /* Brand — royal azure / indigo */
+  --color-brand-50: #eef3ff;
+  --color-brand-100: #dbe4ff;
+  --color-brand-200: #bccdff;
+  --color-brand-300: #92acff;
+  --color-brand-400: #6280ff;
+  --color-brand-500: #3d59ff;
+  --color-brand-600: #2a3df0;
+  --color-brand-700: #2230cf;
+  --color-brand-800: #1f2ca6;
+  --color-brand-900: #1f2c83;
+  --color-brand-950: #161b4c;
+
+  /* Ink — sidebar / deep surfaces */
+  --color-ink-50: #f4f6fb;
+  --color-ink-100: #e6eaf3;
+  --color-ink-200: #c8d1e3;
+  --color-ink-300: #9aa8c7;
+  --color-ink-400: #6677a0;
+  --color-ink-500: #455580;
+  --color-ink-600: #344063;
+  --color-ink-700: #283251;
+  --color-ink-800: #1a2138;
+  --color-ink-900: #111729;
+  --color-ink-950: #0a0e1c;
+
+  /* Semantic accents */
+  --color-success-50: #ecfdf5;
+  --color-success-500: #10b981;
+  --color-success-600: #059669;
+  --color-danger-50: #fff1f2;
+  --color-danger-500: #f43f5e;
+  --color-danger-600: #e11d48;
+  --color-warning-50: #fffbeb;
+  --color-warning-500: #f59e0b;
+  --color-warning-600: #d97706;
+  --color-info-50: #f0f9ff;
+  --color-info-500: #0ea5e9;
+  --color-info-600: #0284c7;
+
+  /* App canvas */
+  --color-canvas: #f5f6fb;
+
+  /* API-driven UI settings (overridden at runtime by UISettingsProvider from UISetting/GetAll). */
+  --ui-navbar: #0a0e1c; /* sidebar / vertical-nav background */
+  --ui-appbar: #111729; /* topbar / horizontal-nav background */
+  --ui-fore: #ffffff; /* nav + appbar text/icons */
+  --ui-secondary: #0ea5e9;
+  --ui-report-fs: 14px;
+  --ui-consumer-fs: 18px;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    sans-serif;
+  --font-display: 'Plus Jakarta Sans', 'Inter', ui-sans-serif, system-ui,
+    sans-serif;
+  /* Code / identifiers. Loaded for the API documentation's request-response
+     samples, where alignment and 0-vs-O legibility actually matter. */
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Mono',
+    'Segoe UI Mono', Consolas, monospace;
+
+  --radius-card: 1rem;
+
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04),
+    0 2px 6px rgba(16, 24, 40, 0.04), 0 12px 28px -12px rgba(16, 24, 40, 0.10);
+  --shadow-pop: 0 8px 32px rgba(16, 24, 40, 0.14);
+  --shadow-glow: 0 0 0 1px rgba(61, 89, 255, 0.18),
+    0 8px 24px rgba(61, 89, 255, 0.22);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-slate-200);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-canvas);
+    color: var(--color-slate-800);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  /* ---------------------------------------------------------------------
+     Native app shell (Fino_Android). The shell adds `native-app` to <html>.
+     Inside it the page must behave like an app, not a web page: no tap
+     flash, no rubber-band chaining to the WebView, no text selection on
+     chrome. Content still selects normally.
+
+     NOTE: the shell already insets the WebView below the status bar and
+     above the gesture bar, so do NOT add --safe-area-top/bottom padding on
+     top of that — it would double-pad. Those vars are informational; use
+     env(safe-area-inset-*) (which is 0 there) for browser safe areas.
+  --------------------------------------------------------------------- */
+  html.native-app,
+  html.native-app body {
+    overscroll-behavior-y: none;
+  }
+
+  html.native-app ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+
+  html.native-app * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Same affordance at phone widths in a browser, so what gets tested matches what ships. */
+  @media (max-width: 767px) {
+    * {
+      -webkit-tap-highlight-color: transparent;
+    }
+  }
+
+  html.native-app button,
+  html.native-app a,
+  html.native-app [role='button'] {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  /* ---------------------------------------------------------------------
+     Scrollbars.
+
+     A classic 10px scrollbar is a DESKTOP thing: it is always visible while a
+     container scrolls, and it eats 10px of that container's layout width. On a
+     phone both of those read instantly as "web page", not "app" — Android's own
+     scrollbars are overlay, sit on top of the content, and fade away. There is no
+     way to get that behaviour from a styled WebView, so on small screens the
+     closest equivalent is no scrollbar at all. Content still scrolls normally.
+  --------------------------------------------------------------------- */
+  @media (min-width: 768px) {
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(100, 116, 139, 0.35);
+      border-radius: 9999px;
+      border: 2px solid transparent;
+      background-clip: content-box;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(100, 116, 139, 0.55);
+      background-clip: content-box;
+    }
+  }
+
+  @media (max-width: 767px) {
+    * {
+      scrollbar-width: none; /* Firefox */
+      -ms-overflow-style: none;
+    }
+    ::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+      display: none;
+    }
+  }
+}
+
+@layer utilities {
+  /* Hide the scrollbar visually while keeping the element scrollable (used on the sidebar nav
+     so its overflow doesn't add a second, cluttering scrollbar next to the page content). */
+  .no-scrollbar {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/legacy Edge */
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none; /* Chrome / Safari / Edge */
+  }
+
+  /* Subtle premium canvas — faint brand light from the corners. */
+  .bg-app-canvas {
+    background-color: var(--color-canvas);
+    background-image: radial-gradient(
+        1200px 600px at 100% -10%,
+        rgba(61, 89, 255, 0.05),
+        transparent 60%
+      ),
+      radial-gradient(1000px 520px at -10% 0%, rgba(61, 89, 255, 0.04), transparent 55%);
+  }
+
+  /* Tabular figures for amounts/IDs — a banking-grade detail. */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .shimmer {
+    background: linear-gradient(
+      100deg,
+      rgba(226, 232, 240, 0.4) 30%,
+      rgba(241, 245, 249, 0.9) 50%,
+      rgba(226, 232, 240, 0.4) 70%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite;
+  }
+
+  @keyframes shimmer {
+    to {
+      background-position: -200% 0;
+    }
+  }
+
+  .animate-rise {
+    animation: rise 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}

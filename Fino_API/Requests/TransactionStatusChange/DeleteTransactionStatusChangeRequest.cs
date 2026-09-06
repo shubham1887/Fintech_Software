@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.TransactionStatusChange { public class DeleteTransactionStatusChangeRequest { public int TransactionStatusChangeID { get; set; } } public class DeleteTransactionStatusChangeRequestValidator : AbstractValidator<DeleteTransactionStatusChangeRequest> { public DeleteTransactionStatusChangeRequestValidator() { RuleFor(x => x.TransactionStatusChangeID).GreaterThan(0); } } }

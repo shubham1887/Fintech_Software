@@ -1,0 +1,13 @@
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\bin\Release\net9.0\Fino.JaiJuiApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\bin\Release\net9.0\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\bin\Release\net9.0\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\bin\Release\net9.0\Fino.JaiJuiApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Release\net9.0\Fino.JaiJuiApi.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Release\net9.0\Fino.JaiJuiApi.AssemblyInfoInputs.cache
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Release\net9.0\Fino.JaiJuiApi.AssemblyInfo.cs
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Release\net9.0\Fino.JaiJuiApi.csproj.CoreCompileInputs.cache
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Release\net9.0\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Release\net9.0\refint\Fino.JaiJuiApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Release\net9.0\Fino.JaiJuiApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Release\net9.0\Fino.JaiJuiApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.JaiJuiApi\obj\Release\net9.0\ref\Fino.JaiJuiApi.dll

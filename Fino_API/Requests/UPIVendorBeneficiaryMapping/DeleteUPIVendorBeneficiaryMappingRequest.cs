@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UPIVendorBeneficiaryMapping { public class DeleteUPIVendorBeneficiaryMappingRequest { public int UPIVendorBeneficiaryMappingID { get; set; } } public class DeleteUPIVendorBeneficiaryMappingRequestValidator : AbstractValidator<DeleteUPIVendorBeneficiaryMappingRequest> { public DeleteUPIVendorBeneficiaryMappingRequestValidator() { RuleFor(x => x.UPIVendorBeneficiaryMappingID).GreaterThan(0); } } }

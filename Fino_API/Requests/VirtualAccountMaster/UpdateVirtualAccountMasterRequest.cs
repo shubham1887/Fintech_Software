@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.VirtualAccountMaster { public class UpdateVirtualAccountMasterRequest { public int VirtualAccountMasterID { get; set; } public string Prefix { get; set; } = string.Empty; public string BankName { get; set; } = string.Empty; public string IFSC { get; set; } = string.Empty; } public class UpdateVirtualAccountMasterRequestValidator : AbstractValidator<UpdateVirtualAccountMasterRequest> { public UpdateVirtualAccountMasterRequestValidator() { RuleFor(x => x.VirtualAccountMasterID).GreaterThan(0); } } }

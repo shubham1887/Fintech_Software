@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.eKYCLog { public class CreateeKYCLogRequest { public string DocumentNo { get; set; } = string.Empty; public int UserID { get; set; } public string Response { get; set; } = string.Empty; public string DocumentType { get; set; } = string.Empty; } public class CreateeKYCLogRequestValidator : AbstractValidator<CreateeKYCLogRequest> { public CreateeKYCLogRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

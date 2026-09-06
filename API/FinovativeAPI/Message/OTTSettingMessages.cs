@@ -1,0 +1,17 @@
+﻿namespace Project.Message
+{
+    public class OTTSettingMessages
+    {
+        public static readonly string InvalidPayoutCode = "OTTSetting provider code not set, please contact to customer care";
+        public static readonly string InvalidID = "Invalid id";
+        public static readonly string UpdateSuccess = "Update successfully";
+        public static readonly string UpdateFail = "Update fail";
+        public static string NotFound = "Settings not found";
+        public static readonly string DataNotFound = "Data not found";
+        public static readonly string InvalidSlat = "Invalid slat";
+        public static readonly string InvalidMerchantID = "Invalid MerchantID";
+        public static readonly string InvalidToken = "Invalid token";
+        public static readonly string InvalidName = "Invalid name";
+        public static string DeactiveOTTTrasfer = "OTT setting is not active, please contact to customer care";
+    }
+}

@@ -1,0 +1,6 @@
+@FintechApp_HostAddress = http://localhost:5266
+
+GET {{FintechApp_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

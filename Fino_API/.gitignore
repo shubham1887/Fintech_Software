@@ -1,0 +1,30 @@
+# Visual Studio / .NET Core standard ignores
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+# Rider IDE
+.idea/
+
+# ASP.NET Core specific
+wwwroot/
+*.db
+*.log
+
+# Ignore appsettings files
+appsettings.json
+appsettings.Development.json
+
+# NuGet packages
+*.nupkg
+packages/
+*.snupkg
+.nuget/
+
+# Others
+*.DS_Store
+*.vs/

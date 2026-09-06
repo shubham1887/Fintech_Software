@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.DailyAuthenticationMaster { public class GetDailyAuthenticationMasterRequest { public int AuthenticationID { get; set; } public int UserID { get; set; } } public class GetDailyAuthenticationMasterRequestValidator : AbstractValidator<GetDailyAuthenticationMasterRequest> { public GetDailyAuthenticationMasterRequestValidator() { RuleFor(x => x.AuthenticationID).GreaterThan(0); } } }

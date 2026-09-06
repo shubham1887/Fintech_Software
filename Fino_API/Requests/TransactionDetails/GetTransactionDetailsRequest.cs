@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.TransactionDetails { public class GetTransactionDetailsRequest { public int TransactionDetailID { get; set; } public int UserID { get; set; } } public class GetTransactionDetailsRequestValidator : AbstractValidator<GetTransactionDetailsRequest> { public GetTransactionDetailsRequestValidator() { RuleFor(x => x.TransactionDetailID).GreaterThan(0); } } }

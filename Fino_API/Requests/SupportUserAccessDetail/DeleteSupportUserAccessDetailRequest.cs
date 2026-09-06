@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.SupportUserAccessDetail { public class DeleteSupportUserAccessDetailRequest { public int SupportUserAccessDetailID { get; set; } } public class DeleteSupportUserAccessDetailRequestValidator : AbstractValidator<DeleteSupportUserAccessDetailRequest> { public DeleteSupportUserAccessDetailRequestValidator() { RuleFor(x => x.SupportUserAccessDetailID).GreaterThan(0); } } }

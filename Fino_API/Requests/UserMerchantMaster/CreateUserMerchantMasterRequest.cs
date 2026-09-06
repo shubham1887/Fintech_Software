@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserMerchantMaster { public class CreateUserMerchantMasterRequest { public int UserID { get; set; } public string PaySprintUPIMerchantCode { get; set; } = string.Empty; public string PaySprintStaticQR { get; set; } = string.Empty; public string PaySprintUPIRefid { get; set; } = string.Empty; } public class CreateUserMerchantMasterRequestValidator : AbstractValidator<CreateUserMerchantMasterRequest> { public CreateUserMerchantMasterRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

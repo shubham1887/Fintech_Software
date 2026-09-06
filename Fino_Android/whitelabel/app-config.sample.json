@@ -1,0 +1,27 @@
+{
+  "_comment": "Host this on the client's web server at the portal root: https://<portal>/app-config.json . The app reads it on every launch, so everything here can change without shipping a new APK.",
+  "brandName": "Fino Console",
+  "portalUrl": "https://ui.ripay.co.in",
+  "startPath": "/login",
+  "internalHosts": [
+    "ui.ripay.co.in",
+    "ripay.co.in"
+  ],
+  "colorPrimary": "#7C3AED",
+  "colorAccent": "#A78BFA",
+  "colorSplash": "#1E1B4B",
+  "pullToRefresh": false,
+  "blockScreenshots": true,
+  "allowFileUpload": true,
+  "allowDownloads": true,
+  "confirmExit": true,
+  "minVersionCode": 1,
+  "forceUpdate": false,
+  "updateUrl": "https://play.google.com/store/apps/details?id=com.finoconsole.app",
+  "updateMessage": "A new version is available with fixes and improvements.",
+  "maintenance": false,
+  "maintenanceMessage": "We are upgrading the system. Please try again in a few minutes.",
+  "supportWhatsApp": "919920427176",
+  "supportEmail": "support@ripay.co.in",
+  "supportPhone": "18001234567"
+}

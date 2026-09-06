@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.AndroidSectionMaster { public class DeleteAndroidSectionMasterRequest { public int AndroidSectionMasterID { get; set; } } public class DeleteAndroidSectionMasterRequestValidator : AbstractValidator<DeleteAndroidSectionMasterRequest> { public DeleteAndroidSectionMasterRequestValidator() { RuleFor(x => x.AndroidSectionMasterID).GreaterThan(0); } } }

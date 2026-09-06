@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserWisePlanLimit { public class GetUserWisePlanLimitRequest { public int UserWisePlanLimitID { get; set; } public int UserID { get; set; } } public class GetUserWisePlanLimitRequestValidator : AbstractValidator<GetUserWisePlanLimitRequest> { public GetUserWisePlanLimitRequestValidator() { RuleFor(x => x.UserWisePlanLimitID).GreaterThan(0); } } }

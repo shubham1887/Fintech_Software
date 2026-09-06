@@ -1,0 +1,102 @@
+import React, { useEffect, useState } from 'react';
+import { Button } from '@material-ui/core';
+import { commonStyle } from 'Components/CustomMaterialStyleSheets/CommonStyleSheet';
+import { makeStyles } from '@material-ui/core/styles';
+import { PRIMARY_COLOR } from 'Config';
+
+const useStyles = makeStyles({
+    dashboardserviceicons: (props) => ({
+        padding: '15px',
+        borderRadius: '3px',
+        width: '100%',
+        '&:hover': {
+            background: `${props.hoverColor} !important`,
+            color: '#fff'
+        }
+    })
+});
+
+const PostpaidIcon = (props) => {
+    const propsInline = { hoverColor: PRIMARY_COLOR() };
+
+    const classesInline = useStyles(propsInline);
+    const classes = commonStyle();
+
+    const [colorNonSelected, setColorNonSelected] = useState(
+        classes.svg_non_selected
+    );
+    const [colorSelected, setColorSelected] = useState(classes.svg_selected);
+
+    function MouseOver(event) {
+        setColorSelected(classes.svg_white);
+        setColorNonSelected(classes.svg_white);
+    }
+    function MouseOut(event) {
+        setColorSelected(classes.svg_selected);
+        setColorNonSelected(classes.svg_non_selected);
+    }
+
+    return (
+        <>
+            <div
+                className={classesInline.dashboardserviceicons}
+                onMouseOver={MouseOver}
+                onMouseOut={MouseOut}
+            >
+                <p>
+                    <svg
+                        version="1.1"
+                        id="Layer_1"
+                        xmlns="http://www.w3.org/2000/svg"
+                        x="0px"
+                        y="0px"
+                        viewBox="0 0 512 512"
+                        style={{
+                            enableBackground: 'new 0 0 512 512',
+                            width: '36px'
+                        }}
+                    >
+                        <path
+                            className={colorNonSelected}
+                            d="M286.5,499.5H63c-28,0-50.7-22.7-50.7-50.7v-30.3h325v30.4C337.3,476.7,314.5,499.5,286.5,499.5L286.5,499.5z
+		 M33,439.2v10.1c0,16.8,13.6,30.4,30.4,30.4h223.6c16.8,0,30.4-13.6,30.4-30.4v-10.1H33z"
+                        />
+                        <path
+                            className={colorNonSelected}
+                            d="M337.3,94.4h-325V64.2c0,0-7.5-51.7,51.3-51.7l223.2,0.9h-0.2c14,0,27.1,5.6,36.7,15.7
+		c9.2,9.6,14,22.5,14,35.8L337.3,94.4z M33,73.7h284.5V63.6c0-8.1-3.2-15.8-8.9-21.5c-5.8-5.7-13.4-8.9-21.5-8.9H287L63.5,33.6
+		C46.7,33.6,33,47.2,33,64L33,73.7z"
+                        />
+                        <path
+                            className={colorNonSelected}
+                            d="M278.7,378.4c-0.9,0-1.9-0.1-2.8-0.4c-4.3-1.3-7.4-5.2-7.4-9.7v-50.7H266c-16.8,0-30.4-13.6-30.4-30.4V165.3
+		c0-16.8,13.6-30.4,30.4-30.4h202.9c16.8,0,30.4,13.6,30.4,30.4v121.9c0,16.8-13.6,30.4-30.4,30.4H329.7c-36.7,47.8-41.7,55-42.3,56
+		C285.4,376.7,282.1,378.4,278.7,378.4L278.7,378.4z M266.4,154.7c-5.6,0-10.1,4.5-10.1,10.1v122c0,5.6,4.5,10.1,10.1,10.1h12.7
+		c5.6,0,10.1,4.5,10.1,10.1v30.2c6.7-8.7,15.7-20.4,28.1-36.4c1.9-2.5,4.9-4,8.1-4h144c5.6,0,10.1-4.5,10.1-10.1v-122
+		c0-5.6-4.5-10.1-10.1-10.1L266.4,154.7z"
+                        />
+                        <path
+                            className={colorNonSelected}
+                            d="M337.3,439.2h-325V73.7h325v81h-70.9c-5.6,0-10.1,4.5-10.1,10.1v122c0,5.6,4.5,10.1,10.1,10.1h22.8v40.5
+		c6.5-8.7,15.5-20.4,27.7-36.4l3-3.2h17.3L337.3,439.2z M33,419.4h284.5v-85.1c-25,33-28.9,38.6-29.4,39.5l-18.6,29.7l-0.1-85.8
+		h-2.5c-16.8,0-30.4-13.6-30.4-30.4V165.3c0-16.8,13.6-30.4,30.4-30.4h50.6l0-40.5H33L33,419.4z"
+                        />
+                        <path
+                            className={colorSelected}
+                            d="M428.8,205.6H307.4c-4.8,0-9.1-3.2-10.2-7.8c-1.6-6.8,3.4-12.9,9.9-12.9h121.4c4.8,0,9.1,3.2,10.2,7.8
+		C440.3,199.5,435.2,205.6,428.8,205.6z"
+                        />
+                        <path
+                            className={colorSelected}
+                            d="M428.8,266.8H307.4c-4.8,0-9.1-3.2-10.2-7.8c-1.6-6.8,3.4-12.9,9.9-12.9h121.4c4.8,0,9.1,3.2,10.2,7.8
+		C440.3,260.7,435.2,266.8,428.8,266.8z"
+                        />
+                    </svg>
+                </p>
+                <h6>Mobile Postpaid</h6>
+            </div>
+        </>
+    );
+};
+
+export default PostpaidIcon;

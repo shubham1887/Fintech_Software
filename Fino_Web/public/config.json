@@ -1,0 +1,12 @@
+{
+  "appName": "Fino",
+  "tagline": "Console",
+  "logoUrl": "",
+  "theme": "azure",
+  "loginHeadline": "The control room for your fintech network.",
+  "loginSubtext": "Recharges, money transfer, AEPS, wallets and settlements — one secure console for every role in your distribution chain.",
+
+  "apiUrl": "",
+  "encKey": "",
+  "encIv": ""
+}

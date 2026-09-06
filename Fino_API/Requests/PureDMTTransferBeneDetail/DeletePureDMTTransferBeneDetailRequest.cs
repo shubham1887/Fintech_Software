@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.PureDMTTransferBeneDetail { public class DeletePureDMTTransferBeneDetailRequest { public int PureDMTTransferBeneDetailID { get; set; } } public class DeletePureDMTTransferBeneDetailRequestValidator : AbstractValidator<DeletePureDMTTransferBeneDetailRequest> { public DeletePureDMTTransferBeneDetailRequestValidator() { RuleFor(x => x.PureDMTTransferBeneDetailID).GreaterThan(0); } } }

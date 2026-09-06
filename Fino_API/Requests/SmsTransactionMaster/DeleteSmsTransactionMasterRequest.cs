@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.SmsTransactionMaster { public class DeleteSmsTransactionMasterRequest { public int SmsTransactionMasterID { get; set; } } public class DeleteSmsTransactionMasterRequestValidator : AbstractValidator<DeleteSmsTransactionMasterRequest> { public DeleteSmsTransactionMasterRequestValidator() { RuleFor(x => x.SmsTransactionMasterID).GreaterThan(0); } } }

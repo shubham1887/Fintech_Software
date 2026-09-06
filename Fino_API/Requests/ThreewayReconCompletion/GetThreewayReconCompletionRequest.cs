@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ThreewayReconCompletion { public class GetThreewayReconCompletionRequest { public int ThreewayReconCompletionID { get; set; } } public class GetThreewayReconCompletionRequestValidator : AbstractValidator<GetThreewayReconCompletionRequest> { public GetThreewayReconCompletionRequestValidator() { RuleFor(x => x.ThreewayReconCompletionID).GreaterThan(0); } } }

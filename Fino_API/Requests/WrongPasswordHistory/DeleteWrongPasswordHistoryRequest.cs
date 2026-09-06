@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.WrongPasswordHistory { public class DeleteWrongPasswordHistoryRequest { public int WrongPasswordHistoryID { get; set; } } public class DeleteWrongPasswordHistoryRequestValidator : AbstractValidator<DeleteWrongPasswordHistoryRequest> { public DeleteWrongPasswordHistoryRequestValidator() { RuleFor(x => x.WrongPasswordHistoryID).GreaterThan(0); } } }

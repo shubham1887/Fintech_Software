@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Fino.PlanApi</RootNamespace>
+    <AssemblyName>Fino.PlanApi</AssemblyName>
+    <!-- Package metadata so the library can be published independently (dotnet pack) -->
+    <PackageId>Fino.PlanApi</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Fino</Authors>
+    <Description>Plan / DTH / R-Offer data provider integration (planapi.in) for the Fino platform. Self-contained, configuration-driven, no host dependencies.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Brings IHttpClientFactory, IConfiguration, IServiceCollection, ILogger from the shared framework -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

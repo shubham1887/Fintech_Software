@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ThirdPartyServiceProvider { public class DeleteThirdPartyServiceProviderRequest { public int ThirdPartyServiceProviderID { get; set; } } public class DeleteThirdPartyServiceProviderRequestValidator : AbstractValidator<DeleteThirdPartyServiceProviderRequest> { public DeleteThirdPartyServiceProviderRequestValidator() { RuleFor(x => x.ThirdPartyServiceProviderID).GreaterThan(0); } } }

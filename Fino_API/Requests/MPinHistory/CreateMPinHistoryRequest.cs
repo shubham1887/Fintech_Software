@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.MPinHistory { public class CreateMPinHistoryRequest { public int UserID { get; set; } public int Mpin { get; set; } public string DeviceID { get; set; } = string.Empty; public string Device { get; set; } = string.Empty; } public class CreateMPinHistoryRequestValidator : AbstractValidator<CreateMPinHistoryRequest> { public CreateMPinHistoryRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

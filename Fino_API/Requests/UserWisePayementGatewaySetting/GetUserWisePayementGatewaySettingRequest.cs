@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserWisePayementGatewaySetting { public class GetUserWisePayementGatewaySettingRequest { public int UserWisePayementGatewaySettingID { get; set; } public int UserID { get; set; } } public class GetUserWisePayementGatewaySettingRequestValidator : AbstractValidator<GetUserWisePayementGatewaySettingRequest> { public GetUserWisePayementGatewaySettingRequestValidator() { RuleFor(x => x.UserWisePayementGatewaySettingID).GreaterThan(0); } } }

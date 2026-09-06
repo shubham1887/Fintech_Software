@@ -1,0 +1,165 @@
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\bin\Debug\net9.0\Fino.PlanApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\bin\Debug\net9.0\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\bin\Debug\net9.0\Fino.PlanApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\bin\Debug\net9.0\Fino.PlanApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Debug\net9.0\Fino.PlanApi.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Debug\net9.0\Fino.PlanApi.AssemblyInfoInputs.cache
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Debug\net9.0\Fino.PlanApi.AssemblyInfo.cs
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Debug\net9.0\Fino.PlanApi.csproj.CoreCompileInputs.cache
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Debug\net9.0\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Debug\net9.0\refint\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Debug\net9.0\Fino.PlanApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Debug\net9.0\Fino.PlanApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\Debug\net9.0\ref\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\fino_build_check\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\fino_build_check\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\fino_build_check\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\fino_build_check\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\buildcheck\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\buildcheck\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\buildcheck\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\buildcheck\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a542dd2a-af92-45bb-b298-5a1df240860c\scratchpad\build_out\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a542dd2a-af92-45bb-b298-5a1df240860c\scratchpad\build_out\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a542dd2a-af92-45bb-b298-5a1df240860c\scratchpad\build_out\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a542dd2a-af92-45bb-b298-5a1df240860c\scratchpad\build_out\Fino.PlanApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\verify\Debug\net9.0\Fino.PlanApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\verify\Debug\net9.0\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\verify\Debug\net9.0\Fino.PlanApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\verify\Debug\net9.0\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a08889cb-1c50-417a-9e40-dde64764520e\scratchpad\finobuild\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a08889cb-1c50-417a-9e40-dde64764520e\scratchpad\finobuild\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a08889cb-1c50-417a-9e40-dde64764520e\scratchpad\finobuild\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a08889cb-1c50-417a-9e40-dde64764520e\scratchpad\finobuild\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check2\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check2\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check2\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check2\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check3\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check3\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check3\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check3\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check4\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check4\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check4\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\build_check4\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\build_plan\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\build_plan\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\build_plan\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\build_plan\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a429639d-23bb-4dda-a38c-8e75fcddc80f\scratchpad\build_check\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a429639d-23bb-4dda-a38c-8e75fcddc80f\scratchpad\build_check\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a429639d-23bb-4dda-a38c-8e75fcddc80f\scratchpad\build_check\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\a429639d-23bb-4dda-a38c-8e75fcddc80f\scratchpad\build_check\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild2\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild2\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild2\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild2\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild3\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild3\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild3\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild3\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild4\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild4\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild4\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild4\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild5\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild5\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild5\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild5\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild6\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild6\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild6\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild6\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild7\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild7\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild7\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild7\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild8\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild8\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild8\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\f003a5bb-5f0c-478c-ad8e-1a27dde8eae2\scratchpad\apibuild8\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e2284d6b-74d8-4da5-b852-d2f6d33a98af\scratchpad\build_out\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e2284d6b-74d8-4da5-b852-d2f6d33a98af\scratchpad\build_out\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e2284d6b-74d8-4da5-b852-d2f6d33a98af\scratchpad\build_out\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e2284d6b-74d8-4da5-b852-d2f6d33a98af\scratchpad\build_out\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\fino_verify_build\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\fino_verify_build\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\fino_verify_build\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\fino_verify_build\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\dmtbuild\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\dmtbuild\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\dmtbuild\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\dmtbuild\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\800690b8-9b6a-46ea-a891-48ecddb96a77\scratchpad\binverify\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\800690b8-9b6a-46ea-a891-48ecddb96a77\scratchpad\binverify\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\800690b8-9b6a-46ea-a891-48ecddb96a77\scratchpad\binverify\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\800690b8-9b6a-46ea-a891-48ecddb96a77\scratchpad\binverify\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e4cd239f-d55e-4990-b69e-667a7340f590\scratchpad\dmtbuild\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e4cd239f-d55e-4990-b69e-667a7340f590\scratchpad\dmtbuild\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e4cd239f-d55e-4990-b69e-667a7340f590\scratchpad\dmtbuild\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\e4cd239f-d55e-4990-b69e-667a7340f590\scratchpad\dmtbuild\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\9c9da271-8072-4f12-9ba5-935d3c1aa395\scratchpad\buildcheck\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\9c9da271-8072-4f12-9ba5-935d3c1aa395\scratchpad\buildcheck\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\9c9da271-8072-4f12-9ba5-935d3c1aa395\scratchpad\buildcheck\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\9c9da271-8072-4f12-9ba5-935d3c1aa395\scratchpad\buildcheck\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\72119b40-ceb2-4b29-a515-088841eb0f33\scratchpad\build_out\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\72119b40-ceb2-4b29-a515-088841eb0f33\scratchpad\build_out\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\72119b40-ceb2-4b29-a515-088841eb0f33\scratchpad\build_out\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\72119b40-ceb2-4b29-a515-088841eb0f33\scratchpad\build_out\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check2\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check2\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check2\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_build_check2\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_verify_bin\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_verify_bin\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_verify_bin\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\fino_verify_bin\Fino.PlanApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\reportbuild\Fino.PlanApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\reportbuild\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\reportbuild\Fino.PlanApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\reportbuild\Fino.PlanApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\verify2\Debug\net9.0\Fino.PlanApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\verify2\Debug\net9.0\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\verify2\Debug\net9.0\Fino.PlanApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\verify2\Debug\net9.0\Fino.PlanApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\finalcheck\Debug\net9.0\Fino.PlanApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\finalcheck\Debug\net9.0\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\finalcheck\Debug\net9.0\Fino.PlanApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\finalcheck\Debug\net9.0\Fino.PlanApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck\Fino.PlanApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck\Fino.PlanApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck\Fino.PlanApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck2\Fino.PlanApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck2\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck2\Fino.PlanApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck2\Fino.PlanApi.xml
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck3\Fino.PlanApi.deps.json
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck3\Fino.PlanApi.dll
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck3\Fino.PlanApi.pdb
+C:\Users\Shubham\OneDrive\Desktop\new Fintech application\Fino.PlanApi\obj\slabcheck3\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\build_usercode\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\build_usercode\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\build_usercode\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\build_usercode\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\build_final\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\build_final\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\build_final\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\build_final\Fino.PlanApi.xml
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\ad776c24-3e92-41bf-9860-320580da0987\scratchpad\build_out\Fino.PlanApi.deps.json
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\ad776c24-3e92-41bf-9860-320580da0987\scratchpad\build_out\Fino.PlanApi.dll
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\ad776c24-3e92-41bf-9860-320580da0987\scratchpad\build_out\Fino.PlanApi.pdb
+C:\Users\Shubham\AppData\Local\Temp\claude\C--Users-Shubham-OneDrive-Desktop-new-Fintech-application\ad776c24-3e92-41bf-9860-320580da0987\scratchpad\build_out\Fino.PlanApi.xml

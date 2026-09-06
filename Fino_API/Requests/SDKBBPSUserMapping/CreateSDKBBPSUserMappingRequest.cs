@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.SDKBBPSUserMapping { public class CreateSDKBBPSUserMappingRequest { public int UserID { get; set; } public string ConfirmationCallbackURL { get; set; } = string.Empty; public bool IsActive { get; set; } public bool IsDelete { get; set; } } public class CreateSDKBBPSUserMappingRequestValidator : AbstractValidator<CreateSDKBBPSUserMappingRequest> { public CreateSDKBBPSUserMappingRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

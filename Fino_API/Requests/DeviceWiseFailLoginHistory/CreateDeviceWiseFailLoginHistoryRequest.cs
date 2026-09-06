@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.DeviceWiseFailLoginHistory { public class CreateDeviceWiseFailLoginHistoryRequest { public string UserName { get; set; } = string.Empty; public string DeviceID { get; set; } = string.Empty; } public class CreateDeviceWiseFailLoginHistoryRequestValidator : AbstractValidator<CreateDeviceWiseFailLoginHistoryRequest> { public CreateDeviceWiseFailLoginHistoryRequestValidator() {  } } }

@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserWisePlanView { public class CreateUserWisePlanViewRequest { public int UserID { get; set; } public int ServiceID { get; set; } public int OperatorID { get; set; } public string ConsumerNumber { get; set; } = string.Empty; public int ProviderID { get; set; } } public class CreateUserWisePlanViewRequestValidator : AbstractValidator<CreateUserWisePlanViewRequest> { public CreateUserWisePlanViewRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

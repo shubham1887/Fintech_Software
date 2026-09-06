@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.SubCategory { public class CreateSubCategoryRequest { public int CategoryID { get; set; } public string SubCategoryName { get; set; } = string.Empty; public string ShortDescription { get; set; } = string.Empty; public string LongDescription { get; set; } = string.Empty; } public class CreateSubCategoryRequestValidator : AbstractValidator<CreateSubCategoryRequest> { public CreateSubCategoryRequestValidator() {  } } }

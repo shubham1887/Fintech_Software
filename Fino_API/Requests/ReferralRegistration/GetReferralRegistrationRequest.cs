@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ReferralRegistration { public class GetReferralRegistrationRequest { public int ReferralRegistrationID { get; set; } public int UserID { get; set; } } public class GetReferralRegistrationRequestValidator : AbstractValidator<GetReferralRegistrationRequest> { public GetReferralRegistrationRequestValidator() { RuleFor(x => x.ReferralRegistrationID).GreaterThan(0); } } }

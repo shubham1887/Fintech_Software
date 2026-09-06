@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ChannelCategory { public class UpdateChannelCategoryRequest { public int ChannelCategoryID { get; set; } public string Category { get; set; } = string.Empty; } public class UpdateChannelCategoryRequestValidator : AbstractValidator<UpdateChannelCategoryRequest> { public UpdateChannelCategoryRequestValidator() { RuleFor(x => x.ChannelCategoryID).GreaterThan(0); } } }

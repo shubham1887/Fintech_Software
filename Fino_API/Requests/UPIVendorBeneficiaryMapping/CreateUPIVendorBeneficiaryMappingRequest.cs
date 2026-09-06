@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UPIVendorBeneficiaryMapping { public class CreateUPIVendorBeneficiaryMappingRequest { public int ProviderID { get; set; } public string UPIVendorBeneficiaryID { get; set; } = string.Empty; public int UpiBeneficiaryID { get; set; } } public class CreateUPIVendorBeneficiaryMappingRequestValidator : AbstractValidator<CreateUPIVendorBeneficiaryMappingRequest> { public CreateUPIVendorBeneficiaryMappingRequestValidator() {  } } }

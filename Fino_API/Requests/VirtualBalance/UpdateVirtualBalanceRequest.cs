@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.VirtualBalance { public class UpdateVirtualBalanceRequest { public int VirtualBalanceID { get; set; } public decimal Amount { get; set; } public int WalletID { get; set; } public string DOCType { get; set; } = string.Empty; public decimal OpeningBalance { get; set; } public decimal ClosingBalance { get; set; } } public class UpdateVirtualBalanceRequestValidator : AbstractValidator<UpdateVirtualBalanceRequest> { public UpdateVirtualBalanceRequestValidator() { RuleFor(x => x.VirtualBalanceID).GreaterThan(0); } } }

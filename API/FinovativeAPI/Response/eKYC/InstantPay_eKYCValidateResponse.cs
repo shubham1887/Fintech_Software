@@ -1,0 +1,66 @@
+﻿
+using Project.Processing;
+
+namespace Project.Response.eKYC
+{
+    public class InstantPay_eKYCValidateResponse
+    {
+        private string _Status;
+        public string Status
+        {
+            get => _Status.TrimIfNotNull();
+            set => _Status = value.TrimIfNotNull();
+        }
+        private string _FullName;
+        public string FullName
+        {
+            get => _FullName.TrimIfNotNull();
+            set => _FullName = value.TrimIfNotNull();
+        }
+
+        private string _Dob;
+        public string Dob
+        {
+            get => _Dob.TrimIfNotNull();
+            set => _Dob = value.TrimIfNotNull();
+        }
+
+        private string _Gender;
+        public string Gender
+        {
+            get => _Gender.TrimIfNotNull();
+            set => _Gender = value.TrimIfNotNull();
+        }
+
+        private string _Address;
+
+        public string Address
+        {
+            get => _Address.TrimIfNotNull();
+            set => _Address = value.TrimIfNotNull();
+        }
+
+
+        private string _AadhaarNumber;
+
+        public string AadhaarNumber
+        {
+            get => _AadhaarNumber.TrimIfNotNull();
+            set => _AadhaarNumber = value.TrimIfNotNull();
+        }
+
+        private string _ProfileImage;
+        public string ProfileImage
+        {
+            get => _ProfileImage.TrimIfNotNull();
+            set => _ProfileImage = value.TrimIfNotNull();
+        }
+        private string _Pin;
+        public string Pin
+        {
+            get => _Pin.TrimIfNotNull();
+            set => _Pin = value.TrimIfNotNull();
+        }
+
+    }
+}

@@ -1,0 +1,96 @@
+import { makeStyles } from '@material-ui/core/styles';
+import { commonStyle } from 'Components/CustomMaterialStyleSheets/CommonStyleSheet';
+import { PRIMARY_COLOR } from 'Config';
+import React, { useState } from 'react';
+
+const useStyles = makeStyles({
+    dashboardserviceicons: (props) => ({
+        padding: '15px',
+        borderRadius: '3px',
+        width: '100%',
+        '&:hover': {
+            background: `${props.hoverColor} !important`,
+            color: '#fff'
+        }
+    })
+});
+
+const GameIcon = (props) => {
+    // const { serviceID, value } = props;
+    // if (serviceID !== value) {
+    //     colorSelected = classes.svg_non_selected;
+    // }
+
+    const propsInline = { hoverColor: PRIMARY_COLOR() };
+
+    const classesInline = useStyles(propsInline);
+    const classes = commonStyle();
+
+    const [colorNonSelected, setColorNonSelected] = useState(
+        classes.svg_non_selected
+    );
+    const [colorSelected, setColorSelected] = useState(classes.svg_selected);
+
+    function MouseOver(event) {
+        setColorSelected(classes.svg_white);
+        setColorNonSelected(classes.svg_white);
+    }
+    function MouseOut(event) {
+        setColorSelected(classes.svg_selected);
+        setColorNonSelected(classes.svg_non_selected);
+    }
+
+    return (
+        <>
+            <div
+                className={classesInline.dashboardserviceicons}
+                onMouseOver={MouseOver}
+                onMouseOut={MouseOut}
+            >
+                <p>
+                    <svg
+                        version="1.1"
+                        id="Layer_1"
+                        xmlns="http://www.w3.org/2000/svg"
+                        x="0px"
+                        y="0px"
+                        viewBox="0 0 512 512"
+                        style={{
+                            enableBackground: 'new 0 0 512 512',
+                            width: '36px'
+                        }}
+                    >
+                        <path
+                            className={colorNonSelected}
+                            d="M490.6,244.3c-21.2-42.4-54.7-72.5-91.5-82.6c-25.7-6.1-49.7-2.8-70.3,10c-16.2,5.6-32.9,8.9-50.3,10.6v-33.5
+		c0.1-10,2.3-34,22.4-34c20.6,0,44.6-8.4,44.6-47.4c0-6.1-5-11.2-11.2-11.2c-6.1,0-11.2,5-11.2,11.2c0,21.2-7.8,25.1-22.3,25.1
+		c-27.3,0-44.6,22.3-44.3,56.4v34c-23.7-0.6-47.7-5-70-13.9c-20.6-13.4-45.2-17.3-70.9-10c-37.4,10-71.4,40.7-93.2,84.3
+		c-37.4,74.2-25.1,162.9,26.8,197.5c14.5,9.5,30.1,14.5,47.4,14.5c7.8,0,16.2-1.1,24.6-3.3c36.3-9.5,69.7-39.1,92.1-80.3
+		c29-12.3,61.9-12.3,90.9-1.1c21.8,40.7,54.7,69.2,90.4,78.7c25.7,6.7,49.7,2.8,70.3-11.2C515.1,404.5,526.8,317.4,490.6,244.3
+		L490.6,244.3z M451.5,419.5c-15.1,10-33.5,12.8-52.4,7.8c-30.1-7.8-58.6-33.5-77-69.2c-1.7-3.3-5-6.1-8.9-7.8l-2.2-0.6
+		C275.8,335.8,235.6,337,201,352c-3.3,1.7-6.1,4.5-8.4,7.8c-19,36.3-48,63.1-78.7,70.9c-19.5,5-37.9,2.2-53.6-8.4
+		c-43-28.5-51.3-104.3-19-169.1c18.4-37.4,48-64.2,79.2-72.5c6.7-1.7,12.8-2.8,19-2.8c12.8,0,24.6,3.3,35.2,10.6
+		c0.6,0.6,1.1,0.6,2.2,1.1c51.3,20.1,107.1,21.2,159,3.3l1.7-0.6c1.1-0.6,1.7-0.6,2.8-1.1c15.6-10,33.5-12.8,53-7.8
+		c30.1,7.8,59.1,34.6,77.6,70.9C502.3,317.4,493.9,391.6,451.5,419.5L451.5,419.5z"
+                        />
+                        <path
+                            className={colorSelected}
+                            d="M384.6,240.4c-27.9,0-50.2,22.3-50.2,50.2s22.3,50.2,50.2,50.2s50.2-22.3,50.2-50.2
+		C434.8,262.7,412.5,240.4,384.6,240.4z M384.6,318.5c-15.6,0-27.9-12.3-27.9-27.9c0-15.6,12.3-27.9,27.9-27.9
+		c15.6,0,27.9,12.3,27.9,27.9C412.5,306.3,400.2,318.5,384.6,318.5z"
+                        />
+                        <path
+                            className={colorSelected}
+                            d="M154.9,281H133v-21.5c0-5.7-4.2-10.8-9.9-11.3c-6.5-0.6-12,4.5-12,10.9V281H89.5c-5.7,0-10.8,4.2-11.3,9.9
+		c-0.6,6.5,4.5,12,10.9,12h21.9v21.5c0,5.7,4.2,10.8,9.9,11.3c6.5,0.6,12-4.5,12-10.9v-21.9h21.5c5.7,0,10.8-4.2,11.3-9.9
+		C166.4,286.5,161.3,281,154.9,281L154.9,281z"
+                        />
+                    </svg>
+                </p>
+                <h6>Google Play</h6>
+            </div>
+        </>
+    );
+};
+
+export default GameIcon;

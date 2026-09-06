@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.SmsTransactionMaster { public class CreateSmsTransactionMasterRequest { public int TransactionMasterID { get; set; } public int ServiceID { get; set; } public decimal Amount { get; set; } public string BillNumber { get; set; } = string.Empty; public bool IsProcess { get; set; } public bool IsSuccess { get; set; } } public class CreateSmsTransactionMasterRequestValidator : AbstractValidator<CreateSmsTransactionMasterRequest> { public CreateSmsTransactionMasterRequestValidator() {  } } }

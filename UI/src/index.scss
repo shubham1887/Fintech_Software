@@ -1,0 +1,136 @@
+@import './styles/_app';
+
+@font-face {
+    font-family: 'poppinsbold';
+    src: url('Assets/fonts/poppins-bold-webfont.woff2') format('woff2'),
+        url('Assets/fonts/poppins-bold-webfont.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'poppinslight';
+    src: url('Assets/fonts/poppins-light-webfont.woff2') format('woff2'),
+        url('Assets/fonts/poppins-light-webfont.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'poppinsmedium';
+    src: url('Assets/fonts/poppins-medium-webfont.woff2') format('woff2'),
+        url('Assets/fonts/poppins-medium-webfont.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'poppinsregular';
+    src: url('Assets/fonts/poppins-regular-webfont.woff2') format('woff2'),
+        url('Assets/fonts/poppins-regular-webfont.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'poppinssemibold';
+    src: url('Assets/fonts/poppins-semibold-webfont.woff2') format('woff2'),
+        url('Assets/fonts/poppins-semibold-webfont.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+html,
+body,
+#root {
+    width: 100%;
+    height: 100%;
+    background-color: #fff !important;
+    position: relative;
+    margin: 0;
+    /*font-family: 'poppinsregular';*/
+}
+
+.MuiAlert-standardSuccess {
+    color: rgb(255, 255, 255) !important;
+    background-color: #42b86f !important;
+}
+
+.MuiAlert-standardError {
+    color: rgb(255, 255, 255) !important;
+    background-color: rgb(213, 53, 53) !important;
+}
+
+.MuiAlert-icon {
+    color: rgb(255, 255, 255) !important;
+}
+
+.submit {
+    background: #ec008c;
+}
+
+.logo {
+    height: 100px;
+    margin: 0 0 30px 0;
+}
+
+.playstore {
+    height: 55px;
+    margin: 30px 0 0 0;
+}
+.App {
+    text-align: center;
+}
+
+.App-logo {
+    height: 40vmin;
+    pointer-events: none;
+}
+
+.MuiBackdrop-root {
+    background-color: inherit !important;
+}
+
+.MuiOutlinedInput-root {
+    border-radius: 0px !important;
+}
+.MuiButton-root {
+    border-radius: 0px !important;
+}
+
+.MuiPaper-elevation16 {
+    box-shadow: 0px 0px 10px 5px #eaeaea !important;
+}
+
+.makeStyles-paper-1 {
+    margin-top: 0px !important;
+}
+
+.gridImg {
+}
+
+.gridImg:hover {
+    transform: scale(2.5);
+}
+
+.CopyToClipBoardInput {
+    width: 91px;
+    border: none;
+    font-weight: bold;
+    color: #09f061;
+}
+.CopyToClipBoardInput:focus {
+    width: 91px;
+    border: none;
+    font-weight: bold;
+    color: #09f061;
+}
+.MuiListItemIcon-root {
+    vertical-align: middle;
+}
+
+

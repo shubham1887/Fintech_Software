@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserServiceSubscriptionCharge { public class DeleteUserServiceSubscriptionChargeRequest { public int UserServiceSubscriptionChargeID { get; set; } } public class DeleteUserServiceSubscriptionChargeRequestValidator : AbstractValidator<DeleteUserServiceSubscriptionChargeRequest> { public DeleteUserServiceSubscriptionChargeRequestValidator() { RuleFor(x => x.UserServiceSubscriptionChargeID).GreaterThan(0); } } }

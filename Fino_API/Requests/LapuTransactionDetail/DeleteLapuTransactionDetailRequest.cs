@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.LapuTransactionDetail { public class DeleteLapuTransactionDetailRequest { public int LapuTransactionDetailID { get; set; } } public class DeleteLapuTransactionDetailRequestValidator : AbstractValidator<DeleteLapuTransactionDetailRequest> { public DeleteLapuTransactionDetailRequestValidator() { RuleFor(x => x.LapuTransactionDetailID).GreaterThan(0); } } }

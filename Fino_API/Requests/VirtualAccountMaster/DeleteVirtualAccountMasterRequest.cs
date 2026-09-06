@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.VirtualAccountMaster { public class DeleteVirtualAccountMasterRequest { public int VirtualAccountMasterID { get; set; } } public class DeleteVirtualAccountMasterRequestValidator : AbstractValidator<DeleteVirtualAccountMasterRequest> { public DeleteVirtualAccountMasterRequestValidator() { RuleFor(x => x.VirtualAccountMasterID).GreaterThan(0); } } }

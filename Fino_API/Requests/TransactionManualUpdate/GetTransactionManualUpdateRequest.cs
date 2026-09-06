@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.TransactionManualUpdate { public class GetTransactionManualUpdateRequest { public int TransactionManualUpdateID { get; set; } } public class GetTransactionManualUpdateRequestValidator : AbstractValidator<GetTransactionManualUpdateRequest> { public GetTransactionManualUpdateRequestValidator() { RuleFor(x => x.TransactionManualUpdateID).GreaterThan(0); } } }

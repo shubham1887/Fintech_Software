@@ -1,0 +1,33 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "fino-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "Fino_Web",
+        "run",
+        "dev"
+      ],
+      "port": 3000,
+      "autoPort": false
+    },
+    {
+      "name": "fino-web-3100",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "Fino_Web",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "3100",
+        "--strictPort"
+      ],
+      "port": 3100,
+      "autoPort": false
+    }
+  ]
+}

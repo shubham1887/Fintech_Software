@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserServiceSubscriptionCharge { public class GetUserServiceSubscriptionChargeRequest { public int UserServiceSubscriptionChargeID { get; set; } public int UserID { get; set; } } public class GetUserServiceSubscriptionChargeRequestValidator : AbstractValidator<GetUserServiceSubscriptionChargeRequest> { public GetUserServiceSubscriptionChargeRequestValidator() { RuleFor(x => x.UserServiceSubscriptionChargeID).GreaterThan(0); } } }

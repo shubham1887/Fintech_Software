@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.OperationalHistory { public class GetOperationalHistoryRequest { public int OperationalHistoryID { get; set; } public int UserID { get; set; } } public class GetOperationalHistoryRequestValidator : AbstractValidator<GetOperationalHistoryRequest> { public GetOperationalHistoryRequestValidator() { RuleFor(x => x.OperationalHistoryID).GreaterThan(0); } } }

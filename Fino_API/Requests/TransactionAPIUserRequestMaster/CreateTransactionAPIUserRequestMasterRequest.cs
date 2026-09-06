@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.TransactionAPIUserRequestMaster { public class CreateTransactionAPIUserRequestMasterRequest { public int UserID { get; set; } public string ApiUserRequestID { get; set; } = string.Empty; } public class CreateTransactionAPIUserRequestMasterRequestValidator : AbstractValidator<CreateTransactionAPIUserRequestMasterRequest> { public CreateTransactionAPIUserRequestMasterRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

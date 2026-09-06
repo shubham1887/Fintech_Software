@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserwiseServiceChargeMaster { public class CreateUserwiseServiceChargeMasterRequest { public int ServiceID { get; set; } public int UserID { get; set; } public decimal OneTime { get; set; } public bool IsDelete { get; set; } } public class CreateUserwiseServiceChargeMasterRequestValidator : AbstractValidator<CreateUserwiseServiceChargeMasterRequest> { public CreateUserwiseServiceChargeMasterRequestValidator() { RuleFor(x => x.UserID).GreaterThan(0); } } }

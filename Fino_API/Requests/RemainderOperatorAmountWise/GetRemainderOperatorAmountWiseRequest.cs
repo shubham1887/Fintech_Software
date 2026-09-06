@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.RemainderOperatorAmountWise { public class GetRemainderOperatorAmountWiseRequest { public int RemainderOperatorAmountWiseID { get; set; } } public class GetRemainderOperatorAmountWiseRequestValidator : AbstractValidator<GetRemainderOperatorAmountWiseRequest> { public GetRemainderOperatorAmountWiseRequestValidator() { RuleFor(x => x.RemainderOperatorAmountWiseID).GreaterThan(0); } } }

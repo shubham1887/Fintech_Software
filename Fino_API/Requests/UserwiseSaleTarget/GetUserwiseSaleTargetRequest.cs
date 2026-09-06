@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.UserwiseSaleTarget { public class GetUserwiseSaleTargetRequest { public int UserwiseSaleTargetID { get; set; } public int UserID { get; set; } } public class GetUserwiseSaleTargetRequestValidator : AbstractValidator<GetUserwiseSaleTargetRequest> { public GetUserwiseSaleTargetRequestValidator() { RuleFor(x => x.UserwiseSaleTargetID).GreaterThan(0); } } }

@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.CategoryChannelMapping { public class DeleteCategoryChannelMappingRequest { public int CategoryChannelMappingID { get; set; } } public class DeleteCategoryChannelMappingRequestValidator : AbstractValidator<DeleteCategoryChannelMappingRequest> { public DeleteCategoryChannelMappingRequestValidator() { RuleFor(x => x.CategoryChannelMappingID).GreaterThan(0); } } }

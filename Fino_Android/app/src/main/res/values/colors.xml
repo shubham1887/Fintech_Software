@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      brand_primary / brand_accent / brand_splash are NOT declared here -
+      they are generated per client from whitelabel/clients.json.
+    -->
+    <color name="text_primary">#0F172A</color>
+    <color name="text_muted">#64748B</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="divider">#E2E8F0</color>
+</resources>

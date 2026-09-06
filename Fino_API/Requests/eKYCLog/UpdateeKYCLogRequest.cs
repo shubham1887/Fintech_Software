@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.eKYCLog { public class UpdateeKYCLogRequest { public int eKYCLogID { get; set; } public string DocumentNo { get; set; } = string.Empty; public int UserID { get; set; } public string Response { get; set; } = string.Empty; public string DocumentType { get; set; } = string.Empty; } public class UpdateeKYCLogRequestValidator : AbstractValidator<UpdateeKYCLogRequest> { public UpdateeKYCLogRequestValidator() { RuleFor(x => x.eKYCLogID).GreaterThan(0); } } }

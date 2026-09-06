@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.AndroidSectionMaster { public class UpdateAndroidSectionMasterRequest { public int AndroidSectionMasterID { get; set; } public string SectionName { get; set; } = string.Empty; } public class UpdateAndroidSectionMasterRequestValidator : AbstractValidator<UpdateAndroidSectionMasterRequest> { public UpdateAndroidSectionMasterRequestValidator() { RuleFor(x => x.AndroidSectionMasterID).GreaterThan(0); } } }

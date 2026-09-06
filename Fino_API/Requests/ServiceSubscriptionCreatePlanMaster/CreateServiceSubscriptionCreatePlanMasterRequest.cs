@@ -1,0 +1,2 @@
+﻿using FluentValidation;
+namespace FintechApp.Requests.ServiceSubscriptionCreatePlanMaster { public class CreateServiceSubscriptionCreatePlanMasterRequest { public string PlanName { get; set; } = string.Empty; public decimal Amount { get; set; } public string ImageURL { get; set; } = string.Empty; public bool IsDefault { get; set; } } public class CreateServiceSubscriptionCreatePlanMasterRequestValidator : AbstractValidator<CreateServiceSubscriptionCreatePlanMasterRequest> { public CreateServiceSubscriptionCreatePlanMasterRequestValidator() {  } } }
