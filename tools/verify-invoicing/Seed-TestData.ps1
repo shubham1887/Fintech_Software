@@ -92,6 +92,31 @@ BEGIN
     PRINT CONCAT('Parties: registered=', @Regd, ', unregistered=', @Unregd);
 END
 
+/* An exchange partner, and a reciprocal swap: we credit them 50,000 and they credit us 50,000.
+   The party balance nets to zero, which is the whole point - the turnover is 1,00,000. */
+IF @Unregd IS NOT NULL
+BEGIN
+    UPDATE dbo.PartyTaxProfiles
+       SET IsExchangePartner = 0, ExchangeAgreementRef = 'ZZPROBE-AGREEMENT', UpdatedateTime = SYSDATETIME()
+     WHERE UserID = @Unregd;
+
+    DECLARE @Admin2 int = (SELECT TOP 1 UserMasterID FROM dbo.UserMasters WHERE UserTypeID = 1 ORDER BY UserMasterID);
+
+    DELETE FROM dbo.ExchangePartnerLegs;
+    DELETE FROM dbo.FundTransactions WHERE Remark = 'ZZSWAP';
+    INSERT INTO dbo.FundTransactions (SenderID, ReceiverID, WalletID, Amount, OriginalAmount, CashCollectionAmount,
+      SenderOpeningBalance, SenderClosingBalance, ReceiverOpeningBalance, ReceiverClosingBalance, Remark, UTRNumber,
+      Status, Type, AdminRemark, PayMode, Through, RequestToID, CashCollectionRemark, Description, BankName,
+      ReceiptPath, TransactionDOC, TransactionDOCInt, IsDelete, RequestAcceptedUserID, [DateTime], UpdatedateTime, IsDeleted)
+    VALUES
+      -- OUTWARD: we credited them. Our supply, our invoice.
+      (@Admin2, @Unregd,  9, 50000.00, 50000.00, 0, 0,0,0,0, 'ZZSWAP','', 'SUCCESS','TRANSFER','','','',@Admin2,'','','','', SYSDATETIME(), 0, 0, 0, '2026-11-12T11:00:00', SYSDATETIME(), 0),
+      -- INWARD: they credited us. Their supply, their invoice - which we have to obtain.
+      (@Unregd, @Admin2,  9, 50000.00, 50000.00, 0, 0,0,0,0, 'ZZSWAP','', 'SUCCESS','TRANSFER','','','',@Admin2,'','','','', SYSDATETIME(), 0, 0, 0, '2026-11-12T16:00:00', SYSDATETIME(), 0);
+
+    PRINT CONCAT('Exchange partner: ', @Unregd, ' with a 50,000 each-way swap in November.');
+END
+
 /* The numbering series the verifier allocates from. */
 IF NOT EXISTS (SELECT 1 FROM dbo.TaxDocumentSeries WHERE SeriesCode='SALE-TAX' AND CompanyGSTIN='$CompanyGstin' AND FinancialYear='2627')
     INSERT INTO dbo.TaxDocumentSeries (SeriesCode,DocumentType,CompanyGSTIN,Prefix,FinancialYear,CurrentNumber,NumberLength,ResetPolicy,IsActive,[DateTime],UpdatedateTime,IsDeleted)

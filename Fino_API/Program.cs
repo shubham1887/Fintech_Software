@@ -772,6 +772,10 @@ builder.Services.AddScoped<ITaxDocumentNumberService, TaxDocumentNumberService>(
 // Generates sale documents from wallet top-ups and from commission, idempotently - a source
 // already covered by an annexure row cannot be invoiced twice (unique index, not bookkeeping).
 builder.Services.AddScoped<ITaxInvoiceService, TaxInvoiceService>();
+// Finds both halves of a reciprocal wallet swap. Under GST s.7(1)(a) barter is supply and each
+// leg is taxable, so the turnover is the SUM of the legs - the net, which is what a swap looks
+// like from the wallet, is exactly how that turnover goes missing.
+builder.Services.AddScoped<IExchangeLegService, ExchangeLegService>();
 builder.Services.AddScoped<ITrustableDeviceService, TrustableDeviceService>();
 builder.Services.AddScoped<IUserMerchantMasterRepository, UserMerchantMasterRepository>();
 builder.Services.AddScoped<IUserMerchantMasterService, UserMerchantMasterService>();

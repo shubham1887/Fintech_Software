@@ -27,5 +27,16 @@ namespace FintechApp.Interfaces.Services
         /// for the period, with the underlying transactions in the annexure.
         /// </summary>
         Task<InvoiceGenerationResult> GenerateCommissionInvoices(InvoiceGenerationRequest request);
+
+        /// <summary>
+        /// Raise our sale invoice for ONE outward exchange leg.
+        ///
+        /// Here rather than in the exchange service so that every document this system issues is
+        /// written by the same code: one place that allocates a number, builds the header, the
+        /// line and the annexure, and links the source. A second writer would drift from this one,
+        /// and a document that drifts is a document that does not reconcile.
+        /// </summary>
+        Task<(GeneratedDocument? Document, string FailureMessage)> IssueExchangeLegInvoice(
+            int exchangePartnerLegID, InvoiceGenerationRequest request);
     }
 }

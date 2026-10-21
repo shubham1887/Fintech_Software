@@ -89,6 +89,36 @@ namespace FintechApp.StaticModels
         public static readonly string[] All = { PrincipalToPrincipal, Agent };
     }
 
+    /// <summary>
+    /// Which way a leg of a reciprocal wallet swap ran.
+    ///
+    /// The asymmetry matters: an OUTWARD leg is our own supply, so we can and must raise the
+    /// invoice ourselves. An INWARD leg is the partner's supply, so the document has to be
+    /// obtained from them — it cannot be generated, only chased, which is why those legs sit in a
+    /// queue instead of quietly resolving themselves.
+    /// </summary>
+    public static class ExchangeLegDirection
+    {
+        /// <summary>We credited them. Our sale.</summary>
+        public const string Outward = "OUTWARD";
+
+        /// <summary>They credited us. Their sale, our purchase.</summary>
+        public const string Inward = "INWARD";
+    }
+
+    /// <summary>Whether a leg has the document it needs.</summary>
+    public static class ExchangeDocumentStatus
+    {
+        public const string Invoiced = "Invoiced";
+
+        /// <summary>The queue. On an inward leg this means the partner's invoice has not arrived.</summary>
+        public const string AwaitingDocument = "AwaitingDocument";
+
+        /// <summary>Given up on, with a reason. Deliberately explicit: a leg that is simply left
+        /// awaiting for ever is indistinguishable from one nobody looked at.</summary>
+        public const string WrittenOff = "WrittenOff";
+    }
+
     /// <summary>GST registration status of the other party, which picks the document route:
     /// a tax invoice to a registered party, a consolidated B2C invoice to an unregistered one,
     /// and a self-invoice where we have to pay the tax ourselves.</summary>

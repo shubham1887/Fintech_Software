@@ -89,6 +89,83 @@ using (var c = new ApplicationDbContext(opts))
     Expect("headers still", c.TaxInvoiceHeaders.Count(), 2);
 }
 
+// Exchange cases run on NOVEMBER so they cannot collide with the October top-up cases: a credit
+// to a partner is also a wallet top-up, and keeping the two in one period is what made the design
+// issue visible in the first place.
+InvoiceGenerationRequest ReqNov(bool dry) => new()
+{
+    PeriodFrom = new DateTime(2026, 11, 1), PeriodTo = new DateTime(2026, 11, 30),
+    CompanyGSTIN = Gstin, SupplierStateCode = State, DryRun = dry, CreatedByUserID = 1,
+};
+
+// ── 5. Exchange legs ─────────────────────────────────────────────────────────────────
+// A 50,000 swap each way. The party balance nets to zero - that is exactly why this is the
+// biggest suspect behind missing turnover - but under GST s.7(1)(a) each leg is a taxable supply,
+// so the turnover is 1,00,000.
+Console.WriteLine("\n5. EXCHANGE LEGS - detection");
+ExchangeLegService Exch(ApplicationDbContext c) => new(c, Svc(c));
+
+// The flag goes on HERE, not in the fixture, so cases 1-4 run with no exchange partner at all.
+// That separation is deliberate: a credit to a flagged partner is treated as an exchange supply
+// and handed to this register, so leaving the flag on would have pulled party 3's ordinary
+// top-ups out of the B2C consolidation case above — which is how the design issue showed up.
+using (var c = new ApplicationDbContext(opts))
+{
+    var p = c.PartyTaxProfiles.Single(x => x.UserID == 3);
+    p.IsExchangePartner = true;
+    await c.SaveChangesAsync();
+    Console.WriteLine("   (party 3 flagged as an exchange partner)");
+}
+using (var c = new ApplicationDbContext(opts))
+{
+    var r = await Exch(c).DetectLegs(ReqNov(dry: false));
+    foreach (var w in r.Warnings) Console.WriteLine($"   warn: {w[..Math.Min(130, w.Length)]}");
+    Expect("outward legs", r.OutwardLegsCreated, 1);
+    Expect("inward legs", r.InwardLegsCreated, 1);
+}
+
+Console.WriteLine("\n6. EXCHANGE LEGS - re-detection must create nothing");
+using (var c = new ApplicationDbContext(opts))
+{
+    var r = await Exch(c).DetectLegs(ReqNov(dry: false));
+    Expect("outward legs", r.OutwardLegsCreated, 0);
+    Expect("inward legs", r.InwardLegsCreated, 0);
+    Expect("already known", r.LegsAlreadyKnown, 2);
+}
+
+Console.WriteLine("\n7. EXCHANGE LEGS - our side gets invoiced, theirs does not");
+using (var c = new ApplicationDbContext(opts))
+{
+    var r = await Exch(c).InvoiceOutwardLegs(ReqNov(dry: false));
+    Expect("documents", r.DocumentsGenerated, 1);
+    foreach (var d in r.Documents)
+        Console.WriteLine($"   -> {d.DocumentNo} to party {d.PartyUserID}: gross {d.GrossTotal:N2}, taxable {d.TaxableTotal:N2}, tax {d.TaxTotal:N2}");
+    var outwardLeg = c.ExchangePartnerLegs.Single(l => l.Direction == "OUTWARD");
+    var inwardLeg = c.ExchangePartnerLegs.Single(l => l.Direction == "INWARD");
+    Expect("outward status", outwardLeg.DocumentStatus, "Invoiced");
+    Expect("outward has document", outwardLeg.TaxInvoiceHeaderID.HasValue, true);
+    Expect("inward status", inwardLeg.DocumentStatus, "AwaitingDocument");
+    Expect("inward has no document", inwardLeg.TaxInvoiceHeaderID.HasValue, false);
+    // The document must know it is an exchange supply, or a barter reads back as an ordinary sale.
+    var hdr = c.TaxInvoiceHeaders.Single(h => h.TaxInvoiceHeaderID == outwardLeg.TaxInvoiceHeaderID);
+    Expect("header links the leg", hdr.ExchangePartnerLegID, outwardLeg.ExchangePartnerLegID);
+}
+
+Console.WriteLine("\n8. EXCHANGE REGISTER - net hides it, turnover reports it");
+using (var c = new ApplicationDbContext(opts))
+{
+    var reg = await Exch(c).GetRegister(new DateTime(2026, 11, 1), new DateTime(2026, 11, 30));
+    foreach (var row in reg.Rows)
+        Console.WriteLine($"   party {row.PartnerUserID} {row.PeriodKey}: outward {row.OutwardAmount:N2}, inward {row.InwardAmount:N2}, "
+                        + $"net {row.NetPosition:N2}, TURNOVER {row.TotalTurnover:N2}, awaiting {row.InwardAwaitingDocument}");
+    Expect("total outward", reg.TotalOutward, 50000.00m);
+    Expect("total inward", reg.TotalInward, 50000.00m);
+    Expect("net position", reg.Rows[0].NetPosition, 0.00m);          // looks like nothing happened
+    Expect("total turnover", reg.TotalTurnover, 100000.00m);         // what the return needs
+    Expect("awaiting document", reg.TotalAwaitingDocument, 1);       // their invoice, not ours
+    Expect("awaiting amount", reg.TotalAwaitingAmount, 50000.00m);
+}
+
 Console.WriteLine();
 Console.WriteLine(bad == 0 ? "ALL CHECKS PASSED" : $"{bad} CHECK(S) FAILED");
 return bad == 0 ? 0 : 1;
