@@ -5,8 +5,9 @@ Phase numbering follows the blueprint's Section 14 roadmap.
 
 **Last updated:** 21 October 2026
 **Branch:** `claude/accountant-role-and-gst-phase0`
-**Deployed to production:** only the Accountant role (API + DB). Everything in Phases 1 and 2 has
-run on the dev database `FintechApp` only — `finocore_db` has not been touched by it.
+**Deployed to production:** Accountant role, **and all of Phases 1 and 2** (API + UI + schema), on
+21 October 2026. `finocore_db` carries all 14 GST tables and 56 seeded rules. Document series is
+still empty because `dbo.InvoiceSettings` has no row — see prompt 1 below.
 
 ---
 
@@ -238,46 +239,73 @@ Each of these cost a build-and-deploy cycle already.
 
 ## What to ask for next
 
-Copy one of these as the next prompt. They are in dependency order; the first two can be done in
-either order.
+Copy one of these as the next prompt, in order. Prompt 1 is a blocker: until the company GSTIN is
+in `dbo.InvoiceSettings`, `60_seed_document_series.sql` seeds nothing and **no document of any kind
+can be issued** — the engine and the simulator work, the document side is inert.
 
-### 1. The document screens (the API for them already exists)
+### 1. Invoice Settings form — the blocker
 
-> GST ke baaki screens bana do — invoice list aur detail (annexure ke saath, taaki "is figure
-> mein kaun kaun si transaction hai" ka jawab mile), exchange register (net aur turnover dono
-> saath mein), IRN queue with deadline alerts, aur credit-note window alerts. Endpoints sab ban
-> chuke hain aur ApiAccessPolicy mein registered hain — sirf screens chahiye. Menu entries role
-> [1, 9] par, aur jo button Admin-only endpoint call karta hai use accountant ke liye hide karo.
+> Panel mein Invoice Settings ka form bana do. Abhi wo screen sirf read-only list hai
+> (`registry.ts` mein `list('/InvoiceSettings', ...)`), isliye company GSTIN kahin se bhar hi nahi
+> sakta. API ke endpoints pehle se hain — `InvoiceSetting/Create`, `/Update`, `/GetById`. Dhyaan
+> rakho: live `InvoiceSettings` ke saare 23 columns NOT NULL hain aur kisi par default nahi hai,
+> toh form ko khaali field par `null` ke bajaye empty string bhejna hoga warna "Cannot insert the
+> value NULL" milega. GSTIN par validation: 15 character, aur pehle 2 digit State field se match
+> karein. Form bharne ke baad `60_seed_document_series.sql` dobara chalana hai (idempotent hai),
+> taaki paanch series ban jayein.
 
-### 1b. Then put it in front of the CA
+### 2. The document screens (their API already exists)
 
-> Dev par Phase 1 + Phase 2 deploy karke accountant login se screens kholo aur verify karo ki
-> simulator aur document screens dono chalte hain. UI aur API dono build karke
-> `C:\inetpub\wwwroot\ui.finocore.net` aur `api.finocore.net` par mat daalna jab tak dev par
-> poora chal na jaye.
+> GST ke baaki screens bana do — invoice list aur detail (annexure ke saath, taaki "is figure mein
+> kaun kaun si transaction hai" ka jawab mile), exchange register (net aur turnover dono saath
+> mein), IRN queue with deadline alerts, aur credit-note window alerts. Endpoints sab ban chuke
+> hain aur ApiAccessPolicy mein registered hain — sirf screens chahiye. Menu entries role [1, 9]
+> par. Jo button Admin-only endpoint call karta hai (Generate*, Issue*, Supersede, ProcessQueue,
+> InvoiceOutward) use accountant ke liye hide karo — server already refuse karega, par button
+> dikhana jisko dabane ka haq nahi hai, wo bug hai.
 
-### 2. Phase 3 — purchase and GSTR-2B
+### 3. Mixed-basis wallets — needs a decision, not code
+
+> Mixed-basis wallet wali problem par options do aur recommendation do: services ko alag wallets
+> par karein, ya un wallets ka revenue commission par invoice karein. Abhi koi bhi real wallet
+> top-up invoicing ke liye qualify nahi karta kyunki teeno wallets GROSS ko CHARGE/COMMISSION ke
+> saath mila dete hain, aur generator sahi se refuse kar deta hai. Saath mein production par Phase
+> 0 ki reports chala ke CA ke liye teen number nikalo.
+
+### 4. Phase 3 — purchase and GSTR-2B
 
 > Phase 3 shuru karo — purchase invoice capture (e-invoice JSON import sameth), provider wallet se
 > three-way reconciliation, GSTR-2B import aur 4-bucket recon, ITC register, aur Rule 37 / Section
 > 16(4) ke deadline alerts. Dhyaan rahe: 2B match mein tax figure par exact compare nahi, ±0.05 ki
 > tolerance chahiye — Ezytm aur Erech alag tareeke se tax derive karte hain.
 
-### 3. Phase 4 — double-entry ledger
+### 5. Make the IRN queue actually run
+
+> IRP gateway ka asli implementation bana do (GSP ya NIC, credentials appsettings se), aur Hangfire
+> par ProcessQueue, credit-note window alerts aur IRN deadline alerts ko schedule karo.
+> NotConfiguredEInvoiceGateway ko replace karna hai, hatana nahi — wo naye installs ka default
+> rahega.
+
+### 6. Phase 4 — double-entry ledger
 
 > Phase 4 bana do — chart of accounts, posting rules (event se Dr/Cr), outbox posting engine jo
 > chup-chaap fail na ho, AcctVoucher tables, period lock, aur roz chalne wale integrity checks
 > (trial balance, wallet vs control account, provider wallet vs stock).
 
-### 4. Before any of it touches production
+---
 
-> Mixed-basis wallet wali problem par options do aur recommendation do — services ko alag wallets
-> par karein ya un wallets ka revenue commission par invoice karein. Phir production par Phase 0
-> ki reports chala ke CA ke liye teen number nikalo.
+## Rules to repeat in any prompt that deploys
 
-### 5. Make the IRN queue actually run
+These are the ones that have already cost a round each. Paste them into any prompt that touches
+production:
 
-> IRP gateway ka asli implementation bana do (GSP ya NIC, credentials appsettings se), aur
-> Hangfire par ProcessQueue, credit-note window alerts aur IRN deadline alerts ko schedule karo.
-> NotConfiguredEInvoiceGateway ko replace karna hai, hatana nahi — wo naye installs ka default
-> rahega.
+> Deploy karte waqt: build **working tree se** karna, HEAD se nahi — git server se hafton peeche
+> hai aur HEAD se build karne par live ke features mit jayenge. Pehle `finocore_db` ka backup lo
+> aur `RESTORE VERIFYONLY` se verify karo. Schema scripts pehle live ke ek throwaway copy par
+> chala ke dekho, live par seedha nahi. API self-contained publish (`-r win-x64
+> --self-contained true`), robocopy `/E` — `/MIR` kabhi nahi. `appsettings*.json`, `version.json`,
+> `fcm-service-account.json`, `web.config` copy se exclude karo; UI mein `config.json` aur
+> `app-config.json` exclude karo. Deploy ke baad FintechApp.dll ka SHA-256 publish folder se match
+> karao — warna incremental build ke chalte robocopy sab skip kar dega aur deploy no-op dikhega.
+> Commit karte waqt sirf apni files stage karo; shared file ke liye HEAD-plus-apni-lines index
+> mein daalo (`git hash-object -w` + `git update-index --cacheinfo`), `git add` se nahi.
