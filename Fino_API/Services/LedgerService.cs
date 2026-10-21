@@ -29,10 +29,14 @@ namespace FintechApp.Services
         private const string DOCType_FundReceive = "FundReceive";
         private const string DOCType_FundReverse = "FundReverse";
 
-        private const string Through_RequestTransfer = "BY_REQUEST_TRANSFER";
+        // FundTransaction.Through values — these MUST match what FundService writes. The two request-
+        // approval values were "BY_"-prefixed here, a spelling nothing ever wrote, so approved fund
+        // requests and approved reverse requests matched nothing and were missing from these figures.
+        // See the note in TodaySummaryService.
+        private const string Through_RequestTransfer = "REQUEST_TRANSFER";
         private const string Through_DirectTransfer = "DIRECT_TRANSFER";
         private const string Through_DirectReverse = "DIRECT_REVERSE";
-        private const string Through_ReverseRequest = "BY_REVERSE_REQUEST_TRANSFER";
+        private const string Through_ReverseRequest = "REVERSE_REQUEST_TRANSFER";
         private const string Through_PGTransfer = "PG-TRANSFER";
         private const string Through_ECollection = "E-COLLECTION";
 
@@ -362,7 +366,9 @@ namespace FintechApp.Services
             var response = new AdminReconciliationWrapper();
             try
             {
-                if (userTypeID != UserTypeID_Admin && userTypeID != UserTypeCode.SupportUser)
+                // Admin / Support and the Accountant read the reconciliation; everyone else is
+                // refused. See StaticModels/ReportScope.cs for why this is one shared test.
+                if (!ReportScope.IsNetworkWide(userTypeID))
                     return (Messages.Common.Message.InvalidRequest, null);
 
                 if (string.IsNullOrWhiteSpace(request.FromDate) || string.IsNullOrWhiteSpace(request.ToDate))

@@ -10,7 +10,10 @@ using FintechApp.StaticModels;
 
 namespace FintechApp.Services
 {
-    public class UserService : IUserService
+    // Split across two files: this one holds the user lifecycle the panel drives, and
+    // UserService.Network.cs holds the network-shape operations (User Transfer) and the
+    // change-history report they all write to.
+    public partial class UserService : IUserService
     {
         private readonly IUserRepository _userRepository;
         private readonly IUserWalletMasterRepository _userWalletMasterRepository;
@@ -24,6 +27,12 @@ namespace FintechApp.Services
         private readonly IVerificationDocumentConfigRepository _verificationDocumentConfigRepository;
         private readonly IUserDocumentMasterRepository _userDocumentMasterRepository;
         private readonly IUserCodeService _userCodeService;
+        // Audit for wallet holds — who froze what, on which wallet, and why.
+        private readonly IWalletHoldHistoryRepository _walletHoldHistoryRepository;
+        // Audit for the user record itself — who changed what, from what to what, why, from where.
+        private readonly IUserChangeHistoryRepository _changeHistoryRepository;
+        private readonly IAuditContextService _auditContext;
+        private readonly Logger _logger = new();
 
         private const string OTPType2FA = "2FADeactivate";
 
@@ -39,7 +48,10 @@ namespace FintechApp.Services
             IUserServiceMappingRepository userServiceMappingRepository,
             IVerificationDocumentConfigRepository verificationDocumentConfigRepository,
             IUserDocumentMasterRepository userDocumentMasterRepository,
-            IUserCodeService userCodeService)
+            IUserCodeService userCodeService,
+            IWalletHoldHistoryRepository walletHoldHistoryRepository,
+            IUserChangeHistoryRepository changeHistoryRepository,
+            IAuditContextService auditContext)
         {
             _userRepository = userRepository;
             _userWalletMasterRepository = userWalletMasterRepository;
@@ -53,6 +65,93 @@ namespace FintechApp.Services
             _verificationDocumentConfigRepository = verificationDocumentConfigRepository;
             _userDocumentMasterRepository = userDocumentMasterRepository;
             _userCodeService = userCodeService;
+            _walletHoldHistoryRepository = walletHoldHistoryRepository;
+            _changeHistoryRepository = changeHistoryRepository;
+            _auditContext = auditContext;
+        }
+
+        // ── User change audit ──────────────────────────────────────────────────────────────
+        //
+        // Every change this service makes to a user record is written here: what changed, from what
+        // to what, who did it, why, and from which IP / channel. Append-only — a correction is its
+        // own row — so the report reads as a ledger rather than as a single "last modified" stamp.
+        //
+        // Audit writes never fail the operation they describe. A change that has already been
+        // committed to UserMaster must not be rolled back (or reported as failed) because its log
+        // row could not be written; the exception is logged instead.
+
+        /// <summary>Action names used on UserChangeHistory. Kept in one place so the report's
+        /// filter dropdown and the write sites cannot drift apart.</summary>
+        public static class ChangeAction
+        {
+            public const string Create = "CREATE";
+            public const string Update = "UPDATE";
+            public const string Activate = "ACTIVATE";
+            public const string Deactivate = "DEACTIVATE";
+            public const string Delete = "DELETE";
+            public const string Restore = "RESTORE";
+            public const string Transfer = "TRANSFER";
+            public const string CommissionHold = "COMMISSION_HOLD";
+            public const string CommissionRelease = "COMMISSION_RELEASE";
+            public const string AppAccess = "APP_ACCESS";
+            public const string WebAccess = "WEB_ACCESS";
+            public const string Invoice = "INVOICE";
+            public const string PasswordReset = "PASSWORD_RESET";
+            public const string Hold = "BALANCE_HOLD";
+            public const string HoldRelease = "BALANCE_RELEASE";
+            public const string TwoFactor = "TWO_FACTOR";
+
+            /// <summary>Every action, for the report's filter list.</summary>
+            public static readonly string[] All =
+            {
+                Create, Update, Activate, Deactivate, Delete, Restore, Transfer,
+                CommissionHold, CommissionRelease, AppAccess, WebAccess, Invoice,
+                PasswordReset, Hold, HoldRelease, TwoFactor,
+            };
+        }
+
+        /// <summary>Build one history row. Values are stored as text and clipped to the column width.</summary>
+        private UserChangeHistory ChangeRow(int userID, int byUserID, string action, string field,
+            string? oldValue, string? newValue, string? reason)
+        {
+            DateTime now = DateTime.UtcNow;
+            return new UserChangeHistory
+            {
+                UserID = userID,
+                ChangedByUserID = byUserID,
+                Action = action,
+                FieldName = Clip(field, 100),
+                OldValue = Clip(oldValue, 1000),
+                NewValue = Clip(newValue, 1000),
+                Reason = Clip(reason, 500),
+                IPAddress = Clip(_auditContext.IPAddress, 64),
+                Platform = Clip(_auditContext.Platform, 20),
+                DateTime = now,
+                UpdatedateTime = now,
+                IsDeleted = false,
+            };
+        }
+
+        private static string Clip(string? value, int max)
+        {
+            if (string.IsNullOrEmpty(value)) return string.Empty;
+            return value.Length <= max ? value : value[..max];
+        }
+
+        /// <summary>Record one change. Never throws.</summary>
+        private async Task LogChange(int userID, int byUserID, string action, string field,
+            string? oldValue, string? newValue, string? reason)
+        {
+            try { await _changeHistoryRepository.Insert(ChangeRow(userID, byUserID, action, field, oldValue, newValue, reason)); }
+            catch (Exception ex) { _logger.Write(ex); }
+        }
+
+        /// <summary>Record a set of changes made by one operation. Never throws.</summary>
+        private async Task LogChanges(List<UserChangeHistory> rows)
+        {
+            if (rows.Count == 0) return;
+            try { await _changeHistoryRepository.InsertRange(rows); }
+            catch (Exception ex) { _logger.Write(ex); }
         }
 
         private static string HashPassword(string password)
@@ -98,6 +197,7 @@ namespace FintechApp.Services
             IsLoginOTP = u.IsLoginOTP,
             IsPin = u.IsPin,
             AliasName = u.AliasName ?? string.Empty,
+            LinkedPrimaryUserID = u.LinkedPrimaryUserID,
             UniqueReferenceNo = u.UniqueReferenceNo,
             ProfileImagePath = u.ProfileImagePath,
             ShopAddress = u.ShopAddress ?? string.Empty,
@@ -170,6 +270,65 @@ namespace FintechApp.Services
             if (request.UserTypeID <= 0)
                 return "Please select a valid user type.";
 
+            // ---- Who may create what, and under whom -------------------------------------
+            // Add User used to take the role and the ParentID straight off the form: a
+            // distributor could name any role and any parent, so the user they created need not
+            // end up in their own network at all. The caller's own tier decides both now.
+            var creator = await _userRepository.GetUserById(currentUserID);
+            if (creator == null) return Messages.UserMessages.UserNotFound;
+
+            int creatorRole = creator.UserTypeID ?? 0;
+            if (!CreatableRoles.TryGetValue(creatorRole, out var creatable))
+                return "Your account type cannot create users.";
+            if (!creatable.Contains(request.UserTypeID))
+                return "You cannot create a user of this type.";
+
+            bool creatorIsAdminTier = creatorRole == UserTypeCode.Admin || creatorRole == UserTypeCode.SupportUser;
+            int parentID;
+            if (creatorIsAdminTier)
+            {
+                // Admin picks the upline, so it is validated: it has to exist, be live, and be a
+                // legal tier for the role being created. Admin's own id (or nothing) = under admin.
+                parentID = request.ParentID is int chosen && chosen > 0 ? chosen : currentUserID;
+                if (parentID != currentUserID)
+                {
+                    var chosenParent = await _userRepository.GetUserById(parentID);
+                    if (chosenParent == null || chosenParent.IsDeleted) return "The selected upline user was not found.";
+                    if (!chosenParent.IsActive) return "The selected upline is deactivated. Activate it first.";
+                    if (AllowedParentTiers.TryGetValue(request.UserTypeID, out var tiers)
+                        && !tiers.Contains(chosenParent.UserTypeID ?? 0))
+                        return "The selected upline is not a valid tier for this user's role.";
+                }
+            }
+            else
+            {
+                // A super-distributor or distributor creating a user keeps that user inside their
+                // OWN branch. The upline may be the creator themselves or one of their own
+                // downline users whose tier is legal for the role being created — so a
+                // super-distributor can hand a new retailer straight to one of its distributors,
+                // which is how onboarding actually runs, without ever naming someone outside its
+                // network. Anything the form sends that is not in the branch is refused rather
+                // than silently re-pointed, so a mis-set picker is visible instead of surprising.
+                parentID = currentUserID;
+                if (request.ParentID is int picked && picked > 0 && picked != currentUserID)
+                {
+                    var branch = await _userRepository.GetAllUsers();
+                    if (!UserHierarchy.GetDownlineIds(branch, currentUserID).Contains(picked))
+                        return "The selected upline is outside your network.";
+
+                    var pickedParent = branch.FirstOrDefault(u => u.UserMasterID == picked);
+                    if (pickedParent == null || pickedParent.IsDeleted)
+                        return "The selected upline user was not found.";
+                    if (!pickedParent.IsActive)
+                        return "The selected upline is deactivated. Activate it first.";
+                    if (AllowedParentTiers.TryGetValue(request.UserTypeID, out var branchTiers)
+                        && !branchTiers.Contains(pickedParent.UserTypeID ?? 0))
+                        return "The selected upline is not a valid tier for this user's role.";
+
+                    parentID = picked;
+                }
+            }
+
             // Password is system-generated for admin-created users and texted to the new user
             // (no password field on the Add User form). An explicit password is still honoured if
             // one is supplied by an older client.
@@ -186,8 +345,6 @@ namespace FintechApp.Services
                 if (existingByEmail != null)
                     return "Email address already registered.";
             }
-
-            int parentID = request.ParentID ?? currentUserID;
 
             // The User Code (stored as AliasName) is generated from the user type, never typed in:
             // each type runs its own sequence (RD000001, RD000002 ...) and the generator skips any
@@ -300,6 +457,35 @@ namespace FintechApp.Services
             if (!string.IsNullOrWhiteSpace(request.EmailID))
                 _ = _messageService.SendEmailAsync(newUser.EmailID, credMsg, "Your Login Credentials");
 
+            // Tell the upline a user has joined their network. The "New User Added" template ships
+            // with the product and is addressed to the parent ("A new user ... has been added under
+            // you"), but nothing raised it — so a distributor never heard that a retailer had been
+            // onboarded beneath them. Skipped when the creator IS the parent doing it by hand.
+            if (newUser.ParentID is int parentId && parentId > 0 && parentId != newUser.UserMasterID)
+            {
+                var parent = await _userRepository.GetUserById(parentId);
+                if (parent != null && !string.IsNullOrWhiteSpace(parent.MobileNumber))
+                    _ = _messageService.SendEventAsync("New User Added", parent.UserMasterID, parent.MobileNumber,
+                        parent.WhatsAppNumber, parent.EmailID,
+                        new Dictionary<string, string>
+                        {
+                            ["CustomerName"] = newUser.PersonName ?? newUser.FirmName ?? string.Empty,
+                            ["Number"] = newUser.MobileNumber,
+                            ["FirmName"] = newUser.FirmName ?? string.Empty,
+                        },
+                        fallbackSms: $"A new user {newUser.PersonName} ({newUser.MobileNumber}) has been added under you.",
+                        emailSubject: "New user added");
+            }
+
+            // The account now exists — record who created it, as whom, and under whom. This is the
+            // first row of that user's change history, so the report can answer "where did this
+            // account come from" as well as "what has been done to it since".
+            string parentLabel = await DescribeUser(newUser.ParentID ?? 0);
+            await LogChange(newUser.UserMasterID, currentUserID, ChangeAction.Create, "Account",
+                string.Empty,
+                $"{RoleName(newUser.UserTypeID ?? 0)} {newUser.FirmName} ({newUser.MobileNumber}), code {newUser.AliasName}, under {parentLabel}",
+                "User created");
+
             return StatusType.Ok;
         }
 
@@ -313,7 +499,80 @@ namespace FintechApp.Services
             [UserTypeCode.Distributor] = new[] { UserTypeCode.Admin, UserTypeCode.SuperDistributor },
             [UserTypeCode.Retailer] = new[] { UserTypeCode.Admin, UserTypeCode.SuperDistributor, UserTypeCode.Distributor },
             [UserTypeCode.ApiUser] = new[] { UserTypeCode.Admin },
+            // The accountant is back-office, not a network tier: it sits under the admin and has
+            // nobody below it. Without an entry here the role is missing from this map, and the
+            // Add User form drops any role it cannot place — which is why seeding the user type
+            // and opening the menu still left "Accountant" absent from the role dropdown.
+            [UserTypeCode.Accountant] = new[] { UserTypeCode.Admin },
         };
+
+        /// <summary>
+        /// Which roles each tier may CREATE from Add User.
+        ///
+        /// The form offered the same four roles to everyone, so a distributor was shown "Super
+        /// Distributor" and an upline picker covering the whole network — and the server took both
+        /// at face value. A tier may now only create strictly below itself:
+        ///   Admin / Support → Super Distributor, Distributor, Retailer, API User
+        ///   Super Distributor → Distributor, Retailer
+        ///   Distributor → Retailer
+        /// Everyone else creates nothing. API users are admin-created only: they are an integration
+        /// credential, not a network tier.
+        /// </summary>
+        public static readonly Dictionary<int, int[]> CreatableRoles = new()
+        {
+            [UserTypeCode.Admin] = new[]
+            {
+                UserTypeCode.SuperDistributor, UserTypeCode.Distributor,
+                UserTypeCode.Retailer, UserTypeCode.ApiUser,
+                // Admin only. An accountant reads the company's own books (platform ledger,
+                // purchase, provider sales), so minting one is not something support staff do.
+                UserTypeCode.Accountant,
+            },
+            [UserTypeCode.SupportUser] = new[]
+            {
+                UserTypeCode.SuperDistributor, UserTypeCode.Distributor,
+                UserTypeCode.Retailer, UserTypeCode.ApiUser,
+            },
+            [UserTypeCode.SuperDistributor] = new[] { UserTypeCode.Distributor, UserTypeCode.Retailer },
+            [UserTypeCode.Distributor] = new[] { UserTypeCode.Retailer },
+        };
+
+        /// <summary>Display name for a role id — for audit values a human has to read back.</summary>
+        private static string RoleName(int userTypeID) => userTypeID switch
+        {
+            UserTypeCode.Admin => "Admin",
+            UserTypeCode.SuperDistributor => "Super Distributor",
+            UserTypeCode.Distributor => "Distributor",
+            UserTypeCode.Retailer => "Retailer",
+            UserTypeCode.ApiUser => "API User",
+            UserTypeCode.SupportUser => "Support",
+            UserTypeCode.Client => "Client",
+            UserTypeCode.Accountant => "Accountant",
+            UserTypeCode.SDFOS => "SD Field Officer",
+            UserTypeCode.DFOS => "D Field Officer",
+            _ => $"Type {userTypeID}",
+        };
+
+        /// <summary>Slab name for an audit value; "None" when the mapping is cleared.</summary>
+        private async Task<string> DescribeSlab(int slabMasterID)
+        {
+            if (slabMasterID <= 0) return "None";
+            var slab = await _slabMasterRepository.GetByID(slabMasterID);
+            return string.IsNullOrWhiteSpace(slab?.SlabName) ? $"Slab {slabMasterID}" : slab!.SlabName;
+        }
+
+        /// <summary>
+        /// "Firm Name (9876543210)" for an audit value. A bare id in a history row is unreadable
+        /// six months later, which is when the report is actually consulted.
+        /// </summary>
+        private async Task<string> DescribeUser(int userID)
+        {
+            if (userID <= 0) return "Admin";
+            var u = await _userRepository.GetUserById(userID);
+            if (u == null) return $"User {userID}";
+            string name = string.IsNullOrWhiteSpace(u.FirmName) ? u.PersonName : u.FirmName;
+            return string.IsNullOrWhiteSpace(u.MobileNumber) ? name : $"{name} ({u.MobileNumber})";
+        }
 
         public async Task<string> Update(UserUpdateRequest request, int currentUserID)
         {
@@ -326,6 +585,13 @@ namespace FintechApp.Services
 
             var user = await _userRepository.GetUserById(request.TargetUserID);
             if (user == null) return Messages.UserMessages.UserNotFound;
+
+            // Snapshot of every editable field BEFORE the edit, so the change history can record
+            // what actually changed rather than "the record was saved". Taken as text because that
+            // is what the report shows, and because it survives the entity being mutated below.
+            var before = Snapshot(user);
+            int roleBefore = user.UserTypeID ?? 0;
+            int parentBefore = user.ParentID ?? 0;
 
             // ---- Role / upline -------------------------------------------------------------
             // Both are validated together: the upline's tier has to be legal for the role the user
@@ -341,6 +607,18 @@ namespace FintechApp.Services
                     return "This role cannot be assigned from the user form.";
                 if (downline.Count > 0)
                     return "Role cannot be changed while users are mapped under this user. Move them first.";
+
+                // One mobile number may hold one account per role (see LinkedProfilePolicy and
+                // the UX_UserMasters_Mobile_UserType index). Caught here so the operator reads a
+                // sentence instead of a unique-index violation.
+                var sameNumber = (await _userRepository.GetAllUsers())
+                    .Where(u => u.UserMasterID != user.UserMasterID
+                                && u.MobileNumber == user.MobileNumber
+                                && !u.IsDeleted)
+                    .ToList();
+                if (sameNumber.Any(u => (u.UserTypeID ?? 0) == request.UserTypeID.Value))
+                    return "Another login on this mobile number already uses that role.";
+
                 targetRole = request.UserTypeID.Value;
             }
 
@@ -393,19 +671,67 @@ namespace FintechApp.Services
             bool result = await _userRepository.UpdateUser(user);
             if (!result) return "User update failed.";
 
-            await SyncSlab(user.UserMasterID, request.SlabMasterID);
+            // One row per field that actually moved, all carrying the operator's reason. A save
+            // that changed nothing writes nothing, so the report stays readable.
+            var rows = new List<UserChangeHistory>();
+            var after = Snapshot(user);
+            foreach (var (field, oldValue) in before)
+            {
+                string newValue = after.TryGetValue(field, out var v) ? v : string.Empty;
+                if (oldValue == newValue) continue;
+                rows.Add(ChangeRow(user.UserMasterID, currentUserID, ChangeAction.Update, field,
+                    oldValue, newValue, request.Reason));
+            }
+            if ((user.UserTypeID ?? 0) != roleBefore)
+                rows.Add(ChangeRow(user.UserMasterID, currentUserID, ChangeAction.Update, "Role",
+                    RoleName(roleBefore), RoleName(user.UserTypeID ?? 0), request.Reason));
+            if ((user.ParentID ?? 0) != parentBefore)
+                rows.Add(ChangeRow(user.UserMasterID, currentUserID, ChangeAction.Transfer, "Mapped under",
+                    await DescribeUser(parentBefore), await DescribeUser(user.ParentID ?? 0), request.Reason));
+            await LogChanges(rows);
+
+            await SyncSlab(user.UserMasterID, request.SlabMasterID, currentUserID, request.Reason);
             await SyncServices(user.UserMasterID, request.Services);
             await SyncDocuments(user.UserMasterID, request.Documents);
 
             return StatusType.Ok;
         }
 
+        /// <summary>
+        /// The editable fields of a user record as text, keyed by the label the change report shows.
+        /// Role and upline are handled separately (they read back as names, not ids).
+        /// </summary>
+        private static Dictionary<string, string> Snapshot(UserMaster u) => new()
+        {
+            ["Firm name"] = u.FirmName ?? string.Empty,
+            ["Person name"] = u.PersonName ?? string.Empty,
+            ["Email"] = u.EmailID ?? string.Empty,
+            ["WhatsApp number"] = u.WhatsAppNumber ?? string.Empty,
+            ["Address"] = u.Address ?? string.Empty,
+            ["City"] = u.CityName ?? string.Empty,
+            ["Pincode"] = u.Pincode ?? string.Empty,
+            ["State"] = (u.StateID ?? 0).ToString(),
+            ["GST number"] = u.GSTNo ?? string.Empty,
+            ["PAN"] = u.PANNo ?? string.Empty,
+            ["Aadhaar"] = u.AadharNo ?? string.Empty,
+            ["Shop address"] = u.ShopAddress ?? string.Empty,
+            ["User code"] = u.AliasName ?? string.Empty,
+            ["E-collection wallet"] = (u.WalletIDforEcollection ?? 0).ToString(),
+        };
+
         /// <summary>Points the user at one commission slab. 0 clears the mapping; null leaves it alone.</summary>
-        private async Task SyncSlab(int userID, int? slabMasterID)
+        private async Task SyncSlab(int userID, int? slabMasterID, int changedByUserID = 0, string? reason = null)
         {
             if (!slabMasterID.HasValue) return;
 
             var existing = await _userSlabMappingRepository.GetByUserID(userID);
+            // A slab change moves what the user earns on every transaction, so it is audited like
+            // any other change to their standing.
+            int slabBefore = existing.FirstOrDefault()?.SlabMasterID ?? 0;
+            if (slabMasterID.Value != slabBefore && changedByUserID > 0)
+                await LogChange(userID, changedByUserID, ChangeAction.Update, "Commission slab",
+                    await DescribeSlab(slabBefore), await DescribeSlab(slabMasterID.Value), reason);
+
             if (slabMasterID.Value <= 0)
             {
                 foreach (var map in existing)
@@ -554,6 +880,12 @@ namespace FintechApp.Services
             bool result = await _userRepository.UpdateUser(user);
             if (!result) return request.IsActive ? "Activation failed." : "Deactivation failed.";
 
+            await LogChange(user.UserMasterID, currentUserID,
+                request.IsActive ? ChangeAction.Activate : ChangeAction.Deactivate, "Status",
+                request.IsActive ? "Inactive" : "Active",
+                request.IsActive ? "Active" : "Inactive",
+                request.Reason);
+
             await NotifyStatusChange(user, request.IsActive);
             return StatusType.Ok;
         }
@@ -594,6 +926,12 @@ namespace FintechApp.Services
             if (allUsers.Any(u => u.ParentID == user.UserMasterID && !u.IsDeleted))
                 return "This user still has users mapped beneath them. Transfer the downline first.";
 
+            // A second login shares this account's mobile number and password, and sign-in
+            // authenticates the PRIMARY — delete that and the remaining login has no credentials
+            // to be reached by. Remove the second login first, or delete that one instead.
+            if (allUsers.Any(u => u.LinkedPrimaryUserID == user.UserMasterID && !u.IsDeleted))
+                return "This account owns a second login on the same mobile number. Delete that one first.";
+
             var wallets = (await _userWalletMasterRepository.GetAll())
                 .Where(w => w.UserID == user.UserMasterID).ToList();
             decimal held = wallets.Sum(w => w.Balance + w.HoldBalance);
@@ -601,7 +939,11 @@ namespace FintechApp.Services
                 return $"This user still holds a balance of {held:0.00}. Settle the wallet before deleting.";
 
             bool result = await _userRepository.DeleteUser(user.UserMasterID);
-            return result ? StatusType.Ok : "Delete failed.";
+            if (!result) return "Delete failed.";
+
+            await LogChange(user.UserMasterID, currentUserID, ChangeAction.Delete, "Account",
+                "Live", "Deleted", request.Reason);
+            return StatusType.Ok;
         }
 
         /// <summary>
@@ -619,7 +961,11 @@ namespace FintechApp.Services
             if (!user.IsDeleted) return "This user is not deleted.";
 
             bool result = await _userRepository.RestoreUser(user.UserMasterID);
-            return result ? StatusType.Ok : "Restore failed.";
+            if (!result) return "Restore failed.";
+
+            await LogChange(user.UserMasterID, currentUserID, ChangeAction.Restore, "Account",
+                "Deleted", "Restored (inactive)", request.Reason);
+            return StatusType.Ok;
         }
 
         public async Task<string> Deactivate(int targetUserID, int currentUserID)
@@ -628,10 +974,16 @@ namespace FintechApp.Services
             var user = await _userRepository.GetUserById(targetUserID);
             if (user == null) return Messages.UserMessages.UserNotFound;
 
+            bool wasActive = user.IsActive;
             user.IsActive = false;
             user.UpdatedateTime = DateTime.UtcNow;
             bool result = await _userRepository.UpdateUser(user);
-            return result ? StatusType.Ok : "Deactivation failed.";
+            if (!result) return "Deactivation failed.";
+
+            if (wasActive)
+                await LogChange(user.UserMasterID, currentUserID, ChangeAction.Deactivate, "Status",
+                    "Active", "Inactive", string.Empty);
+            return StatusType.Ok;
         }
 
         public async Task<string> CommissionHoldActivate(UserCommissionHoldRequest request, int currentUserID)
@@ -640,10 +992,18 @@ namespace FintechApp.Services
             var user = await _userRepository.GetUserById(request.TargetUserID);
             if (user == null) return Messages.UserMessages.UserNotFound;
 
+            bool holdBefore = user.IsCommissionHold;
             user.IsCommissionHold = request.IsCommissionHold;
             user.UpdatedateTime = DateTime.UtcNow;
             bool result = await _userRepository.UpdateUser(user);
-            return result ? StatusType.Ok : "Commission hold update failed.";
+            if (!result) return "Commission hold update failed.";
+
+            if (holdBefore != request.IsCommissionHold)
+                await LogChange(user.UserMasterID, currentUserID,
+                    request.IsCommissionHold ? ChangeAction.CommissionHold : ChangeAction.CommissionRelease,
+                    "Commission hold", holdBefore ? "Held" : "Released",
+                    request.IsCommissionHold ? "Held" : "Released", request.Reason);
+            return StatusType.Ok;
         }
 
         public async Task<string> IsAppActivate(UserBooleanToggleRequest request, int currentUserID)
@@ -653,7 +1013,11 @@ namespace FintechApp.Services
             if (user == null) return Messages.UserMessages.UserNotFound;
             user.UpdatedateTime = DateTime.UtcNow;
             bool result = await _userRepository.UpdateUser(user);
-            return result ? StatusType.Ok : "App activation update failed.";
+            if (!result) return "App activation update failed.";
+
+            await LogChange(user.UserMasterID, currentUserID, ChangeAction.AppAccess, "App access",
+                string.Empty, request.IsActive ? "Allowed" : "Blocked", request.Reason);
+            return StatusType.Ok;
         }
 
         public async Task<string> IsWebActivate(UserBooleanToggleRequest request, int currentUserID)
@@ -663,7 +1027,11 @@ namespace FintechApp.Services
             if (user == null) return Messages.UserMessages.UserNotFound;
             user.UpdatedateTime = DateTime.UtcNow;
             bool result = await _userRepository.UpdateUser(user);
-            return result ? StatusType.Ok : "Web activation update failed.";
+            if (!result) return "Web activation update failed.";
+
+            await LogChange(user.UserMasterID, currentUserID, ChangeAction.WebAccess, "Web access",
+                string.Empty, request.IsActive ? "Allowed" : "Blocked", request.Reason);
+            return StatusType.Ok;
         }
 
         public async Task<string> IsInvoiceActivate(UserBooleanToggleRequest request, int currentUserID)
@@ -672,31 +1040,172 @@ namespace FintechApp.Services
             var user = await _userRepository.GetUserById(request.TargetUserID);
             if (user == null) return Messages.UserMessages.UserNotFound;
 
+            bool invoiceBefore = user.IsInvoiceApplicable;
             user.IsInvoiceApplicable = request.IsActive;
             user.UpdatedateTime = DateTime.UtcNow;
             bool result = await _userRepository.UpdateUser(user);
-            return result ? StatusType.Ok : "Invoice activation update failed.";
+            if (!result) return "Invoice activation update failed.";
+
+            if (invoiceBefore != request.IsActive)
+                await LogChange(user.UserMasterID, currentUserID, ChangeAction.Invoice, "Invoice applicable",
+                    invoiceBefore ? "Yes" : "No", request.IsActive ? "Yes" : "No", request.Reason);
+            return StatusType.Ok;
         }
 
-        public async Task<string> BulkUpdate(UserBulkUpdateRequest request, int currentUserID)
+        /// <summary>
+        /// Apply one action to many users at once — including moving them under a new parent.
+        ///
+        /// Targets are named directly, or as "everyone under this user" (optionally narrowed to one
+        /// role), which is the case the screen is actually for: re-parenting a distributor's whole
+        /// retailer base, or deactivating a branch, without picking forty users by hand.
+        ///
+        /// Shift is the one that needs care, because the network is a tree and a bad move corrupts
+        /// it: a user may not be placed under itself or under one of its own descendants (that
+        /// severs the branch from the tree and loops it), the new parent must sit above the user in
+        /// the role chain, and a non-admin may only move users that are already inside their own
+        /// network. Each target is checked separately and a rejected one is reported by name rather
+        /// than failing the whole batch.
+        /// </summary>
+        public async Task<(string failureMessage, string summary)> BulkUpdate(UserBulkUpdateRequest request, int currentUserID)
         {
-            if (request.UserIDs == null || request.UserIDs.Count == 0)
-                return Messages.Common.Message.InvalidRequest;
-
             var allUsers = await _userRepository.GetAllUsers();
-            var targets = allUsers.Where(u => request.UserIDs.Contains(u.UserMasterID)).ToList();
-            if (targets.Count == 0) return Messages.Common.Message.DataNotFound;
 
-            int successCount = 0;
-            foreach (var user in targets)
+            var caller = allUsers.FirstOrDefault(u => u.UserMasterID == currentUserID);
+            bool callerIsAdmin = caller != null
+                && (caller.UserTypeID == UserTypeCode.Admin || caller.UserTypeID == UserTypeCode.SupportUser);
+            var callerDownline = callerIsAdmin ? null : UserHierarchy.GetDownlineIds(allUsers, currentUserID);
+
+            // Build the target set: explicit ids plus, when given, the source user's downline.
+            var targetIds = new HashSet<int>(request.UserIDs ?? new List<int>());
+            if (request.SourceUserID > 0)
             {
-                user.IsActive = request.IsActive;
-                user.IsCommissionHold = request.IsCommissionHold;
-                user.UpdatedateTime = DateTime.UtcNow;
-                if (await _userRepository.UpdateUser(user)) successCount++;
+                foreach (int id in UserHierarchy.GetDownlineIds(allUsers, request.SourceUserID)) targetIds.Add(id);
+                if (request.IncludeSourceUser) targetIds.Add(request.SourceUserID);
+            }
+            if (targetIds.Count == 0) return ("Choose at least one user, or a user whose downline to act on.", string.Empty);
+
+            var targets = allUsers.Where(u => targetIds.Contains(u.UserMasterID)).ToList();
+            if (request.UserTypeID > 0)
+                targets = targets.Where(u => u.UserTypeID == request.UserTypeID).ToList();
+            if (targets.Count == 0) return (Messages.Common.Message.DataNotFound, string.Empty);
+
+            // A non-admin may only act on their own network.
+            if (callerDownline != null)
+            {
+                var outside = targets.Where(u => !callerDownline.Contains(u.UserMasterID)).ToList();
+                if (outside.Count > 0)
+                    return ($"{outside.Count} of the selected users are outside your network.", string.Empty);
             }
 
-            return successCount > 0 ? StatusType.Ok : "Bulk update failed.";
+            string action = (request.Action ?? string.Empty).Trim();
+            UserMaster? newParent = null;
+            HashSet<int>? newParentAncestryGuard = null;
+
+            if (action.Equals("Shift", StringComparison.OrdinalIgnoreCase))
+            {
+                if (request.NewParentID <= 0) return ("Choose the user to move them under.", string.Empty);
+                newParent = allUsers.FirstOrDefault(u => u.UserMasterID == request.NewParentID);
+                if (newParent == null) return ("The new parent was not found.", string.Empty);
+                if (!newParent.IsActive) return ("The new parent is deactivated — activate it first.", string.Empty);
+                if (callerDownline != null && !callerDownline.Contains(newParent.UserMasterID) && newParent.UserMasterID != currentUserID)
+                    return ("The new parent is outside your network.", string.Empty);
+
+                // Everything below the new parent: moving one of its own ancestors under it would
+                // detach that whole branch from the tree and leave it pointing at itself.
+                newParentAncestryGuard = UserHierarchy.GetDownlineIds(allUsers, request.NewParentID);
+            }
+
+            int changed = 0;
+            var skipped = new List<string>();
+            var auditRows = new List<UserChangeHistory>();
+            string NameOf(UserMaster u) => !string.IsNullOrWhiteSpace(u.FirmName) ? u.FirmName : u.PersonName;
+            string ParentLabel(UserMaster? p) => p == null ? "Admin"
+                : string.IsNullOrWhiteSpace(p.MobileNumber) ? NameOf(p) : $"{NameOf(p)} ({p.MobileNumber})";
+            var userById = allUsers.GroupBy(u => u.UserMasterID).ToDictionary(g => g.Key, g => g.First());
+            UserMaster? ById(int id) => id > 0 && userById.TryGetValue(id, out var u) ? u : null;
+
+            foreach (var user in targets)
+            {
+                // Captured before the entity is mutated, so the audit row can state what moved.
+                int parentWas = user.ParentID ?? 0;
+                bool activeWas = user.IsActive;
+                bool holdWas = user.IsCommissionHold;
+
+                if (newParent != null)
+                {
+                    if (user.UserMasterID == newParent.UserMasterID) { skipped.Add($"{NameOf(user)} (cannot be its own parent)"); continue; }
+                    if (newParentAncestryGuard!.Contains(user.UserMasterID) && user.ParentID == newParent.UserMasterID)
+                    {
+                        // Already directly under it — nothing to do, and not worth reporting.
+                        continue;
+                    }
+                    if (UserHierarchy.GetDownlineIds(allUsers, user.UserMasterID).Contains(newParent.UserMasterID))
+                    {
+                        skipped.Add($"{NameOf(user)} (the new parent is inside its own downline)");
+                        continue;
+                    }
+                    // Role chain: a parent must sit above the user (lower UserTypeID). Admin may
+                    // hold anyone.
+                    int parentType = newParent.UserTypeID ?? 0;
+                    int childType = user.UserTypeID ?? 0;
+                    if (parentType != UserTypeCode.Admin && childType > 0 && parentType >= childType)
+                    {
+                        skipped.Add($"{NameOf(user)} (cannot sit under an equal or lower role)");
+                        continue;
+                    }
+
+                    user.ParentID = newParent.UserMasterID;
+                }
+                else if (action.Equals("Activate", StringComparison.OrdinalIgnoreCase)) user.IsActive = true;
+                else if (action.Equals("Deactivate", StringComparison.OrdinalIgnoreCase)) user.IsActive = false;
+                else if (action.Equals("HoldCommission", StringComparison.OrdinalIgnoreCase)) user.IsCommissionHold = true;
+                else if (action.Equals("ReleaseCommission", StringComparison.OrdinalIgnoreCase)) user.IsCommissionHold = false;
+                else
+                {
+                    // No action named — the older two-flag form.
+                    user.IsActive = request.IsActive;
+                    user.IsCommissionHold = request.IsCommissionHold;
+                }
+
+                user.UpdatedateTime = DateTime.Now;
+                if (!await _userRepository.UpdateUser(user)) continue;
+                changed++;
+
+                // A bulk action is still a change to each of those accounts, and the one most
+                // likely to be queried later ("who moved forty retailers last Tuesday, and why").
+                // Each target gets its own row, carrying the operator's remark.
+                if (newParent != null && (user.ParentID ?? 0) != parentWas)
+                    auditRows.Add(ChangeRow(user.UserMasterID, currentUserID, ChangeAction.Transfer,
+                        "Mapped under", ParentLabel(ById(parentWas)), ParentLabel(newParent), request.Remark));
+                else if (newParent == null)
+                {
+                    if (user.IsActive != activeWas)
+                        auditRows.Add(ChangeRow(user.UserMasterID, currentUserID,
+                            user.IsActive ? ChangeAction.Activate : ChangeAction.Deactivate, "Status",
+                            activeWas ? "Active" : "Inactive", user.IsActive ? "Active" : "Inactive",
+                            request.Remark));
+                    if (user.IsCommissionHold != holdWas)
+                        auditRows.Add(ChangeRow(user.UserMasterID, currentUserID,
+                            user.IsCommissionHold ? ChangeAction.CommissionHold : ChangeAction.CommissionRelease,
+                            "Commission hold", holdWas ? "Held" : "Released",
+                            user.IsCommissionHold ? "Held" : "Released", request.Remark));
+                }
+            }
+
+            await LogChanges(auditRows);
+
+            if (changed == 0)
+            {
+                return (skipped.Count > 0 ? $"Nothing was changed. {string.Join("; ", skipped)}" : "Bulk update failed.",
+                        string.Empty);
+            }
+
+            // Partly applied is still applied — report it as a success that names what it skipped,
+            // rather than as a failure that hides the users it did change.
+            string summary = skipped.Count > 0
+                ? $"{changed} user(s) updated. Skipped: {string.Join("; ", skipped)}"
+                : $"{changed} user(s) updated.";
+            return (StatusType.Ok, summary);
         }
 
         // "Forgot password" from the All Users screen: reset the target user to a fresh random
@@ -725,12 +1234,28 @@ namespace FintechApp.Services
             if (!string.IsNullOrWhiteSpace(user.EmailID))
                 _ = _messageService.SendEmailAsync(user.EmailID, msg, "Password Reset");
 
+            // The password itself is never recorded — only that it was reset, by whom. A user who
+            // "suddenly cannot log in" is usually looking at this row.
+            await LogChange(user.UserMasterID, currentUserID, ChangeAction.PasswordReset, "Password",
+                string.Empty, "Reset and sent by SMS", "Operator-initiated password reset");
+
             return StatusType.Ok;
         }
 
         // Place (or top up) a hold on the target user's wallet. The held amount is frozen: it stays in
         // Balance but AccountProcessingService will not let a debit eat into it (spendable = Balance -
         // HoldBalance). Admin-driven from the All Users screen; replaces the old Balance Capping page.
+        /// <summary>
+        /// Freeze (or release) part of a wallet's balance.
+        ///
+        /// The hold is per WALLET, not per account: balance lives per wallet, and a user can need
+        /// their AEPS balance frozen while their recharge wallet keeps working. The caller names the
+        /// wallet; 0 still means the primary one, so older callers behave as before.
+        ///
+        /// Every change is written to WalletHoldHistory with the reason — a frozen balance a user
+        /// can see but not spend has to be explainable afterwards, and before this the remark was
+        /// accepted and discarded.
+        /// </summary>
         public async Task<string> AddHoldBalance(UserAddHoldBalanceRequest request, int currentUserID)
         {
             if (request.TargetUserID <= 0) return Messages.Common.Message.InvalidRequest;
@@ -748,10 +1273,114 @@ namespace FintechApp.Services
                 : wallets.OrderBy(w => w.WalletID).First();
             if (wallet == null) return "Wallet not found for this user.";
 
+            // Releasing more than is held would leave a negative hold, which reads as "extra
+            // spendable balance" everywhere downstream.
+            if (request.IsRelease && request.Amount > wallet.HoldBalance)
+                return $"Only {wallet.HoldBalance:F2} is on hold in this wallet.";
+
+            decimal delta = request.IsRelease ? -request.Amount : request.Amount;
+
             // Atomically bump HoldBalance only — never rewrites Balance, so a hold placed while a
             // recharge/transfer is debiting the same wallet cannot clobber that balance change.
-            int rows = await _userWalletMasterRepository.ApplyHoldDelta(wallet.UserID, wallet.WalletID, request.Amount);
-            return rows > 0 ? StatusType.Ok : Messages.Common.Message.ExceptionOccured;
+            int rows = await _userWalletMasterRepository.ApplyHoldDelta(wallet.UserID, wallet.WalletID, delta);
+            if (rows <= 0) return Messages.Common.Message.ExceptionOccured;
+
+            // Audit. Best-effort: the money has already moved between free and held, and failing the
+            // whole call over the history row would leave the caller thinking nothing happened.
+            try
+            {
+                await _walletHoldHistoryRepository.Insert(new WalletHoldHistory
+                {
+                    UserID = wallet.UserID,
+                    WalletID = wallet.WalletID,
+                    Amount = delta,
+                    HoldBalanceAfter = wallet.HoldBalance + delta,
+                    WalletBalance = wallet.Balance,
+                    ActionByUserID = currentUserID,
+                    Action = request.IsRelease ? HoldAction.Release : HoldAction.Hold,
+                    Remark = string.IsNullOrWhiteSpace(request.Remark)
+                        ? (request.IsRelease ? "Hold released" : "Balance held")
+                        : request.Remark.Trim(),
+                    DateTime = DateTime.Now,
+                    UpdatedateTime = DateTime.Now,
+                    IsDeleted = false,
+                });
+            }
+            catch (Exception ex) { _logger.Write(ex); }
+
+            // Mirrored onto the user change history so one report answers "everything done to this
+            // account", with the wallet detail still living on the hold report.
+            await LogChange(wallet.UserID, currentUserID,
+                request.IsRelease ? ChangeAction.HoldRelease : ChangeAction.Hold, "Held balance",
+                string.Empty, $"{(request.IsRelease ? "Released" : "Held")} {request.Amount:0.00}",
+                request.Remark);
+
+            return StatusType.Ok;
+        }
+
+        /// <summary>
+        /// The hold report — every hold placed or released, with who did it, on which wallet and why.
+        /// Scoped like every other report: admin/support see the platform, an upline its network.
+        /// </summary>
+        public async Task<(string failureMessage, WalletHoldHistoryWrapper data)> HoldHistory(
+            WalletHoldHistoryRequest request, int callerUserID, int callerUserTypeID)
+        {
+            var wrapper = new WalletHoldHistoryWrapper();
+
+            List<int>? allowed = null;
+            bool isAdmin = callerUserTypeID == UserTypeCode.Admin || callerUserTypeID == UserTypeCode.SupportUser;
+            if (!isAdmin)
+            {
+                if (callerUserTypeID == UserTypeCode.Distributor || callerUserTypeID == UserTypeCode.SuperDistributor)
+                {
+                    var downline = UserHierarchy.GetDownlineIds(await _userRepository.GetAllUsers(), callerUserID);
+                    downline.Add(callerUserID);
+                    allowed = downline.ToList();
+                }
+                else
+                {
+                    allowed = new List<int> { callerUserID };
+                }
+            }
+
+            DateTime? from = DateTime.TryParse(request.FromDate, out var f) ? f : null;
+            DateTime? to = DateTime.TryParse(request.ToDate, out var t) ? t : null;
+
+            var (count, rows) = await _walletHoldHistoryRepository.Search(
+                request.UserID, request.WalletID, from, to, request.EffectiveAction, allowed,
+                request.SkipCount, request.TakeCount);
+
+            wrapper.Count = count;
+            if (rows.Count == 0) return (StatusType.Ok, wrapper);
+
+            var allUsers = await _userRepository.GetAllUsers();
+            var userById = allUsers.GroupBy(u => u.UserMasterID).ToDictionary(g => g.Key, g => g.First());
+            var walletNames = (await _walletMasterRepository.SelectAll())
+                .GroupBy(w => w.WalletID).ToDictionary(g => g.Key, g => g.First().Name ?? string.Empty);
+
+            string NameOf(int id) => userById.TryGetValue(id, out var u)
+                ? (!string.IsNullOrWhiteSpace(u.FirmName) ? u.FirmName : u.PersonName)
+                : string.Empty;
+
+            wrapper.list = rows.Select(h => new WalletHoldHistoryViewModel
+            {
+                WalletHoldHistoryID = h.WalletHoldHistoryID,
+                DOC = h.DateTime,
+                UserID = h.UserID,
+                UserName = NameOf(h.UserID),
+                UserMobile = userById.TryGetValue(h.UserID, out var owner) ? owner.MobileNumber : string.Empty,
+                WalletID = h.WalletID,
+                WalletName = walletNames.TryGetValue(h.WalletID, out var wn) ? wn : string.Empty,
+                Action = h.Action,
+                Amount = Math.Abs(h.Amount),
+                HoldBalanceAfter = h.HoldBalanceAfter,
+                WalletBalance = h.WalletBalance,
+                ActionByUserID = h.ActionByUserID,
+                ActionByName = NameOf(h.ActionByUserID),
+                Remark = h.Remark,
+            }).ToList();
+
+            return (StatusType.Ok, wrapper);
         }
 
         public async Task<string> Deactivate2FAWithOTP(UserDeactivate2FARequest request, int currentUserID)
@@ -1109,6 +1738,19 @@ namespace FintechApp.Services
             var allUsers = await _userRepository.GetAllUsers();
             var query = allUsers.Where(u => !u.IsDeleted && u.IsActive);
 
+            // Branch scope. This feeds the "maps under" picker on Add User, which a
+            // super-distributor now uses to hand a new retailer to one of its OWN distributors —
+            // so the list has to be clipped to the caller's network. Unscoped it answered with
+            // every active user of the requested type on the platform, which for any non-admin
+            // caller is a directory of other resellers' firms and mobile numbers.
+            var caller = allUsers.FirstOrDefault(u => u.UserMasterID == currentUserID);
+            int callerRole = caller?.UserTypeID ?? 0;
+            if (!HierarchyScopePolicy.IsUnrestrictedRole(callerRole))
+            {
+                var reach = UserHierarchy.GetDownlineIds(allUsers, currentUserID);
+                query = query.Where(u => reach.Contains(u.UserMasterID));
+            }
+
             if (request.UserTypeID > 0)
                 query = query.Where(u => u.UserTypeID == request.UserTypeID);
 
@@ -1180,8 +1822,10 @@ namespace FintechApp.Services
             var currentUser = await _userRepository.GetUserById(currentUserID);
             if (currentUser == null) return (Messages.UserMessages.UserNotFound, string.Empty);
 
-            if (currentUser.UserType?.UserType != UserTypeConstants.Admin &&
-                currentUser.UserType?.UserType != UserTypeConstants.SuperAdmin)
+            // Numeric id, not the admin-editable UserTypeMaster.UserType display text — that text
+            // reads "Admin" in this schema and never equalled UserTypeConstants.Admin ("ADMIN"),
+            // so this gate was closed even for an administrator.
+            if (currentUser.UserTypeID != UserTypeCode.Admin && currentUser.UserTypeID != UserTypeCode.SupportUser)
                 return (Messages.Common.Message.NoPermission, string.Empty);
 
             var targetUser = await _userRepository.GetUserById(request.TargetUserID);

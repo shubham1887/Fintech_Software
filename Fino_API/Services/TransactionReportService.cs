@@ -64,44 +64,92 @@ namespace FintechApp.Services
         }
 
         // ── ProviderSale ──────────────────────────────────────────────
-        // Per-provider aggregation of transactions in the date range. Purchase and provider
-        // opening/closing balances are not tracked yet → returned as 0 (Admin-only figures).
+        // Per-provider aggregation of transactions in the date range, reconciled against the
+        // provider's own stock.
+        //
+        // Purchase, Opening, Closing and Difference used to be hard-coded to 0 — the whole right-hand
+        // side of the report read as zeros, which is what made it look broken. Every one of them is
+        // recoverable from data we already store:
+        //   Purchase — the ProviderPurchase rows (the "Provider Purchases" screen), i.e. what we paid
+        //              this provider to top its stock up during the period.
+        //   Opening / Closing — the provider balance each dispatch reply carried back
+        //              (TransactionMaster.ProviderOpeningBalance / ProviderClosingBalance). The first
+        //              and last transaction in the period that actually reported a balance bound the
+        //              period, so these are the provider's own figures, not ours.
+        //   Difference — (Opening + Purchase - Sale) - Closing: what the provider's stock SHOULD have
+        //              come to versus what it says it holds. Non-zero means the provider's books and
+        //              ours disagree for the period, which is the number this report exists to show.
+        // A provider whose replies carry no balance still reports honest zeros for those two columns
+        // (and therefore no Difference) rather than a number invented from our side of the ledger.
         public async Task<(string fail, ProviderSaleWrapper data)> ProviderSale(TxnReportRequest request, int currentUserID, int currentUserTypeID)
         {
             var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
             if (fail != string.Empty) return (fail, new ProviderSaleWrapper());
 
             int userId = ScopeUser(request.UserID, currentUserID, currentUserTypeID);
-            // Admin sees all providers' sale; a scoped user sees only their own transactions.
-            bool isAdmin = currentUserTypeID == UserTypeCode.Admin || currentUserTypeID == UserTypeCode.SupportUser;
-            var txns = await _txnRepo.GetAll(isAdmin ? 0 : userId, string.Empty, string.Empty, from, to, 1, int.MaxValue);
+            // Admin/Support and the Accountant see every provider's sale; a scoped user sees only
+            // their own transactions. ScopeUser is left alone on purpose — when the caller is
+            // network-wide this passes 0 (everyone) and userId is unused, so widening the shared
+            // helper would have changed every other report in this service for no reason.
+            bool networkWide = ReportScope.IsNetworkWide(currentUserTypeID);
+            var txns = await _txnRepo.GetAll(networkWide ? 0 : userId, string.Empty, string.Empty, from, to, 1, int.MaxValue);
             if (request.ProviderID > 0) txns = txns.Where(t => t.ProviderID == request.ProviderID).ToList();
 
             var providerNames = (await _providerRepo.GetAll())
                 .GroupBy(p => p.ProviderID).ToDictionary(g => g.Key, g => g.First().ProviderName);
+
+            // Stock top-ups paid to each provider in the same period. Only the accounting desk may
+            // see what the company pays its providers, so a scoped user gets sale figures with
+            // Purchase left at 0.
+            var purchaseByProvider = new Dictionary<int, decimal>();
+            if (networkWide)
+            {
+                var purchases = (await _providerPurchaseRepo.GetAll()).AsEnumerable();
+                if (from.HasValue) purchases = purchases.Where(p => p.PurchaseDate >= from.Value);
+                if (to.HasValue) purchases = purchases.Where(p => p.PurchaseDate <= to.Value);
+                purchaseByProvider = purchases
+                    .GroupBy(p => p.ProviderID)
+                    .ToDictionary(g => g.Key, g => g.Sum(p => p.Amount));
+            }
 
             int id = 0;
             var rows = txns.GroupBy(t => t.ProviderID).Select(g =>
             {
                 var success = g.Where(x => x.Status == StatusSuccess).ToList();
                 var failed = g.Where(x => x.Status == StatusFailed).ToList();
+
+                // Bound the period by the transactions whose reply actually carried a provider
+                // balance — a zero there means "not reported", not "the provider held nothing".
+                var withBalance = g.Where(x => x.ProviderOpeningBalance > 0 || x.ProviderClosingBalance > 0)
+                    .OrderBy(x => x.DateTime).ThenBy(x => x.TransactionMasterID).ToList();
+                decimal opening = withBalance.Count > 0 ? withBalance[0].ProviderOpeningBalance : 0m;
+                decimal closing = withBalance.Count > 0 ? withBalance[^1].ProviderClosingBalance : 0m;
+
+                decimal sale = success.Sum(x => x.Amount);
+                decimal purchase = purchaseByProvider.TryGetValue(g.Key, out var p) ? p : 0m;
+                // Only meaningful once the provider has told us a balance at both ends.
+                decimal difference = withBalance.Count > 0 ? (opening + purchase - sale) - closing : 0m;
+
                 return new ProviderSaleViewModel
                 {
                     ID = ++id,
                     ProvderName = providerNames.TryGetValue(g.Key, out var pn) ? pn : g.Key.ToString(),
-                    Purchase = 0m,        // provider stock purchase not tracked here
-                    Sale = success.Sum(x => x.Amount),
+                    Purchase = purchase,
+                    Sale = sale,
                     Fail = failed.Sum(x => x.Amount),
                     RetailerCommission = success.Sum(x => x.RetailerCommission),
                     DistributerCommission = success.Sum(x => x.DistributerCommission),
                     SuperDistributerCommission = success.Sum(x => x.SuperDistributerCommission),
                     AdminCommission = success.Sum(x => x.AdminCommission),
-                    OpeningBalance = 0m,  // provider balance not tracked here
-                    ClosingBalance = 0m,
-                    Difference = 0m,
+                    OpeningBalance = opening,
+                    ClosingBalance = closing,
+                    Difference = difference,
                     Profit = success.Sum(x => x.AdminProfit),
                 };
             }).OrderBy(x => x.ProvderName).ToList();
+
+            // Re-number after ordering so the serial matches what is displayed.
+            for (int i = 0; i < rows.Count; i++) rows[i].ID = i + 1;
 
             var wrapper = new ProviderSaleWrapper { Count = rows.Count, list = rows };
             if (rows.Count == 0) return (Messages.Common.Message.DataNotFound, wrapper);
@@ -118,9 +166,11 @@ namespace FintechApp.Services
             var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
             if (fail != string.Empty) return (fail, new PurchaseReportWrapper());
 
-            // Provider payments are company-wide books; only Admin / Support may read them.
-            bool isAdmin = currentUserTypeID == UserTypeCode.Admin || currentUserTypeID == UserTypeCode.SupportUser;
-            if (!isAdmin) return (Messages.Common.Message.DataNotFound, new PurchaseReportWrapper());
+            // Provider payments are company-wide books: Admin / Support and the Accountant read
+            // them, everyone else gets nothing. Returning DataNotFound rather than an error is
+            // why this looked like an empty report instead of a refusal.
+            if (!ReportScope.IsNetworkWide(currentUserTypeID))
+                return (Messages.Common.Message.DataNotFound, new PurchaseReportWrapper());
 
             var purchases = (await _providerPurchaseRepo.GetAll()).AsEnumerable();
             if (from.HasValue) purchases = purchases.Where(p => p.PurchaseDate >= from.Value);
@@ -163,14 +213,8 @@ namespace FintechApp.Services
         }
 
         // ── SelectReport ──────────────────────────────────────────────
-        public async Task<(string fail, TxnReportWrapper data)> SelectReport(TxnReportRequest request, int currentUserID)
-        {
-            var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
-            if (fail != string.Empty) return (fail, new TxnReportWrapper());
-
-            var list = await _txnRepo.GetAll(currentUserID, request.Status, string.Empty, from, to, request.PageNumber, request.PageSize);
-            return (string.Empty, BuildWrapper(list));
-        }
+        public Task<(string fail, TxnReportWrapper data)> SelectReport(TxnReportRequest request, int currentUserID)
+            => PagedReport(request, currentUserID, 0);
 
         // ── SelectSummary ─────────────────────────────────────────────
         public async Task<(string fail, TxnSummaryViewModel data)> SelectSummary(TxnReportRequest request, int currentUserID)
@@ -196,66 +240,39 @@ namespace FintechApp.Services
             return (string.Empty, vm);
         }
 
-        // ── Recharge ──────────────────────────────────────────────────
-        public async Task<(string fail, TxnReportWrapper data)> Recharge(TxnReportRequest request, int currentUserID)
-        {
-            var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
-            if (fail != string.Empty) return (fail, new TxnReportWrapper());
+        // ── Service-kind reports (Recharge / AEPS / MicroATM / Cash Deposit) ──────────
+        //
+        // These used to call _txnRepo.GetAll(..., "AEPS", ...) — a parameter the repository has
+        // never looked at. The result was that the AEPS and MicroATM reports listed EVERY
+        // transaction of the user, which on a DMT-heavy install reads as "the AEPS report is
+        // showing DMT data". They also asked for PageNumber/PageSize, which the web UI does not
+        // send (it sends TakeCount/SkipCount), so the page-size picker did nothing either: 20
+        // selected, 50 returned.
+        //
+        // Both are solved by routing them through the same FilterReport the DMT/BBPS/Payout
+        // reports already use: it scopes by the SERVICES that belong to the kind, honours the
+        // UI's paging, returns a true total count, and enriches the rows (entity name, operator,
+        // provider) that BuildWrapper left blank.
+        public Task<(string fail, TxnReportWrapper data)> Recharge(TxnReportRequest request, int currentUserID, int currentUserTypeID)
+            => FilterReport(request, currentUserID, currentUserTypeID, ServiceKinds.Recharge);
 
-            // serviceType "RECHARGE" — repository will filter when implementation is added
-            var list = await _txnRepo.GetAll(currentUserID, request.Status, "RECHARGE", from, to, request.PageNumber, request.PageSize);
-            return (string.Empty, BuildWrapper(list));
-        }
+        public Task<(string fail, TxnReportWrapper data)> Prepaid(TxnReportRequest request, int currentUserID, int currentUserTypeID)
+            => FilterReport(request, currentUserID, currentUserTypeID, ServiceKinds.Recharge);
 
-        // ── Prepaid ───────────────────────────────────────────────────
-        public async Task<(string fail, TxnReportWrapper data)> Prepaid(TxnReportRequest request, int currentUserID)
-        {
-            var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
-            if (fail != string.Empty) return (fail, new TxnReportWrapper());
+        public Task<(string fail, TxnReportWrapper data)> AEPS(TxnReportRequest request, int currentUserID, int currentUserTypeID)
+            => FilterReport(request, currentUserID, currentUserTypeID, ServiceKinds.AEPS);
 
-            var list = await _txnRepo.GetAll(currentUserID, request.Status, "PREPAID", from, to, request.PageNumber, request.PageSize);
-            return (string.Empty, BuildWrapper(list));
-        }
+        public Task<(string fail, TxnReportWrapper data)> MicroATM(TxnReportRequest request, int currentUserID, int currentUserTypeID)
+            => FilterReport(request, currentUserID, currentUserTypeID, ServiceKinds.MicroATM);
 
-        // ── AEPS ──────────────────────────────────────────────────────
-        public async Task<(string fail, TxnReportWrapper data)> AEPS(TxnReportRequest request, int currentUserID)
-        {
-            var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
-            if (fail != string.Empty) return (fail, new TxnReportWrapper());
-
-            var list = await _txnRepo.GetAll(currentUserID, request.Status, "AEPS", from, to, request.PageNumber, request.PageSize);
-            return (string.Empty, BuildWrapper(list));
-        }
-
-        // ── MicroATM ──────────────────────────────────────────────────
-        public async Task<(string fail, TxnReportWrapper data)> MicroATM(TxnReportRequest request, int currentUserID)
-        {
-            var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
-            if (fail != string.Empty) return (fail, new TxnReportWrapper());
-
-            var list = await _txnRepo.GetAll(currentUserID, request.Status, "MATM", from, to, request.PageNumber, request.PageSize);
-            return (string.Empty, BuildWrapper(list));
-        }
-
-        // ── CashDeposit ───────────────────────────────────────────────
-        public async Task<(string fail, TxnReportWrapper data)> CashDeposit(TxnReportRequest request, int currentUserID)
-        {
-            var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
-            if (fail != string.Empty) return (fail, new TxnReportWrapper());
-
-            var list = await _txnRepo.GetAll(currentUserID, request.Status, "CASHDEPOSIT", from, to, request.PageNumber, request.PageSize);
-            return (string.Empty, BuildWrapper(list));
-        }
+        public Task<(string fail, TxnReportWrapper data)> CashDeposit(TxnReportRequest request, int currentUserID, int currentUserTypeID)
+            => FilterReport(request, currentUserID, currentUserTypeID, ServiceKinds.CashDeposit);
 
         // ── LeadGeneration ────────────────────────────────────────────
-        public async Task<(string fail, TxnReportWrapper data)> LeadGeneration(TxnReportRequest request, int currentUserID)
-        {
-            var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
-            if (fail != string.Empty) return (fail, new TxnReportWrapper());
-
-            var list = await _txnRepo.GetAll(currentUserID, request.Status, "LEAD", from, to, request.PageNumber, request.PageSize);
-            return (string.Empty, BuildWrapper(list));
-        }
+        // No service kind maps to lead generation, so this stays an unscoped listing — but it
+        // pages the way the UI asks, like every other report.
+        public Task<(string fail, TxnReportWrapper data)> LeadGeneration(TxnReportRequest request, int currentUserID, int currentUserTypeID)
+            => PagedReport(request, currentUserID, currentUserTypeID);
 
         // ── LiveTransaction ───────────────────────────────────────────
         public async Task<(string fail, TxnReportWrapper data)> LiveTransaction(TxnReportRequest request, int currentUserID)
@@ -371,12 +388,14 @@ namespace FintechApp.Services
             var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
             if (fail != string.Empty) return (fail, new TxnReportWrapper());
 
-            var list = await _txnRepo.GetAll(ScopeUser(request.UserID, currentUserID, currentUserTypeID), string.Empty, string.Empty, from, to, request.PageNumber, request.PageSize);
+            var (count, list) = await _txnRepo.GetFiltered(
+                ScopeUser(request.UserID, currentUserID, currentUserTypeID), string.Empty, null,
+                request.ServiceID, 0, from, to,
+                Math.Max(0, (request.PageNumber - 1) * request.PageSize), request.PageSize);
 
-            if (request.ServiceID > 0)
-                list = list.Where(x => x.ServiceID == request.ServiceID).ToList();
-
-            return (string.Empty, BuildWrapper(list));
+            var wrapper = new TxnReportWrapper { Count = count, list = list.Select(MapToResponse).ToList() };
+            await Enrich(wrapper.list);
+            return (string.Empty, wrapper);
         }
 
         // ── SelectByUserWiseByTransactionMasterID ─────────────────────
@@ -404,8 +423,12 @@ namespace FintechApp.Services
             if (fail != string.Empty) return (fail, new TxnReportWrapper());
 
             int targetUser = ScopeUser(request.UserID, currentUserID, currentUserTypeID);
-            var list = await _txnRepo.GetAll(targetUser, request.Status, string.Empty, from, to, request.PageNumber, request.PageSize);
-            return (string.Empty, BuildWrapper(list));
+            var (count, list) = await _txnRepo.GetFiltered(
+                targetUser, request.Status, null, request.ServiceID, request.OperatorID,
+                from, to, request.EffectiveSkip, request.EffectiveTake);
+            var wrapper = new TxnReportWrapper { Count = count, list = list.Select(MapToResponse).ToList() };
+            await Enrich(wrapper.list);
+            return (string.Empty, wrapper);
         }
 
         // ── MonthlySummary ────────────────────────────────────────────
@@ -615,6 +638,27 @@ namespace FintechApp.Services
             return (string.Empty, wrapper);
         }
 
+        /// <summary>
+        /// An unscoped transaction listing that still pages the way the caller asked and reports a
+        /// true total. The same body as <see cref="FilterReport"/> minus the service-kind filter.
+        /// </summary>
+        private async Task<(string fail, TxnReportWrapper data)> PagedReport(TxnReportRequest request, int currentUserID, int currentUserTypeID)
+        {
+            var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
+            if (fail != string.Empty) return (fail, new TxnReportWrapper());
+
+            bool isAdmin = currentUserTypeID == UserTypeCode.Admin || currentUserTypeID == UserTypeCode.SupportUser;
+            int userId = isAdmin ? request.UserID : currentUserID;
+
+            var (count, list) = await _txnRepo.GetFiltered(
+                userId, request.Status, null, request.ServiceID, request.OperatorID,
+                from, to, request.EffectiveSkip, request.EffectiveTake);
+
+            var wrapper = new TxnReportWrapper { Count = count, list = list.Select(MapToResponse).ToList() };
+            await Enrich(wrapper.list);
+            return (string.Empty, wrapper);
+        }
+
         private async Task<(string fail, TxnReportWrapper data)> FilterReport(TxnReportRequest request, int currentUserID, int currentUserTypeID, string kind)
         {
             var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
@@ -819,6 +863,8 @@ namespace FintechApp.Services
             NetCommission = t.NetCommission,
             Charge = t.Charge,
             AdminProfit = t.AdminProfit,
+            ProviderOpeningBalance = t.ProviderOpeningBalance,
+            ProviderClosingBalance = t.ProviderClosingBalance,
             DMT_SenderID = t.DMT_SenderID,
             DMT_SenderName = t.DMT_SenderName,
             DMT_SenderNumber = t.DMT_SenderNumber,
