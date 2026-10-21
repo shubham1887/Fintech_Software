@@ -20,16 +20,22 @@ compiles — the verification tools are in `tools/` and can be re-run at any tim
 | --- | --- | --- |
 | `tools/verify-tax-engine` | Tax engine arithmetic against three real supplier invoices; document numbering format and financial year | 49 |
 | `tools/verify-invoicing` | Invoice generation, B2C consolidation, idempotency, exchange legs and register, credit notes, e-invoice queue, self-invoice | 71 |
+| `tools/verify-policy` | Who may call every GST endpoint. Reflects over the controllers, so an action added later with no access decision fails the run | 145 |
 
 ```bash
-cd tools\verify-tax-engine; .\Export-Masters.ps1 -Database FintechApp; dotnet run
+cd tools\verify-tax-engine; .\Export-Masters.ps1 -Database FintechApp; dotnet run -- data
 ```
 
 ```bash
 cd tools\verify-invoicing; .\Seed-TestData.ps1 -Database FintechApp; dotnet run
 ```
 
-Never point either at `finocore_db`. The invoicing one writes documents.
+```bash
+cd tools\verify-policy; dotnet run
+```
+
+Never point the first two at `finocore_db`. The invoicing one writes documents. `verify-policy`
+touches no database at all.
 
 ---
 
@@ -55,7 +61,7 @@ done. Until it is, the 1 crore question is still open.
 
 ---
 
-## Phase 1 — Dynamic tax engine ✅ core done and verified
+## Phase 1 — Dynamic tax engine ✅ core done, verified and exposed over the API
 
 ### Done and verified
 
@@ -76,17 +82,14 @@ done. Until it is, the 1 crore question is still open.
 
 ### Not started
 
-- `TaxRuleController`, `TaxEngineController` (`/simulate`), `TaxMasterController`,
-  `PartyTaxProfileController` — **and their `ApiAccessPolicy` registration**. Without it an
-  unlisted controller is admin-only and fails silently for every other role.
-- The **rule simulator screen**. The blueprint calls this one of the two things that gets
-  forgotten; without it nobody non-technical can configure a rule and trust it.
 - **Stamping existing transactions** — `TransactionTaxDetail` rows for history, so old months can
   be reported on the same basis as new ones.
+- A **rule editor screen**. `TaxRuleController` can create, supersede and deactivate; nothing in
+  the UI calls it yet, so rules are still configured in SQL. The simulator shows what they do.
 
 ---
 
-## Phase 2 — Invoicing 🟡 everything built and verified except the controllers
+## Phase 2 — Invoicing ✅ built, verified and exposed over the API
 
 ### Done and verified
 
@@ -129,12 +132,48 @@ done. Until it is, the 1 crore question is still open.
 
 ### Not started
 
-- **Controllers** for all of Phase 1 and Phase 2, with `ApiAccessPolicy` registration. This is now
-  the only thing between the services and a usable screen.
+- **Screens** for the documents themselves — an invoice list and detail, the exchange register,
+  the IRN queue, the credit-note window alerts. The endpoints all exist and are policy-checked;
+  only the simulator has a screen so far.
 - **A real IRP gateway.** `NotConfiguredEInvoiceGateway` is wired in. Until it is replaced,
   documents queue and their deadlines count down. At this turnover that is a live exposure.
 - **A scheduler** for `ProcessQueue` and the two alert queries. Hangfire is already in the project.
 - **Debit notes** — the series is seeded and the fields exist; nothing issues one.
+
+---
+
+## The API layer ✅ done and verified
+
+Nine controllers over the Phase 1 and Phase 2 services, every action registered in
+`ApiAccessPolicy` and asserted by `tools/verify-policy` (145 checks).
+
+| Controller | Read (Admin + Support + Accountant) | Write |
+| --- | --- | --- |
+| `TaxEngine` | `Simulate` | — |
+| `TaxRule` | `Select` `GetById` `Audit` | `Create` `Supersede` `Deactivate` — **Admin only** |
+| `TaxMaster` | `Rates` `HSNSAC` `TDSSections` `All` | — |
+| `PartyTaxProfile` | `Get` | `Save` `SaveRelationship` — **Admin only** |
+| `TaxInvoice` | `Select` `GetById` | `GenerateTopUps` `GenerateCommission` `IssueSelfInvoice` — **Admin only** |
+| `CreditNote` | `WindowAlerts` | `Issue` — **Admin only** |
+| `EInvoice` | `Status` `DeadlineAlerts` | `Enqueue` `EnqueuePeriod` `ProcessQueue` — Admin + Support |
+| `ExchangeRegister` | `Register` | `InvoiceOutward` — **Admin only**; `DetectLegs` — Admin + Support |
+
+Three things worth knowing before touching this:
+
+- **`TaxDocumentWrite` is a new role set, and the only one narrower than `Admin`.** Everywhere
+  else in `ApiAccessPolicy` Support is admin-equivalent. These acts are the exception because an
+  allocated invoice number has gone into GSTR-1 and cannot be withdrawn, only credit-noted.
+- **The `WriteVerb` regex does not catch `Generate`, `Issue`, `Supersede` or `Process`.** Any new
+  action with a name like those is a read as far as the regex is concerned, and inherits the
+  controller's grant. `verify-policy` fails on an unaccounted action for exactly this reason.
+- **`TaxRuleAdminService` has no `Update`,** deliberately. A rule is superseded: the old row is
+  closed and a new one opened, so a figure stamped last March can still be explained by the rule
+  that was live in March. Each change writes `TaxRuleAudit` and invalidates the engine's cache.
+
+**Screens:** only `/TaxSimulator` so far (`Fino_Web/src/screens/TaxSimulatorScreen.tsx`, menu
+roles `[1, 9]`). It posts to `TaxEngine/Simulate` and shows the resolved tax and TDS plus every
+candidate rule with `MatchedOn` and the winner marked. Type-checked and built; **not yet opened
+in a browser.**
 
 ---
 
@@ -202,12 +241,20 @@ Each of these cost a build-and-deploy cycle already.
 Copy one of these as the next prompt. They are in dependency order; the first two can be done in
 either order.
 
-### 1. Controllers and the rule simulator
+### 1. The document screens (the API for them already exists)
 
-> Phase 1 aur Phase 2 ke saare controllers bana do — TaxRule, TaxEngine/simulate, TaxMaster,
-> PartyTaxProfile, TaxInvoice, ExchangeRegister — aur har ek ko ApiAccessPolicy mein register
-> karo (warna admin-only hokar chup-chaap fail honge). Saath mein rule simulator screen, jisme
-> service/party/amount/date daal ke engine ka poora output aur kaunsa rule kyun jeeta wo dikhe.
+> GST ke baaki screens bana do — invoice list aur detail (annexure ke saath, taaki "is figure
+> mein kaun kaun si transaction hai" ka jawab mile), exchange register (net aur turnover dono
+> saath mein), IRN queue with deadline alerts, aur credit-note window alerts. Endpoints sab ban
+> chuke hain aur ApiAccessPolicy mein registered hain — sirf screens chahiye. Menu entries role
+> [1, 9] par, aur jo button Admin-only endpoint call karta hai use accountant ke liye hide karo.
+
+### 1b. Then put it in front of the CA
+
+> Dev par Phase 1 + Phase 2 deploy karke accountant login se screens kholo aur verify karo ki
+> simulator aur document screens dono chalte hain. UI aur API dono build karke
+> `C:\inetpub\wwwroot\ui.finocore.net` aur `api.finocore.net` par mat daalna jab tak dev par
+> poora chal na jaye.
 
 ### 2. Phase 3 — purchase and GSTR-2B
 
