@@ -207,6 +207,10 @@ namespace FintechApp.Services
                 new Node { Roles = [1], Name = "API Partner Logs", Url = "/ApiUserLog" },
                 new Node { Roles = [1, 9], Name = "Accounting Summary", Url = "/AdminAccounting" },
                 new Node { Roles = [1, 9], Name = "Platform Ledger", Url = "/AdminLedger" },
+                // Read-only: it resolves and explains, it writes nothing. The accountant needs it
+                // most — it is the only way to see what a tax rule actually does before a month
+                // of invoices has been raised on it.
+                new Node { Roles = [1, 9], Name = "Tax Rule Simulator", Url = "/TaxSimulator" },
                 new Node { Roles = [1, 9], Name = "Provider Daybook", Url = "/ProviderDayBook" },
                 new Node { Roles = [1, 9], Name = "Provider Sales", Url = "/ProviderSale" },
                 new Node { Roles = [1, 9], Name = "Purchase Report", Url = "/PurchaseReport" },

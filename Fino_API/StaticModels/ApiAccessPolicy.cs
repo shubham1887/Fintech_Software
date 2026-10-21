@@ -22,6 +22,12 @@ namespace FintechApp.StaticModels
         {
             UserTypeCode.Admin, UserTypeCode.SupportUser, UserTypeCode.Accountant,
         };
+        // Narrower than Admin, and the only set in this file that is. Everywhere else Support is
+        // admin-equivalent, because everywhere else a mistake can be undone. These acts cannot:
+        // an allocated invoice number has gone into GSTR-1 and can only be credit-noted, and a
+        // superseded tax rule changes what every later transaction is stamped with. When an
+        // auditor asks who did it, the answer should be a very short list.
+        public static readonly int[] TaxDocumentWrite = { UserTypeCode.Admin };
         // Every authenticated, non-deactivated identity (shared infra / reference reads).
         public static readonly int[] AllAuth =
         {
@@ -205,6 +211,21 @@ namespace FintechApp.StaticModels
             // accountant until there is a names-only endpoint to grant instead.
             Set(Accounting, "invoice", "invoicesetting", "invoicenumberhistory", "providerpurchase");
 
+            // ── GST engine and documents (Phases 1 and 2) ───────────────────────────────
+            // Granted to the accounting desk for READING. The actions that change a rule, raise a
+            // document or drive the IRP queue are pinned to Admin below, one by one - because the
+            // WriteVerb regex does not match "Generate", "Issue", "Supersede" or "Process", so
+            // relying on it here would have handed an accountant the ability to issue invoices.
+            Set(Accounting,
+                "taxengine",            // the simulator - read-only by construction
+                "taxrule",              // rule list, detail, audit trail
+                "taxmaster",            // rates, SAC codes, TDS sections
+                "partytaxprofile",      // a party's tax identity and relationships
+                "taxinvoice",           // document list and detail
+                "creditnote",           // window alerts
+                "einvoice",             // IRP status and deadline alerts
+                "exchangeregister");    // the barter register
+
             // Distributor-tier: fund transfer + downline onboarding/management.
             Set(Dist, "onboardinguser", "onboardinguserdocument");
 
@@ -356,6 +377,48 @@ namespace FintechApp.StaticModels
             ["users.selectissecureip"] = ApiSelf,
             ["users.sendsecureipotp"] = ApiSelf,
             ["users.updateissecureip"] = ApiSelf,
+
+            // ── GST: the acts the accounting desk may NOT perform ───────────────────────────
+            // Every entry below is listed explicitly even where WriteVerb would already catch the
+            // name (Create, Deactivate, Save). Relying on the regex here would mean the rule that
+            // keeps Support away from an irrevocable act is invisible at the point it matters,
+            // and one rename away from quietly not applying.
+            //
+            // The rest of this file treats Support as admin-equivalent. These are the exception:
+            // see TaxDocumentWrite above for why.
+
+            // A rule decides what every later transaction is stamped with. Superseding one is how
+            // a rate change is made; it is also how a year of figures is made wrong.
+            ["taxrule.create"] = TaxDocumentWrite,
+            ["taxrule.supersede"] = TaxDocumentWrite,
+            ["taxrule.deactivate"] = TaxDocumentWrite,
+
+            // A party's GSTIN, its place of supply and its P2P-vs-AGENT relationship are the three
+            // inputs that decide IGST vs CGST/SGST and whether 194H applies at all.
+            ["partytaxprofile.save"] = TaxDocumentWrite,
+            ["partytaxprofile.saverelationship"] = TaxDocumentWrite,
+
+            // Raising a sale document. An invoice number, once allocated, goes into GSTR-1 and
+            // cannot be withdrawn - only credit-noted. That is not a reviewer's button.
+            ["taxinvoice.generatetopups"] = TaxDocumentWrite,
+            ["taxinvoice.generatecommission"] = TaxDocumentWrite,
+            ["taxinvoice.issueselfinvoice"] = TaxDocumentWrite,
+
+            // A credit note reduces declared output tax. WindowAlerts stays open to the desk -
+            // seeing what is about to expire is exactly their job - but issuing the note is not.
+            ["creditnote.issue"] = TaxDocumentWrite,
+
+            // Raising our side of a barter. Same reasoning as the generators above.
+            ["exchangeregister.invoiceoutward"] = TaxDocumentWrite,
+
+            // Operational, and deliberately NOT narrowed to Admin alone: these are re-runnable,
+            // allocate no number and decide nothing. Someone has to be able to clear the IRP
+            // queue at 11pm on the 30th day, and detecting a swap leg only records what the
+            // wallet movements already show.
+            ["einvoice.enqueue"] = Admin,
+            ["einvoice.enqueueperiod"] = Admin,
+            ["einvoice.processqueue"] = Admin,
+            ["exchangeregister.detectlegs"] = Admin,
         };
 
         /// <summary>Resolve the allowed role ids for a controller/action from the static defaults.</summary>

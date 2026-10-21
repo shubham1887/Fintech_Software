@@ -784,6 +784,10 @@ builder.Services.AddScoped<ICreditNoteService, CreditNoteService>();
 // Registered with no IRN would drop off the deadline alert that is meant to catch it.
 builder.Services.AddScoped<IEInvoiceGateway, NotConfiguredEInvoiceGateway>();
 builder.Services.AddScoped<IEInvoiceService, EInvoiceService>();
+// Rule administration. Separate from the engine on purpose: the engine only ever reads, and a
+// rule is never edited in place - it is superseded, so every figure already stamped on a
+// transaction can still be explained by the rule that was live when it was stamped.
+builder.Services.AddScoped<ITaxRuleAdminService, TaxRuleAdminService>();
 builder.Services.AddScoped<ITrustableDeviceService, TrustableDeviceService>();
 builder.Services.AddScoped<IUserMerchantMasterRepository, UserMerchantMasterRepository>();
 builder.Services.AddScoped<IUserMerchantMasterService, UserMerchantMasterService>();

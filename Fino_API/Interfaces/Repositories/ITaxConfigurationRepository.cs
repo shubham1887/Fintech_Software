@@ -31,6 +31,25 @@ namespace FintechApp.Interfaces.Repositories
         /// <summary>The party's tax identity, or null when none has been recorded yet.</summary>
         Task<PartyTaxProfile?> GetPartyTaxProfile(int userId);
 
+        /// <summary>This party's relationships, newest window first.</summary>
+        Task<List<PartyServiceRelationship>> GetRelationshipsForParty(int userId);
+
+        /// <summary>
+        /// Create or update one party's tax identity. One row per party, so this is an upsert
+        /// rather than an insert — a second profile would mean two answers to "is this party
+        /// registered", and the unique index refuses it anyway.
+        /// </summary>
+        Task<(int PartyTaxProfileID, string FailureMessage)> SavePartyTaxProfile(PartyTaxProfile profile);
+
+        /// <summary>
+        /// Record P2P or AGENT for a party on a service, from a date.
+        ///
+        /// An existing open window for the same party and service is CLOSED rather than edited: it
+        /// decides whether 194H applied, and that is a question about the relationship as it stood
+        /// on the day, not as it stands now.
+        /// </summary>
+        Task<(int PartyServiceRelationshipID, string FailureMessage)> SaveRelationship(PartyServiceRelationship relationship);
+
         /// <summary>Drop every tax cache. Called after any master write.</summary>
         void InvalidateCache();
     }

@@ -1,3 +1,4 @@
+using FintechApp.Entities;
 using FintechApp.Requests.TaxInvoice;
 using FintechApp.Responses.TaxInvoice;
 
@@ -52,5 +53,13 @@ namespace FintechApp.Interfaces.Services
         /// </summary>
         Task<(GeneratedDocument? Document, string FailureMessage)> IssueSelfInvoice(
             SelfInvoiceRequest request);
+
+        /// <summary>Documents in a period, newest first. Direction and type are optional filters.</summary>
+        Task<List<TaxInvoiceHeader>> GetDocuments(DateTime periodFrom, DateTime periodTo,
+                                                  string direction, string documentType, int partyUserID);
+
+        /// <summary>One document with its lines and its annexure — what the detail screen shows,
+        /// and the only honest answer to "which transactions make up this figure".</summary>
+        Task<object?> GetDocument(int taxInvoiceHeaderID);
     }
 }

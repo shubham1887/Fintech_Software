@@ -460,6 +460,50 @@ namespace FintechApp.Services
             return (doc, string.Empty);
         }
 
+        // ── Queries ─────────────────────────────────────────────────────────────────────
+
+        public async Task<List<TaxInvoiceHeader>> GetDocuments(DateTime periodFrom, DateTime periodTo,
+                                                               string direction, string documentType, int partyUserID)
+        {
+            DateTime start = periodFrom.Date;
+            DateTime end = periodTo.Date.AddDays(1);
+
+            var q = _context.TaxInvoiceHeaders.AsNoTracking()
+                .Where(h => !h.IsDeleted && h.DocumentDate >= start && h.DocumentDate < end);
+
+            if (!string.IsNullOrWhiteSpace(direction)) q = q.Where(h => h.Direction == direction);
+            if (!string.IsNullOrWhiteSpace(documentType)) q = q.Where(h => h.DocumentType == documentType);
+            if (partyUserID > 0) q = q.Where(h => h.PartyUserID == partyUserID);
+
+            return await q.OrderByDescending(h => h.DocumentDate)
+                          .ThenByDescending(h => h.TaxInvoiceHeaderID)
+                          .ToListAsync();
+        }
+
+        public async Task<object?> GetDocument(int taxInvoiceHeaderID)
+        {
+            var header = await _context.TaxInvoiceHeaders.AsNoTracking()
+                .FirstOrDefaultAsync(h => h.TaxInvoiceHeaderID == taxInvoiceHeaderID && !h.IsDeleted);
+            if (header == null) return null;
+
+            return new
+            {
+                Header = header,
+                Lines = await _context.TaxInvoiceLines.AsNoTracking()
+                    .Where(l => l.TaxInvoiceHeaderID == taxInvoiceHeaderID && !l.IsDeleted)
+                    .OrderBy(l => l.LineNo).ToListAsync(),
+                Annexure = await _context.TaxInvoiceAnnexureLines.AsNoTracking()
+                    .Where(a => a.TaxInvoiceHeaderID == taxInvoiceHeaderID && !a.IsDeleted)
+                    .OrderBy(a => a.TransactionDate).ToListAsync(),
+                EInvoice = await _context.EInvoiceLogs.AsNoTracking()
+                    .Where(e => e.TaxInvoiceHeaderID == taxInvoiceHeaderID && !e.IsDeleted)
+                    .OrderByDescending(e => e.EInvoiceLogID).FirstOrDefaultAsync(),
+                CreditNotes = await _context.TaxInvoiceHeaders.AsNoTracking()
+                    .Where(h => !h.IsDeleted && h.OriginalInvoiceHeaderID == taxInvoiceHeaderID)
+                    .OrderBy(h => h.DocumentDate).ToListAsync(),
+            };
+        }
+
         // ── Self-invoice (reverse charge) ───────────────────────────────────────────────
 
         public async Task<(GeneratedDocument? Document, string FailureMessage)> IssueSelfInvoice(

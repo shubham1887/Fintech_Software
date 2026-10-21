@@ -654,6 +654,7 @@ export const SCREENS: ScreenDef[] = [
   }),
   { path: '/AdminAccounting', title: 'Admin Accounting', kind: 'custom', component: 'adminAccounting', subtitle: 'Wallet-wise company accounting — opening / closing, sale, purchase, credit / debit, commission' },
   { path: '/AdminLedger', title: 'Admin Ledger', kind: 'custom', component: 'adminLedger', subtitle: 'Company account statement — running-balance ledger with period summary' },
+  { path: '/TaxSimulator', title: 'Tax Rule Simulator', kind: 'custom', component: 'taxSimulator', subtitle: 'Try a transaction against the live rules — see the tax, the TDS, and which rule won' },
   { path: '/ProviderDayBook', title: 'Provider Daybook', kind: 'custom', component: 'providerDaybook', subtitle: 'One row per provider — expand for operator & service sale' },
   { path: '/ProviderSale', title: 'Provider Sale', kind: 'txn', txn: PROVIDER_SALE, subtitle: 'Provider purchase / sale / profit' },
   { path: '/PurchaseReport', title: 'Purchase Report', kind: 'custom', component: 'purchaseReport', subtitle: 'Provider payments — month / date wise' },

@@ -41,6 +41,7 @@ import { ProviderLogScreen } from './ProviderLogScreen';
 import { SmsLogScreen } from './SmsLogScreen';
 import { ProviderDaybookScreen } from './ProviderDaybookScreen';
 import { AdminAccountingScreen } from './AdminAccountingScreen';
+import { TaxSimulatorScreen } from './TaxSimulatorScreen';
 import { AdminLedgerScreen } from './AdminLedgerScreen';
 import { PurchaseReportScreen } from './PurchaseReportScreen';
 import { DMTSettingScreen } from './DMTSettingScreen';
@@ -86,6 +87,7 @@ const CUSTOM_SCREENS: Record<string, ComponentType<CustomScreenProps>> = {
   smsLog: SmsLogScreen,
   providerDaybook: ProviderDaybookScreen,
   adminAccounting: AdminAccountingScreen,
+  taxSimulator: TaxSimulatorScreen,
   adminLedger: AdminLedgerScreen,
   purchaseReport: PurchaseReportScreen,
   dmtSetting: DMTSettingScreen,
