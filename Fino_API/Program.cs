@@ -769,6 +769,9 @@ builder.Services.AddScoped<ITaxEngineService, TaxEngineService>();
 // Document numbering. Allocates in one atomic UPDATE..OUTPUT rather than from an in-memory
 // counter, because two workers reading the same number is the most expensive GST error there is.
 builder.Services.AddScoped<ITaxDocumentNumberService, TaxDocumentNumberService>();
+// Generates sale documents from wallet top-ups and from commission, idempotently - a source
+// already covered by an annexure row cannot be invoiced twice (unique index, not bookkeeping).
+builder.Services.AddScoped<ITaxInvoiceService, TaxInvoiceService>();
 builder.Services.AddScoped<ITrustableDeviceService, TrustableDeviceService>();
 builder.Services.AddScoped<IUserMerchantMasterRepository, UserMerchantMasterRepository>();
 builder.Services.AddScoped<IUserMerchantMasterService, UserMerchantMasterService>();

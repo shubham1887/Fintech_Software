@@ -391,7 +391,20 @@ namespace FintechApp.Data
             modelBuilder.Entity<TaxInvoiceHeader>().HasIndex(h => new { h.Direction, h.PeriodKey, h.Status });
             modelBuilder.Entity<TaxInvoiceLine>().HasIndex(l => l.TaxInvoiceHeaderID);
             modelBuilder.Entity<TaxInvoiceAnnexureLine>().HasIndex(a => a.TaxInvoiceHeaderID);
-            modelBuilder.Entity<TaxInvoiceAnnexureLine>().HasIndex(a => a.TransactionMasterID);
+
+            // A source can be invoiced ONCE. These two indexes are what make invoice generation
+            // safe to re-run: a half-finished batch is simply run again, because the sources it
+            // already covered cannot be picked up a second time. Filtered because exactly one of
+            // the two ids is set on any given row.
+            modelBuilder.Entity<TaxInvoiceAnnexureLine>()
+                .HasIndex(a => a.TransactionMasterID)
+                .IsUnique()
+                .HasFilter("[TransactionMasterID] > 0 AND [IsDeleted] = 0");
+
+            modelBuilder.Entity<TaxInvoiceAnnexureLine>()
+                .HasIndex(a => a.FundTransactionID)
+                .IsUnique()
+                .HasFilter("[FundTransactionID] > 0 AND [IsDeleted] = 0");
 
             // Drives the daily "IRN still pending and the 30-day limit is approaching" alert.
             modelBuilder.Entity<EInvoiceLog>().HasIndex(e => new { e.Status, e.ReportingDeadline });

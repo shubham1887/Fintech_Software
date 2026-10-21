@@ -26,7 +26,20 @@ namespace FintechApp.Entities
         /// <summary>The invoice line this rolls into.</summary>
         public int TaxInvoiceLineID { get; set; }
 
+        /// <summary>The transaction behind this row, for a commission or charge line. 0 when the
+        /// source is a wallet movement instead.</summary>
         public int TransactionMasterID { get; set; }
+
+        /// <summary>
+        /// The wallet movement behind this row, for a gross top-up line. 0 when the source is a
+        /// transaction instead.
+        ///
+        /// Exactly one of the two is set, and each has a unique index. That is what makes invoice
+        /// generation safe to re-run: a source that has already been invoiced cannot be invoiced
+        /// again, so a batch that half-finished can simply be run again rather than needing
+        /// someone to work out where it stopped.
+        /// </summary>
+        public int FundTransactionID { get; set; }
 
         public DateTime TransactionDate { get; set; }
 
