@@ -117,10 +117,41 @@ BEGIN
     PRINT CONCAT('Exchange partner: ', @Unregd, ' with a 50,000 each-way swap in November.');
 END
 
+/* A reverse-charge purchase rule, so the self-invoice path has something to resolve against.
+   The seeded rules all have ReverseCharge = 0, and the service refuses without it - which is the
+   guard working, but it leaves the happy path untested. */
+DECLARE @RcService int = (
+    SELECT TOP 1 ServiceID FROM dbo.ServiceMasters
+    WHERE IsDeleted = 0 AND IsActive = 1 AND ServiceCategory = 'Verification Services' ORDER BY ServiceID);
+IF @RcService IS NOT NULL
+    UPDATE dbo.TaxRuleMasters
+       SET ReverseCharge = 1, Remark = 'ZZPROBE - reverse charge for the self-invoice test', UpdatedateTime = SYSDATETIME()
+     WHERE Direction = 'PURCHASE' AND ServiceID = @RcService AND PartyUserID = 0 AND IsDeleted = 0;
+
+/* Documents and logs from a previous run. */
+DELETE FROM dbo.EInvoiceLogs;
+
 /* The numbering series the verifier allocates from. */
-IF NOT EXISTS (SELECT 1 FROM dbo.TaxDocumentSeries WHERE SeriesCode='SALE-TAX' AND CompanyGSTIN='$CompanyGstin' AND FinancialYear='2627')
-    INSERT INTO dbo.TaxDocumentSeries (SeriesCode,DocumentType,CompanyGSTIN,Prefix,FinancialYear,CurrentNumber,NumberLength,ResetPolicy,IsActive,[DateTime],UpdatedateTime,IsDeleted)
-    VALUES ('SALE-TAX','TaxInvoice','$CompanyGstin','SI/','2627',0,5,'FinancialYear',1,SYSDATETIME(),SYSDATETIME(),0);
+/* All five, and for BOTH financial years: the window tests raise a credit note dated Dec-2027,
+   which is FY 2027-28, and a series has to exist for the year a document is dated in. That is
+   the same point the installer makes about opening the next year series before 1 April.
+
+   No apostrophes in this block, or anywhere in the SQL below: the text is passed to sqlcmd as one
+   argument and PowerShell splits a native command line on quotes, so a single apostrophe inside a
+   comment truncates the whole script and everything after it silently does not run. */
+INSERT INTO dbo.TaxDocumentSeries (SeriesCode,DocumentType,CompanyGSTIN,Prefix,FinancialYear,CurrentNumber,NumberLength,ResetPolicy,IsActive,[DateTime],UpdatedateTime,IsDeleted)
+SELECT v.SeriesCode, v.DocumentType, '$CompanyGstin', v.Prefix, y.FY, 0, 5, 'FinancialYear', 1, SYSDATETIME(), SYSDATETIME(), 0
+FROM (VALUES
+    ('SALE-TAX','TaxInvoice','SI/'),
+    ('SALE-BOS','BillOfSupply','BS/'),
+    ('SALE-CRN','CreditNote','CN/'),
+    ('SALE-DBN','DebitNote','DN/'),
+    ('SELF-INV','SelfInvoice','SV/')
+) AS v(SeriesCode, DocumentType, Prefix)
+CROSS JOIN (VALUES ('2627'), ('2728')) AS y(FY)
+WHERE NOT EXISTS (
+    SELECT 1 FROM dbo.TaxDocumentSeries s
+    WHERE s.SeriesCode = v.SeriesCode AND s.CompanyGSTIN = '$CompanyGstin' AND s.FinancialYear = y.FY);
 
 /* Start from a known state. */
 DELETE FROM dbo.TaxInvoiceAnnexureLines;

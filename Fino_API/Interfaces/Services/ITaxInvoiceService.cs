@@ -38,5 +38,19 @@ namespace FintechApp.Interfaces.Services
         /// </summary>
         Task<(GeneratedDocument? Document, string FailureMessage)> IssueExchangeLegInvoice(
             int exchangePartnerLegID, InvoiceGenerationRequest request);
+
+        /// <summary>
+        /// Raise a self-invoice for a supply we owe the tax on under reverse charge.
+        ///
+        /// The supply is somebody else's — typically an unregistered supplier, who cannot issue a
+        /// tax invoice — but the liability is ours, and GST requires us to document it ourselves.
+        /// `ServiceMaster.HSNCodeForSelfInvoice` exists for exactly this, and it takes its own
+        /// series so the sequence stays separate from ordinary sales.
+        ///
+        /// Which inward supplies attract reverse charge is a question for the CA (blueprint #4);
+        /// this issues the document, it does not decide that the document is due.
+        /// </summary>
+        Task<(GeneratedDocument? Document, string FailureMessage)> IssueSelfInvoice(
+            SelfInvoiceRequest request);
     }
 }

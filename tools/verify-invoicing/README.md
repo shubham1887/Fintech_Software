@@ -27,6 +27,10 @@ cannot always reach nuget.org.
 | 2 | Real run | 2 documents, 2 lines, 4 annexure rows |
 | 3 | What landed | Per-document taxable, CGST/SGST/IGST, grand total, party GSTIN, SAC, basis, and that the annexure sums back to its line |
 | 4 | Re-run | 0 documents, 4 sources skipped, header count unchanged |
+| 5–8 | Exchange legs | Both legs detected, re-detection creates nothing, our side invoiced and theirs left awaiting, and the register reporting `net 0.00` against `TURNOVER 100,000.00` |
+| 9 | Credit notes | Window dates across both FY boundaries, a partial note with pro-rated tax, over-credit refused, remainder credited, a fully-credited document refused, and a note past the window issued **without tax** plus a warning |
+| 10 | e-invoice queue | 30-day deadline computed, re-queue refused, period sweep leaves nothing unqueued, an unconfigured gateway fails **retryably** so documents stay Pending, alerts correct both before and after the deadline |
+| 11 | Self-invoice | Refused when the purchase rule sets no ReverseCharge, issued on its own series when it does, tax **added on top** (5,000 → 900), reverse charge and ITC on the line |
 
 The arithmetic checked is the same as a real wallet top-up: ₹10,000 collected inclusive of tax at
 18% intra-state gives taxable 8,474.58 + CGST 762.71 + SGST 762.71 = ₹10,000.00.

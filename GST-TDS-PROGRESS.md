@@ -19,7 +19,7 @@ compiles — the verification tools are in `tools/` and can be re-run at any tim
 | Verification tool | Covers | Assertions |
 | --- | --- | --- |
 | `tools/verify-tax-engine` | Tax engine arithmetic against three real supplier invoices; document numbering format and financial year | 49 |
-| `tools/verify-invoicing` | Invoice generation, B2C consolidation, idempotency, exchange legs, exchange register | 38 |
+| `tools/verify-invoicing` | Invoice generation, B2C consolidation, idempotency, exchange legs and register, credit notes, e-invoice queue, self-invoice | 71 |
 
 ```bash
 cd tools\verify-tax-engine; .\Export-Masters.ps1 -Database FintechApp; dotnet run
@@ -86,7 +86,7 @@ done. Until it is, the 1 crore question is still open.
 
 ---
 
-## Phase 2 — Invoicing 🟡 foundation and generation done, three pieces left
+## Phase 2 — Invoicing 🟡 everything built and verified except the controllers
 
 ### Done and verified
 
@@ -110,16 +110,31 @@ done. Until it is, the 1 crore question is still open.
   shows `net 0.00` against `TURNOVER 100,000.00` on a 50,000 each-way swap, which is the whole
   point of it existing.
 
+- **`CreditNoteService`** — reverses an issued document in full or in part. Tax is pro-rated from
+  the **original's own figures**, never re-resolved, so a reversal carries the rate that was
+  actually charged. Cumulative cap means a consolidated invoice can be reversed one source at a
+  time and nothing is credited twice. Past the 30-November window the note still issues but
+  **without tax**, with a warning that the GST is no longer recoverable. `GetWindowAlerts` lists
+  documents whose window is closing that still cover a failed or refunded transaction.
+- **`EInvoiceService`** — the IRN queue. `Enqueue` is idempotent and sets the 30-day deadline;
+  `ProcessQueue` works soonest-deadline-first; `GetDeadlineAlerts` reports what is running out of
+  time. The gateway is an interface (`IEInvoiceGateway`) because each reseller registers with its
+  own GSP. **The default implementation deliberately fails** — a document marked Registered with
+  no IRN would drop off the very alert meant to catch it.
+- **Bill of supply** — exempt and non-GST supplies route to `SALE-BOS` automatically, chosen from
+  the resolved basis.
+- **Self-invoice (RCM)** — `IssueSelfInvoice` refuses unless the purchase rule actually sets
+  `ReverseCharge`, and adds the tax **on top** rather than extracting it, because an unregistered
+  supplier charged none to begin with.
+
 ### Not started
 
-- **Credit notes.** `TaxInvoiceHeader` has the fields (`OriginalInvoiceHeaderID`, `NoteReason`,
-  `NoteTimeLimitDate`) and `SALE-CRN` is seeded, but nothing issues one. Needed for failed and
-  reversed transactions, and the 30-November time limit needs a warning job.
-- **IRN / e-invoice queue worker.** `EInvoiceLogs` exists with the reporting deadline on each row;
-  nothing calls the IRP. **At 19 crore turnover this is mandatory, not optional** — above
-  Rs 10 crore a document must reach the IRP within 30 days of its date or no IRN is issued at all.
-- **Controllers** for everything above, with `ApiAccessPolicy` registration.
-- **Bill of supply** and **self-invoice (RCM)** paths — series are seeded, generation is not built.
+- **Controllers** for all of Phase 1 and Phase 2, with `ApiAccessPolicy` registration. This is now
+  the only thing between the services and a usable screen.
+- **A real IRP gateway.** `NotConfiguredEInvoiceGateway` is wired in. Until it is replaced,
+  documents queue and their deadlines count down. At this turnover that is a live exposure.
+- **A scheduler** for `ProcessQueue` and the two alert queries. Hangfire is already in the project.
+- **Debit notes** — the series is seeded and the fields exist; nothing issues one.
 
 ---
 
@@ -187,35 +202,35 @@ Each of these cost a build-and-deploy cycle already.
 Copy one of these as the next prompt. They are in dependency order; the first two can be done in
 either order.
 
-### 1. Finish Phase 2's remaining pieces
-
-> Phase 2 ke bache hue teen hisse bana do — credit note (original invoice se linked, 30-November
-> time limit ke warning ke saath), IRN/e-invoice queue worker (30-din deadline par alert, IRP down
-> ho to invoice na ruke), aur bill of supply + self-invoice ke generation paths. Har ek ko
-> tools/verify-invoicing mein verify karke dikhana.
-
-### 2. Controllers and the rule simulator
+### 1. Controllers and the rule simulator
 
 > Phase 1 aur Phase 2 ke saare controllers bana do — TaxRule, TaxEngine/simulate, TaxMaster,
 > PartyTaxProfile, TaxInvoice, ExchangeRegister — aur har ek ko ApiAccessPolicy mein register
 > karo (warna admin-only hokar chup-chaap fail honge). Saath mein rule simulator screen, jisme
 > service/party/amount/date daal ke engine ka poora output aur kaunsa rule kyun jeeta wo dikhe.
 
-### 3. Phase 3 — purchase and GSTR-2B
+### 2. Phase 3 — purchase and GSTR-2B
 
 > Phase 3 shuru karo — purchase invoice capture (e-invoice JSON import sameth), provider wallet se
 > three-way reconciliation, GSTR-2B import aur 4-bucket recon, ITC register, aur Rule 37 / Section
 > 16(4) ke deadline alerts. Dhyaan rahe: 2B match mein tax figure par exact compare nahi, ±0.05 ki
 > tolerance chahiye — Ezytm aur Erech alag tareeke se tax derive karte hain.
 
-### 4. Phase 4 — double-entry ledger
+### 3. Phase 4 — double-entry ledger
 
 > Phase 4 bana do — chart of accounts, posting rules (event se Dr/Cr), outbox posting engine jo
 > chup-chaap fail na ho, AcctVoucher tables, period lock, aur roz chalne wale integrity checks
 > (trial balance, wallet vs control account, provider wallet vs stock).
 
-### 5. Before any of it touches production
+### 4. Before any of it touches production
 
 > Mixed-basis wallet wali problem par options do aur recommendation do — services ko alag wallets
 > par karein ya un wallets ka revenue commission par invoice karein. Phir production par Phase 0
 > ki reports chala ke CA ke liye teen number nikalo.
+
+### 5. Make the IRN queue actually run
+
+> IRP gateway ka asli implementation bana do (GSP ya NIC, credentials appsettings se), aur
+> Hangfire par ProcessQueue, credit-note window alerts aur IRN deadline alerts ko schedule karo.
+> NotConfiguredEInvoiceGateway ko replace karna hai, hatana nahi — wo naye installs ka default
+> rahega.

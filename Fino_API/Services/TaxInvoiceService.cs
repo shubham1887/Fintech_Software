@@ -19,7 +19,6 @@ namespace FintechApp.Services
     /// </summary>
     public class TaxInvoiceService : ITaxInvoiceService
     {
-        private const string SeriesTaxInvoice = "SALE-TAX";
 
         private readonly ApplicationDbContext _context;
         private readonly ITaxEngineService _engine;
@@ -150,6 +149,7 @@ namespace FintechApp.Services
                     }
 
                     await WriteDocument(request, result, party, tax, serviceId, batch.Date, consolidate,
+                        documentType: DocumentTypeFor(tax),
                         description: consolidate ? $"Wallet top-ups, {batch.Date:dd-MMM-yyyy}" : "Wallet top-up",
                         sources: batch.Items.Select(i => (TxnId: 0, FundId: i.FundTransactionID, i.DateTime,
                                                           Reference: string.Empty, Gross: i.Amount)).ToList());
@@ -241,6 +241,7 @@ namespace FintechApp.Services
 
                 await WriteDocument(request, result, party, tax, group.Key.ServiceID, request.PeriodTo.Date,
                     consolidated: true,
+                    documentType: DocumentTypeFor(tax),
                     description: $"{tax.BillingBasis.ToLowerInvariant()} for {request.PeriodFrom:dd-MMM} to {request.PeriodTo:dd-MMM-yyyy}",
                     sources: group.Select(t => (TxnId: t.TransactionMasterID, FundId: 0, t.DateTime,
                                                 Reference: t.ReferenceNo ?? string.Empty, Gross: t.Amount)).ToList());
@@ -250,6 +251,19 @@ namespace FintechApp.Services
         }
 
         // ── Shared ──────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Which document a supply needs.
+        ///
+        /// An exempt or non-GST supply cannot go on a tax invoice — there is no tax to show — so it
+        /// takes a bill of supply, on its own series. The turnover is still reported either way;
+        /// only the document and the series differ.
+        /// </summary>
+        private static string DocumentTypeFor(TaxResolutionResult tax) =>
+            tax.BillingBasis.Equals(BillingBasis.Exempt, StringComparison.OrdinalIgnoreCase)
+            || tax.BillingBasis.Equals(BillingBasis.NonGst, StringComparison.OrdinalIgnoreCase)
+                ? TaxDocumentType.BillOfSupply
+                : TaxDocumentType.TaxInvoice;
 
         private static InvoiceGenerationResult NewResult(InvoiceGenerationRequest r) => new()
         {
@@ -418,6 +432,7 @@ namespace FintechApp.Services
             var result = NewResult(request);
             var doc = await WriteDocument(request, result, party, tax, serviceId, leg.LegDate.Date,
                 consolidated: false,
+                documentType: DocumentTypeFor(tax),
                 description: $"Exchange supply to {party.Name}, {leg.LegDate:dd-MMM-yyyy}",
                 sources: new List<(int, int, DateTime, string, decimal)>
                 {
@@ -445,16 +460,93 @@ namespace FintechApp.Services
             return (doc, string.Empty);
         }
 
+        // ── Self-invoice (reverse charge) ───────────────────────────────────────────────
+
+        public async Task<(GeneratedDocument? Document, string FailureMessage)> IssueSelfInvoice(
+            SelfInvoiceRequest request)
+        {
+            if (request.Amount <= 0m) return (null, "Amount must be greater than zero.");
+            if (request.ServiceID <= 0) return (null, "A service is required, to pick the SAC and the rate.");
+
+            var party = await LoadParty(request.SupplierUserID);
+            if (party == null) return (null, $"Supplier {request.SupplierUserID} not found.");
+
+            DateTime documentDate = (request.DocumentDate ?? DateTime.Today).Date;
+
+            // Resolved on the PURCHASE side: this is an inward supply. The rule's ReverseCharge
+            // flag is what says the liability is ours.
+            var tax = await _engine.Resolve(new TaxResolutionContext
+            {
+                Direction = TaxDirection.Purchase,
+                ServiceID = request.ServiceID,
+                PartyUserID = party.UserID,
+                UserTypeID = party.UserTypeID,
+                PartyRegistrationStatus = party.RegistrationStatus,
+                TransactionDate = documentDate,
+                GrossValue = request.Amount,
+                CommissionValue = request.Amount,
+                ChargeValue = request.Amount,
+                IsTaxInclusive = request.IsTaxInclusive,
+                SupplierStateCode = request.SupplierStateCode,
+                PlaceOfSupplyStateCode = party.StateCode,
+            });
+
+            if (!tax.ReverseCharge)
+                return (null, $"The rule that matched service {request.ServiceID} on the purchase side does not set "
+                            + "ReverseCharge, so no self-invoice is due. If this supply does attract reverse charge, "
+                            + "set the flag on the rule rather than raising the document by hand.");
+
+            var result = NewResult(new InvoiceGenerationRequest
+            {
+                PeriodFrom = documentDate, PeriodTo = documentDate,
+                CompanyGSTIN = request.CompanyGSTIN, SupplierStateCode = request.SupplierStateCode,
+                DryRun = request.DryRun, CreatedByUserID = request.CreatedByUserID,
+            });
+
+            var doc = await WriteDocument(
+                new InvoiceGenerationRequest
+                {
+                    PeriodFrom = documentDate, PeriodTo = documentDate,
+                    CompanyGSTIN = request.CompanyGSTIN, SupplierStateCode = request.SupplierStateCode,
+                    DryRun = request.DryRun, CreatedByUserID = request.CreatedByUserID,
+                },
+                result, party, tax, request.ServiceID, documentDate,
+                consolidated: false,
+                documentType: TaxDocumentType.SelfInvoice,
+                description: string.IsNullOrWhiteSpace(request.Description)
+                    ? $"Reverse charge on inward supply from {party.Name}"
+                    : request.Description.Trim(),
+                sources: new List<(int, int, DateTime, string, decimal)>());
+
+            if (doc == null)
+                return (null, result.Warnings.Count > 0 ? string.Join(" | ", result.Warnings) : "Document was not written.");
+
+            if (!request.DryRun)
+            {
+                // A self-invoice is an INWARD supply recorded on our own document, so its line
+                // carries the ITC eligibility the rule granted - the tax we pay under reverse
+                // charge is also the tax we may claim back, and that link has to be on the row.
+                var line = await _context.TaxInvoiceLines
+                    .FirstAsync(l => l.TaxInvoiceHeaderID == doc.TaxInvoiceHeaderID);
+                line.ITCEligible = tax.ITCEligible;
+                line.ReverseCharge = true;
+                line.UpdatedateTime = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
+
+            return (doc, tax.Warning);
+        }
+
         /// <summary>Build and (unless this is a dry run) save one document with its line and annexure.</summary>
         private async Task<GeneratedDocument?> WriteDocument(
             InvoiceGenerationRequest request, InvoiceGenerationResult result, PartyInfo party,
             TaxResolutionResult tax, int serviceId, DateTime documentDate, bool consolidated,
-            string description,
+            string documentType, string description,
             List<(int TxnId, int FundId, DateTime DateTime, string Reference, decimal Gross)> sources)
         {
             var doc = new GeneratedDocument
             {
-                DocumentType = "TaxInvoice",
+                DocumentType = documentType,
                 DocumentDate = documentDate,
                 PartyUserID = party.UserID,
                 PartyName = party.Name,
@@ -476,7 +568,7 @@ namespace FintechApp.Services
             }
             else
             {
-                var (documentNo, failure) = await _numbers.Allocate(SeriesTaxInvoice, request.CompanyGSTIN, documentDate);
+                var (documentNo, failure) = await _numbers.Allocate(TaxDocumentSeriesCode.For(documentType), request.CompanyGSTIN, documentDate);
                 if (failure.Length > 0)
                 {
                     result.SkippedUnresolved += sources.Count;
@@ -488,7 +580,7 @@ namespace FintechApp.Services
                 var header = new TaxInvoiceHeader
                 {
                     Direction = TaxDirection.Sale,
-                    DocumentType = "TaxInvoice",
+                    DocumentType = documentType,
                     TaxDocumentSeriesID = null,
                     DocumentNo = documentNo,
                     DocumentDate = documentDate,
@@ -508,7 +600,7 @@ namespace FintechApp.Services
                     CessTotal = tax.CessAmount,
                     RoundOff = tax.RoundOff,
                     GrandTotal = tax.InvoiceValue,
-                    Status = "Issued",
+                    Status = TaxDocumentStatus.Issued,
                     PeriodKey = documentDate.ToString("yyyyMM"),
                     IsConsolidated = consolidated,
                     Remark = sources.Count > 1 ? $"Consolidated from {sources.Count} source(s)" : string.Empty,

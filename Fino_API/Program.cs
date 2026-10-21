@@ -776,6 +776,14 @@ builder.Services.AddScoped<ITaxInvoiceService, TaxInvoiceService>();
 // leg is taxable, so the turnover is the SUM of the legs - the net, which is what a swap looks
 // like from the wallet, is exactly how that turnover goes missing.
 builder.Services.AddScoped<IExchangeLegService, ExchangeLegService>();
+// Credit notes: the only correct way to undo an issued document. Tax is pro-rated from the
+// ORIGINAL, never re-resolved, so a reversal carries the rate that was actually charged.
+builder.Services.AddScoped<ICreditNoteService, CreditNoteService>();
+// e-invoice (IRN) queue. The gateway is an interface because each reseller registers with its own
+// GSP; the default refuses loudly rather than pretending to succeed, because a document marked
+// Registered with no IRN would drop off the deadline alert that is meant to catch it.
+builder.Services.AddScoped<IEInvoiceGateway, NotConfiguredEInvoiceGateway>();
+builder.Services.AddScoped<IEInvoiceService, EInvoiceService>();
 builder.Services.AddScoped<ITrustableDeviceService, TrustableDeviceService>();
 builder.Services.AddScoped<IUserMerchantMasterRepository, UserMerchantMasterRepository>();
 builder.Services.AddScoped<IUserMerchantMasterService, UserMerchantMasterService>();
