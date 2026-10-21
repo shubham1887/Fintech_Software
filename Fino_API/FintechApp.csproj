@@ -7,8 +7,21 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Scripts\ holds SQL and standalone tooling, none of which belongs in the API assembly.
+         Without this the SDK's **\*.cs glob pulls the tax-engine verification project's own
+         Program.cs into this compilation, and its obj\ folder then produces duplicate assembly
+         attributes - the build fails with CS0579 and the cause is nowhere near the error. -->
+    <!-- Only Compile. The SQL is shipped by the explicit Content Include further down, and
+         removing Scripts\ from None as well would be one more thing to get wrong for no gain. -->
+    <Compile Remove="Scripts\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.104.2" />
     <PackageReference Include="FluentValidation" Version="12.1.1" />
+    <PackageReference Include="Hangfire.AspNetCore" Version="1.8.2" />
+    <PackageReference Include="Hangfire.Core" Version="1.8.2" />
+    <PackageReference Include="Hangfire.SqlServer" Version="1.8.2" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.10" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="9.0.10" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.10" />
@@ -18,6 +31,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.10" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.14.0" />
     <PackageReference Include="System.Security.Cryptography.Algorithms" Version="4.3.1" />
@@ -27,6 +41,13 @@
     <ProjectReference Include="..\Fino.PlanApi\Fino.PlanApi.csproj" />
     <ProjectReference Include="..\Fino.JaiJuiApi\Fino.JaiJuiApi.csproj" />
     <ProjectReference Include="..\Fino.Pay1Api\Fino.Pay1Api.csproj" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <!-- The database installer (Helpers/DatabaseBootstrapper.cs) reads these at startup, so they
+         have to travel with the published build, not just live in the source tree. -->
+    <Content Include="Scripts\install\**\*.sql" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

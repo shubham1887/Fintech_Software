@@ -1,8 +1,9 @@
-# Tax engine verification
+# Tax engine and numbering verification
 
 Runs the real `TaxEngineService` against the real seeded masters and checks the arithmetic
 against **three actual supplier invoices**. Not a simulation: only the repository is stood in for,
-so the rule resolution, the rounding and the TDS decisions are the shipped code's own.
+so the rule resolution, the rounding and the TDS decisions are the shipped code's own. Cases 9 and
+10 cover Phase 2's document numbering.
 
 ## Run it
 
@@ -29,6 +30,8 @@ the habit matters.
 | 6 | Recharge sale ₹10,000 inclusive, intra-state | our own billing |
 | 7 | TDS: agent / P2P / under threshold / no PAN / unknown | s.194H + Bharti Cellular |
 | 8 | No rule matches — charges nothing and warns | the fallback behaviour |
+| 9 | Financial year of a date, across both 1-Apr and 31-Mar | FY-wise numbering |
+| 10 | Printed number: padding, the 16-char cap, illegal characters | GST's format rules |
 
 Case 1 reproduces its invoice to the paise, round-off line included: taxable 4,66,101.69 +
 IGST 83,898.30 + round off 0.01 = 5,50,000.00.
@@ -50,6 +53,38 @@ tax and round-off differs, by one paisa.
 That is a legitimate difference of method, not an error — but it means **GSTR-2B and purchase
 reconciliation must allow a rounding tolerance** rather than demanding an exact match on the tax
 figure. Phase 3 depends on this.
+
+## Proving the numbering is concurrency-safe
+
+Cases 9 and 10 cover the pure parts. The part that actually matters — that two callers can never
+receive the same number — lives in one SQL statement and is proven by hammering it from parallel
+sessions. Against a scratch database:
+
+```sql
+CREATE TABLE dbo.ZZ_NumberProbe (N int NOT NULL, Worker int NOT NULL);
+UPDATE dbo.TaxDocumentSeries SET CurrentNumber = 0 WHERE SeriesCode = 'SALE-TAX';
+```
+
+then run this from several sqlcmd sessions at once, each with its own worker number:
+
+```sql
+DECLARE @i int = 0;
+WHILE @i < 40
+BEGIN
+  UPDATE dbo.TaxDocumentSeries SET CurrentNumber = CurrentNumber + 1, UpdatedateTime = SYSUTCDATETIME()
+  OUTPUT inserted.CurrentNumber, 1 INTO dbo.ZZ_NumberProbe(N, Worker)
+  WHERE SeriesCode = 'SALE-TAX' AND CompanyGSTIN = '<gstin>' AND FinancialYear = '2627'
+    AND IsActive = 1 AND IsDeleted = 0;
+  SET @i = @i + 1;
+END
+```
+
+Then check: `COUNT(*)` must equal `COUNT(DISTINCT N)`, and `MAX(N) - MIN(N) + 1` must equal
+`COUNT(DISTINCT N)`. Run on 2026-10-21 with 8 sessions × 40: 320 allocations, 320 distinct, 0
+duplicates, 0 gaps, 1..320. Drop `ZZ_NumberProbe` and reset the counter afterwards.
+
+A `SELECT` followed by an `UPDATE` would pass a single-threaded test and fail exactly here, and
+the bug it produces — two documents sharing one number — is invisible until a return is filed.
 
 ## Why there are no NuGet packages
 

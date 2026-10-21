@@ -241,6 +241,17 @@ namespace FintechApp.Data
         public DbSet<PartyServiceRelationship> PartyServiceRelationships { get; set; }
         public DbSet<TaxRuleAudit> TaxRuleAudits { get; set; }
         public DbSet<TransactionTaxDetail> TransactionTaxDetails { get; set; }
+
+        // ── GST documents (Phase 2) ─────────────────────────────────────────────────────
+        // Sale and purchase share TaxInvoiceHeaders/Lines so both sides carry the same columns —
+        // gross value, taxable value and the basis between them. Comparing two tables that have
+        // drifted apart is how the 18cr-against-19cr mismatch stayed invisible.
+        public DbSet<TaxDocumentSeries> TaxDocumentSeries { get; set; }
+        public DbSet<TaxInvoiceHeader> TaxInvoiceHeaders { get; set; }
+        public DbSet<TaxInvoiceLine> TaxInvoiceLines { get; set; }
+        public DbSet<TaxInvoiceAnnexureLine> TaxInvoiceAnnexureLines { get; set; }
+        public DbSet<EInvoiceLog> EInvoiceLogs { get; set; }
+        public DbSet<ExchangePartnerLeg> ExchangePartnerLegs { get; set; }
         public DbSet<UserMerchantMaster> UserMerchantMasters { get; set; }
         public DbSet<UserWisePayementGatewaySetting> UserWisePayementGatewaySettings { get; set; }
         public DbSet<OnboardingUser> OnboardingUsers { get; set; }
@@ -354,6 +365,44 @@ namespace FintechApp.Data
             modelBuilder.Entity<HSNSACMaster>().HasIndex(h => h.Code);
             modelBuilder.Entity<TDSSectionMaster>().HasIndex(s => new { s.SectionCode, s.EffectiveFrom });
             modelBuilder.Entity<TaxRuleAudit>().HasIndex(a => new { a.EntityName, a.EntityID, a.ChangedOn });
+
+            // ── GST documents ───────────────────────────────────────────────────────────
+            // One live counter per series per registration per financial year. A second row for
+            // the same three would be a second counter handing out the same numbers.
+            modelBuilder.Entity<TaxDocumentSeries>()
+                .HasIndex(s => new { s.SeriesCode, s.CompanyGSTIN, s.FinancialYear })
+                .IsUnique();
+
+            // No duplicate invoice number under one registration — the most expensive GST error
+            // available. Filtered to sales because a purchase carries the SUPPLIER's number, and
+            // two suppliers may legitimately both have an "INV-001".
+            modelBuilder.Entity<TaxInvoiceHeader>()
+                .HasIndex(h => new { h.CompanyGSTIN, h.DocumentType, h.DocumentNo })
+                .IsUnique()
+                .HasFilter("[Direction] = 'SALE' AND [IsDeleted] = 0");
+
+            // The same supplier bill cannot be entered twice — the control that stops a purchase
+            // register inflating, which is half of what the 1 crore question was about.
+            modelBuilder.Entity<TaxInvoiceHeader>()
+                .HasIndex(h => new { h.PartyUserID, h.DocumentNo })
+                .IsUnique()
+                .HasFilter("[Direction] = 'PURCHASE' AND [IsDeleted] = 0");
+
+            modelBuilder.Entity<TaxInvoiceHeader>().HasIndex(h => new { h.Direction, h.PeriodKey, h.Status });
+            modelBuilder.Entity<TaxInvoiceLine>().HasIndex(l => l.TaxInvoiceHeaderID);
+            modelBuilder.Entity<TaxInvoiceAnnexureLine>().HasIndex(a => a.TaxInvoiceHeaderID);
+            modelBuilder.Entity<TaxInvoiceAnnexureLine>().HasIndex(a => a.TransactionMasterID);
+
+            // Drives the daily "IRN still pending and the 30-day limit is approaching" alert.
+            modelBuilder.Entity<EInvoiceLog>().HasIndex(e => new { e.Status, e.ReportingDeadline });
+            modelBuilder.Entity<EInvoiceLog>().HasIndex(e => e.TaxInvoiceHeaderID);
+
+            // One leg per wallet movement per direction, so replaying the swap detector cannot
+            // double-count a barter — and double-counting turnover is as wrong as missing it.
+            modelBuilder.Entity<ExchangePartnerLeg>()
+                .HasIndex(l => new { l.FundTransactionID, l.Direction })
+                .IsUnique();
+            modelBuilder.Entity<ExchangePartnerLeg>().HasIndex(l => new { l.DocumentStatus, l.PeriodKey });
 
             // One row per physical device. The same token arriving again is an update, not a
             // second row — otherwise a reinstalled app would be pushed to twice.

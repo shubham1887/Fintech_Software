@@ -766,6 +766,9 @@ builder.Services.AddScoped<IUserQuickServiceRepository, UserQuickServiceReposito
 // another), and the single service that decides tax for the whole application.
 builder.Services.AddScoped<ITaxConfigurationRepository, TaxConfigurationRepository>();
 builder.Services.AddScoped<ITaxEngineService, TaxEngineService>();
+// Document numbering. Allocates in one atomic UPDATE..OUTPUT rather than from an in-memory
+// counter, because two workers reading the same number is the most expensive GST error there is.
+builder.Services.AddScoped<ITaxDocumentNumberService, TaxDocumentNumberService>();
 builder.Services.AddScoped<ITrustableDeviceService, TrustableDeviceService>();
 builder.Services.AddScoped<IUserMerchantMasterRepository, UserMerchantMasterRepository>();
 builder.Services.AddScoped<IUserMerchantMasterService, UserMerchantMasterService>();

@@ -263,6 +263,43 @@ Expect("tax", none.TotalTax, 0m);
 if (none.Warning.Length > 0) Console.WriteLine($"   warned: {none.Warning[..Math.Min(70, none.Warning.Length)]}...");
 else { bad++; Console.WriteLine("   warning MISSING ** MISMATCH **"); }
 
+// ── Phase 2: document numbering ──────────────────────────────────────────────────────
+// Only the pure parts. The atomic allocation itself is proven separately by hammering
+// UPDATE..OUTPUT from parallel sessions (see the README); what is checked here is the financial
+// year a date falls in and the format rules GST imposes on the printed number.
+Console.WriteLine("\n9. Document numbering - financial year of a date");
+var numbers = new TaxDocumentNumberService(null);
+void Fy(string what, DateTime date, string want)
+{
+    string got = numbers.FinancialYearOf(date);
+    bool ok = got == want;
+    if (!ok) bad++;
+    Console.WriteLine($"   {what,-24} got {got,14}   want {want,14}   {(ok ? "ok" : "** MISMATCH **")}");
+}
+Fy("30-Sep-2026", new DateTime(2026, 9, 30), "2627");   // the suppliers' invoice date
+Fy("01-Apr-2026 (FY opens)", new DateTime(2026, 4, 1), "2627");
+Fy("31-Mar-2026 (FY closes)", new DateTime(2026, 3, 31), "2526");
+Fy("28-Feb-2026", new DateTime(2026, 2, 28), "2526");
+Fy("01-Jan-2027", new DateTime(2027, 1, 1), "2627");
+
+Console.WriteLine("\n10. Document numbering - the printed number and its GST limits");
+void Num(string what, string prefix, string fy, int n, int len, string wantNo, bool wantError)
+{
+    var (no, err) = TaxDocumentNumberService.Format(prefix, fy, n, len);
+    bool ok = wantError ? err.Length > 0 : (no == wantNo && err.Length == 0);
+    if (!ok) bad++;
+    string shown = err.Length > 0 ? "(refused)" : no;
+    Console.WriteLine($"   {what,-24} got {shown,14}   want {(wantError ? "(refused)" : wantNo),14}   {(ok ? "ok" : "** MISMATCH **")}");
+}
+Num("first of the year", "SI/", "2627", 1, 5, "SI/2627/00001", false);
+Num("padded to length", "SI/", "2627", 320, 5, "SI/2627/00320", false);
+Num("14 chars, inside 16", "SI/", "2627", 99999, 5, "SI/2627/99999", false);
+// 16 is the GST maximum; a longer number is rejected by the portal, so it is refused here.
+Num("over 16 chars", "LONGPREFIX/", "2627", 1, 5, "", true);
+// Only letters, digits, "/" and "-" are allowed.
+Num("illegal character", "SI#", "2627", 1, 5, "", true);
+Num("hyphen is allowed", "SI-", "2627", 7, 4, "SI-2627/0007", false);
+
 Console.WriteLine();
 Console.WriteLine(bad == 0 ? "ALL CHECKS PASSED" : $"{bad} CHECK(S) FAILED");
 return bad == 0 ? 0 : 1;
