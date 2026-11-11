@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>taxprobe</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <!-- No PackageReference on purpose. The probe exercises TaxEngineService against the real
+       seeded masters, loaded from files exported with sqlcmd, so nothing here needs EF or any
+       other package - which also keeps it clear of the assembly-version conflicts that mixing
+       the probe's own package graph with the API's build output produces. -->
+  <ItemGroup>
+    <Reference Include="FintechApp">
+      <HintPath>C:\Users\Administrator\Desktop\Fintech_Software\Fino_API\bin\Release\net9.0\FintechApp.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

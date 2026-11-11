@@ -1,18 +1,17 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, Download, RefreshCw, Search as SearchIcon, SlidersHorizontal } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
 import { fetchList } from '@/api/list.api';
 import { loadSession } from '@/lib/storage';
 import { inr, apiDate } from '@/lib/format';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvDownload } from '@/lib/exportAll';
 import { getField } from '@/lib/row';
 import { cn } from '@/lib/cn';
+import { ReportActions, ReportFilterBar, operatorsForService } from '@/components/report';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Card, CardBody } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Autocomplete, type AutocompleteOption } from '@/components/ui/Autocomplete';
@@ -59,6 +58,12 @@ interface ProviderGroup {
   successAmount: number;
   failedHits: number;
   pendingHits: number;
+  // The chain's own payouts — what the retailer, distributor and super-distributor earned on this
+  // provider's sale. The API has always returned them; the table simply never showed them, so the
+  // daybook could tell you the admin's margin without showing the commission it was netted against.
+  retailerCommission: number;
+  distributerCommission: number;
+  superDistributerCommission: number;
   adminCommission: number;
   providerCommission: number;
   profit: number;
@@ -86,6 +91,7 @@ async function fetchDaybook(f: Filters): Promise<Row[]> {
  * Filters: date range, service (cascades operator), operator, provider and — for admins — entity.
  */
 export function ProviderDaybookScreen({ def }: CustomScreenProps) {
+  const downloadCsv = useCsvDownload();
   const userTypeId = Number(loadSession()?.user?.UserTypeID ?? 0);
   const isAdmin = ADMIN_ONLY.includes(userTypeId);
   const showUser = ADMIN_ROLES.includes(userTypeId);
@@ -114,7 +120,7 @@ export function ProviderDaybookScreen({ def }: CustomScreenProps) {
   });
 
   const operatorOptions = useMemo(
-    () => allOperators.filter((o) => String(getField(o, 'ServiceID') ?? '') === String(draft.serviceId)),
+    () => operatorsForService(allOperators, draft.serviceId),
     [allOperators, draft.serviceId],
   );
   const userOptions: AutocompleteOption[] = useMemo(
@@ -139,7 +145,8 @@ export function ProviderDaybookScreen({ def }: CustomScreenProps) {
           providerId: pid,
           providerName: String(getField(r, 'ProviderName') ?? pid),
           children: [], totalHits: 0, totalAmount: 0, successHits: 0, successAmount: 0,
-          failedHits: 0, pendingHits: 0, adminCommission: 0, providerCommission: 0, profit: 0,
+          failedHits: 0, pendingHits: 0, retailerCommission: 0, distributerCommission: 0,
+          superDistributerCommission: 0, adminCommission: 0, providerCommission: 0, profit: 0,
         };
         map.set(pid, g);
       }
@@ -150,6 +157,9 @@ export function ProviderDaybookScreen({ def }: CustomScreenProps) {
       g.successAmount += num(r, 'SuccessAmount');
       g.failedHits += num(r, 'FailedHits');
       g.pendingHits += num(r, 'PendingHits');
+      g.retailerCommission += num(r, 'RetailerCommission');
+      g.distributerCommission += num(r, 'DistributerCommission');
+      g.superDistributerCommission += num(r, 'SuperDistributerCommission');
       g.adminCommission += num(r, 'AdminCommission');
       g.providerCommission += num(r, 'ProviderCommission');
       g.profit += num(r, 'Profit');
@@ -161,8 +171,17 @@ export function ProviderDaybookScreen({ def }: CustomScreenProps) {
     totalHits: acc.totalHits + g.totalHits,
     successHits: acc.successHits + g.successHits,
     successAmount: acc.successAmount + g.successAmount,
+    retailerCommission: acc.retailerCommission + g.retailerCommission,
+    distributerCommission: acc.distributerCommission + g.distributerCommission,
+    superDistributerCommission: acc.superDistributerCommission + g.superDistributerCommission,
+    adminCommission: acc.adminCommission + g.adminCommission,
+    providerCommission: acc.providerCommission + g.providerCommission,
     profit: acc.profit + g.profit,
-  }), { totalHits: 0, successHits: 0, successAmount: 0, profit: 0 }), [groups]);
+  }), {
+    totalHits: 0, successHits: 0, successAmount: 0, retailerCommission: 0,
+    distributerCommission: 0, superDistributerCommission: 0, adminCommission: 0,
+    providerCommission: 0, profit: 0,
+  }), [groups]);
 
   const toggle = (pid: number) => setOpen((s) => {
     const next = new Set(s);
@@ -171,8 +190,15 @@ export function ProviderDaybookScreen({ def }: CustomScreenProps) {
   });
 
   const runSearch = () => setApplied(draft);
+  const resetFilters = () => { const d = defaultFilters(); setDraft(d); setApplied(d); };
 
-  const colCount = isAdmin ? 10 : 7;
+  // Failed / Pending columns appear only when the range actually has some: a daybook is what
+  // the day earned, and two columns of zeros beside the money read as if they counted.
+  const showFailed = groups.some((g) => g.failedHits > 0);
+  const showPending = groups.some((g) => g.pendingHits > 0);
+  // Provider / Success / S. Amt (+ Failed / Pending when present) + the commission block
+  // (R / DS / Super DS / Provider / Net profit), admin-only.
+  const colCount = 3 + (showFailed ? 1 : 0) + (showPending ? 1 : 0) + (isAdmin ? 5 : 0);
 
   return (
     <>
@@ -181,26 +207,17 @@ export function ProviderDaybookScreen({ def }: CustomScreenProps) {
         subtitle={def.subtitle}
         icon={pickIcon(def.title)}
         actions={
-          <>
-            <span className="text-sm text-slate-400">{groups.length} providers</span>
-            <Button variant="outline" size="sm" onClick={() => exportToCsv(rows, def.title)} disabled={rows.length === 0}>
-              <Download className="size-4" />
-              Export
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => refetch()} loading={isFetching}>
-              <RefreshCw className="size-4" />
-            </Button>
-          </>
+          <ReportActions
+            total={groups.length}
+            loading={isFetching}
+            onRefresh={() => refetch()}
+            onExport={() => downloadCsv(rows, def.title)}
+            exportDisabled={rows.length === 0}
+          />
         }
       />
 
-      <Card className="mb-4">
-        <CardBody>
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-600">
-            <SlidersHorizontal className="size-4 text-brand-600" />
-            Filters
-          </div>
-          <form onSubmit={(e) => { e.preventDefault(); runSearch(); }} className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <ReportFilterBar onSearch={runSearch} onReset={resetFilters} loading={isFetching}>
             <Input label="From date" type="date" max={draft.toDate} value={draft.fromDate} onChange={(e) => upd({ fromDate: e.target.value })} />
             <Input label="To date" type="date" value={draft.toDate} onChange={(e) => upd({ toDate: e.target.value })} />
 
@@ -239,16 +256,7 @@ export function ProviderDaybookScreen({ def }: CustomScreenProps) {
                 onChange={(v) => upd({ userId: v })}
               />
             )}
-
-            <div className="flex items-end">
-              <Button type="submit" loading={isFetching} className="w-full">
-                <SearchIcon className="size-4" />
-                Search
-              </Button>
-            </div>
-          </form>
-        </CardBody>
-      </Card>
+      </ReportFilterBar>
 
       <div className="overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card">
         <div className="overflow-x-auto">
@@ -256,15 +264,15 @@ export function ProviderDaybookScreen({ def }: CustomScreenProps) {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <th className="px-4 py-3 text-left">Provider / Operator</th>
-                <th className="px-4 py-3 text-right">Total</th>
-                <th className="px-4 py-3 text-right">T. Amt</th>
                 <th className="px-4 py-3 text-right">Success</th>
                 <th className="px-4 py-3 text-right">S. Amt</th>
-                <th className="px-4 py-3 text-right">Failed</th>
-                <th className="px-4 py-3 text-right">Pending</th>
-                {isAdmin && <th className="px-4 py-3 text-right">Admin Comm</th>}
-                {isAdmin && <th className="px-4 py-3 text-right">API Comm</th>}
-                {isAdmin && <th className="px-4 py-3 text-right">Profit</th>}
+                {showFailed && <th className="px-4 py-3 text-right">Failed</th>}
+                {showPending && <th className="px-4 py-3 text-right">Pending</th>}
+                {isAdmin && <th className="px-4 py-3 text-right" title="Retailer commission">R. Comm</th>}
+                {isAdmin && <th className="px-4 py-3 text-right" title="Distributor commission">DS. Comm</th>}
+                {isAdmin && <th className="px-4 py-3 text-right" title="Super-distributor commission">Super DS. Comm</th>}
+                {isAdmin && <th className="px-4 py-3 text-right" title="Commission earned from the provider">Provider Comm</th>}
+                {isAdmin && <th className="px-4 py-3 text-right" title="What the admin keeps: provider commission less every commission paid down the chain">Net Profit</th>}
               </tr>
             </thead>
             <tbody>
@@ -286,7 +294,7 @@ export function ProviderDaybookScreen({ def }: CustomScreenProps) {
                 groups.map((g) => {
                   const expanded = open.has(g.providerId);
                   return (
-                    <ProviderRows key={g.providerId} group={g} expanded={expanded} isAdmin={isAdmin} onToggle={() => toggle(g.providerId)} />
+                    <ProviderRows key={g.providerId} group={g} expanded={expanded} isAdmin={isAdmin} showFailed={showFailed} showPending={showPending} onToggle={() => toggle(g.providerId)} />
                   );
                 })
               )}
@@ -295,14 +303,14 @@ export function ProviderDaybookScreen({ def }: CustomScreenProps) {
               <tfoot>
                 <tr className="border-t-2 border-slate-200 bg-slate-50/80 font-semibold text-slate-800">
                   <td className="px-4 py-3">Total</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{totals.totalHits}</td>
-                  <td className="px-4 py-3" />
                   <td className="px-4 py-3 text-right tabular-nums">{totals.successHits}</td>
                   <td className="px-4 py-3 text-right tabular-nums">{inr(totals.successAmount)}</td>
-                  <td className="px-4 py-3" />
-                  <td className="px-4 py-3" />
-                  {isAdmin && <td className="px-4 py-3" />}
-                  {isAdmin && <td className="px-4 py-3" />}
+                  {showFailed && <td className="px-4 py-3 text-right tabular-nums text-danger-600">{groups.reduce((s, g) => s + g.failedHits, 0)}</td>}
+                  {showPending && <td className="px-4 py-3 text-right tabular-nums text-warning-600">{groups.reduce((s, g) => s + g.pendingHits, 0)}</td>}
+                  {isAdmin && <td className="px-4 py-3 text-right tabular-nums">{inr(totals.retailerCommission)}</td>}
+                  {isAdmin && <td className="px-4 py-3 text-right tabular-nums">{inr(totals.distributerCommission)}</td>}
+                  {isAdmin && <td className="px-4 py-3 text-right tabular-nums">{inr(totals.superDistributerCommission)}</td>}
+                  {isAdmin && <td className="px-4 py-3 text-right tabular-nums">{inr(totals.providerCommission)}</td>}
                   {isAdmin && <td className="px-4 py-3 text-right tabular-nums">{inr(totals.profit)}</td>}
                 </tr>
               </tfoot>
@@ -314,10 +322,12 @@ export function ProviderDaybookScreen({ def }: CustomScreenProps) {
   );
 }
 
-function ProviderRows({ group: g, expanded, isAdmin, onToggle }: {
+function ProviderRows({ group: g, expanded, isAdmin, showFailed, showPending, onToggle }: {
   group: ProviderGroup;
   expanded: boolean;
   isAdmin: boolean;
+  showFailed: boolean;
+  showPending: boolean;
   onToggle: () => void;
 }) {
   return (
@@ -330,15 +340,15 @@ function ProviderRows({ group: g, expanded, isAdmin, onToggle }: {
             <span className="text-xs font-normal text-slate-400">({g.children.length})</span>
           </div>
         </td>
-        <td className="px-4 py-3 text-right tabular-nums">{g.totalHits}</td>
-        <td className="px-4 py-3 text-right tabular-nums">{inr(g.totalAmount)}</td>
         <td className="px-4 py-3 text-right tabular-nums text-success-600">{g.successHits}</td>
         <td className="px-4 py-3 text-right tabular-nums">{inr(g.successAmount)}</td>
-        <td className="px-4 py-3 text-right tabular-nums text-danger-600">{g.failedHits}</td>
-        <td className="px-4 py-3 text-right tabular-nums text-warning-600">{g.pendingHits}</td>
-        {isAdmin && <td className="px-4 py-3 text-right tabular-nums">{inr(g.adminCommission)}</td>}
+        {showFailed && <td className="px-4 py-3 text-right tabular-nums text-danger-600">{g.failedHits || ''}</td>}
+        {showPending && <td className="px-4 py-3 text-right tabular-nums text-warning-600">{g.pendingHits || ''}</td>}
+        {isAdmin && <td className="px-4 py-3 text-right tabular-nums">{inr(g.retailerCommission)}</td>}
+        {isAdmin && <td className="px-4 py-3 text-right tabular-nums">{inr(g.distributerCommission)}</td>}
+        {isAdmin && <td className="px-4 py-3 text-right tabular-nums">{inr(g.superDistributerCommission)}</td>}
         {isAdmin && <td className="px-4 py-3 text-right tabular-nums">{inr(g.providerCommission)}</td>}
-        {isAdmin && <td className="px-4 py-3 text-right tabular-nums">{inr(g.profit)}</td>}
+        {isAdmin && <td className={cn('px-4 py-3 text-right font-semibold tabular-nums', g.profit < 0 ? 'text-danger-600' : 'text-success-700')}>{inr(g.profit)}</td>}
       </tr>
       {expanded && g.children.map((c, i) => (
         <tr key={i} className="border-b border-slate-100 bg-slate-50/40 text-slate-600 last:border-0">
@@ -346,13 +356,13 @@ function ProviderRows({ group: g, expanded, isAdmin, onToggle }: {
             <span className="font-medium text-slate-700">{String(getField(c, 'Operator') ?? '—')}</span>
             <span className="ml-2 text-xs text-slate-400">{String(getField(c, 'ServiceName') ?? '')}</span>
           </td>
-          <td className="px-4 py-2 text-right tabular-nums">{num(c, 'TotalHits')}</td>
-          <td className="px-4 py-2 text-right tabular-nums">{inr(num(c, 'TotalAmount'))}</td>
           <td className="px-4 py-2 text-right tabular-nums text-success-600">{num(c, 'SuccessHits')}</td>
           <td className="px-4 py-2 text-right tabular-nums">{inr(num(c, 'SuccessAmount'))}</td>
-          <td className="px-4 py-2 text-right tabular-nums text-danger-600">{num(c, 'FailedHits')}</td>
-          <td className="px-4 py-2 text-right tabular-nums text-warning-600">{num(c, 'PendingHits')}</td>
-          {isAdmin && <td className="px-4 py-2 text-right tabular-nums">{inr(num(c, 'AdminCommission'))}</td>}
+          {showFailed && <td className="px-4 py-2 text-right tabular-nums text-danger-600">{num(c, 'FailedHits') || ''}</td>}
+          {showPending && <td className="px-4 py-2 text-right tabular-nums text-warning-600">{num(c, 'PendingHits') || ''}</td>}
+          {isAdmin && <td className="px-4 py-2 text-right tabular-nums">{inr(num(c, 'RetailerCommission'))}</td>}
+          {isAdmin && <td className="px-4 py-2 text-right tabular-nums">{inr(num(c, 'DistributerCommission'))}</td>}
+          {isAdmin && <td className="px-4 py-2 text-right tabular-nums">{inr(num(c, 'SuperDistributerCommission'))}</td>}
           {isAdmin && <td className="px-4 py-2 text-right tabular-nums">{inr(num(c, 'ProviderCommission'))}</td>}
           {isAdmin && <td className="px-4 py-2 text-right tabular-nums">{inr(num(c, 'Profit'))}</td>}
         </tr>

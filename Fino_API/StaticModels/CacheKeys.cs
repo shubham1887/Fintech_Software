@@ -240,8 +240,23 @@
         public const string AllSubCategorys = "Cache_AllSubCategorys";
         public const string AllCategoryChannelMappings = "Cache_AllCategoryChannelMappings";
 
+        // Per-user "Quick Services" shortcuts (the user's own pinned tiles).
+        public const string AllUserQuickServices = "Cache_AllUserQuickServices";
+
         // Fund-request Mode / SubMode masters
         public const string AllModes = "Cache_AllModes";
         public const string AllSubModes = "Cache_AllSubModes";
+
+        // Admin rewrites for user-facing provider messages.
+        public const string AllResponseMessageRules = "Cache_AllResponseMessageRules";
+
+        // Dynamic tax engine masters. Read on every transaction, written only from the admin
+        // screens, so they are cached as whole lists and the cache is dropped on any write — a
+        // stale tax rule would stamp the wrong rate on real money.
+        public const string AllTaxRates = "Cache_AllTaxRates";
+        public const string AllHSNSAC = "Cache_AllHSNSAC";
+        public const string AllTDSSections = "Cache_AllTDSSections";
+        public const string AllTaxRules = "Cache_AllTaxRules";
+        public const string AllPartyServiceRelationships = "Cache_AllPartyServiceRelationships";
     }
 }

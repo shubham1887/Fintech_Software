@@ -27,6 +27,9 @@ namespace FintechApp.Responses.Dashboard
         public decimal Surcharge { get; set; }
         public decimal TotalAdminCommission { get; set; }
         public decimal TotalAdminSurcharge { get; set; }
+        /// <summary>Commission paid down to the network on the day (retailer + distributor + super-distributor).</summary>
+        public decimal TotalUserCommission { get; set; }
+        public int TotalUserCommissionCount { get; set; }
         public decimal AdminCommissionProfit { get; set; }
         public decimal AdminSurchargeProfit { get; set; }
         public decimal RofferComm { get; set; }

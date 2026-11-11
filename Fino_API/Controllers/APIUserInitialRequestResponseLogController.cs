@@ -25,6 +25,29 @@ namespace FintechApp.Controllers
             _encryptDecrypt = new EncryptDecrypt(configuration["Encryption:Key"] ?? string.Empty, configuration["Encryption:IV"] ?? string.Empty);
         }
 
+        [HttpPost("Select")] public async Task<APIResponse> Select([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel; SelectAPIUserLogRequest? request;
+            try
+            {
+                keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData));
+                request = JsonConvert.DeserializeObject<SelectAPIUserLogRequest>(_encryptDecrypt.Decrypt(apiRequest.Request));
+            }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+            // An API partner reads its own traffic only; the operator's desk reads everyone's.
+            bool isAdmin = keyDataModel.UserTypeID == StaticModels.UserTypeCode.Admin || keyDataModel.UserTypeID == StaticModels.UserTypeCode.SupportUser;
+            if (!isAdmin) request.UserID = keyDataModel.UserID;
+            try
+            {
+                var data = await _service.Select(request);
+                return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data)));
+            }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
+
         [HttpPost("GetAll")] public async Task<APIResponse> GetAll([FromForm] APIRequest apiRequest)
         {
             KeyDataModel? keyDataModel;
@@ -58,6 +81,20 @@ namespace FintechApp.Controllers
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
             try { var data = await _service.GetByUserID(request.UserID); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
+
+        // The API traffic for ONE transaction — what the integrator sent us and what we replied,
+        // which is what an API user's "Log" action must show instead of our upstream provider call.
+        [HttpPost("GetByTransaction")] public async Task<APIResponse> GetByTransaction([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel; GetAPIUserInitialRequestResponseLogRequest? request;
+            try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); request = JsonConvert.DeserializeObject<GetAPIUserInitialRequestResponseLogRequest>(_encryptDecrypt.Decrypt(apiRequest.Request)); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+            try { var data = await _service.GetByTransaction(request.TransactionMasterID, keyDataModel.UserID, keyDataModel.UserTypeID); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
         [HttpPost("Create")] public async Task<APIResponse> Create([FromForm] APIRequest apiRequest)

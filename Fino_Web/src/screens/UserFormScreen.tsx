@@ -8,7 +8,12 @@ import {
 import { apiPost } from '@/lib/apiClient';
 import { fetchList } from '@/api/list.api';
 import { uploadDocument } from '@/api/catalog.api';
-import { roleLabel, UserTypeCode } from '@/lib/roles';
+import {
+  roleLabel,
+  UserTypeCode,
+  creatableRoles,
+  ALLOWED_PARENT_TIERS as ALLOWED_PARENTS,
+} from '@/lib/roles';
 import { getField as get } from '@/lib/row';
 import { loadSession } from '@/lib/storage';
 import { cn } from '@/lib/cn';
@@ -22,26 +27,24 @@ import { Spinner } from '@/components/ui/Spinner';
 import type { CustomScreenProps } from './registry';
 
 /** Roles that can be created, when the API's UserType list is unavailable. */
+/** Used only when UserType/GetDropdown returns nothing; kept in step with the DB's seeded roles. */
 const FALLBACK_ROLES = [
   UserTypeCode.SuperDistributor,
   UserTypeCode.Distributor,
   UserTypeCode.Retailer,
   UserTypeCode.ApiUser,
+  UserTypeCode.Accountant,
 ];
 
-/**
- * Which tiers may be a new user's parent, per role being created:
- *  - Super Distributor → Admin
- *  - Distributor       → Admin, Super Distributor
- *  - Retailer          → Admin, Super Distributor, Distributor
- *  - API User          → Admin
+/*
+ * Which tiers may be a new user's parent, per role being created, now imported as
+ * ALLOWED_PARENTS from '@/lib/roles' (ALLOWED_PARENT_TIERS) instead of kept here.
+ *
+ * This file used to carry its own copy of that map. The two drifted the moment a role was added:
+ * the Accountant was wired into the shared map, the role was seeded, the menu and the API policy
+ * were opened — and "Accountant" still never appeared in the dropdown below, because the filter on
+ * this screen reads THIS map, and a role missing from it is dropped with no error. One map now.
  */
-const ALLOWED_PARENTS: Record<number, number[]> = {
-  [UserTypeCode.SuperDistributor]: [UserTypeCode.Admin],
-  [UserTypeCode.Distributor]: [UserTypeCode.Admin, UserTypeCode.SuperDistributor],
-  [UserTypeCode.Retailer]: [UserTypeCode.Admin, UserTypeCode.SuperDistributor, UserTypeCode.Distributor],
-  [UserTypeCode.ApiUser]: [UserTypeCode.Admin],
-};
 const parentTierLabel = (tier: number) => (tier === UserTypeCode.Admin ? 'Admin' : roleLabel(tier));
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -272,12 +275,16 @@ export function UserFormScreen({ def }: CustomScreenProps) {
     queryKey: ['usertype-ddl'],
     queryFn: () => fetchList('UserType/GetDropdown', {}),
   });
+  // Only the roles this tier may actually create. A distributor creates retailers; a
+  // super-distributor creates distributors and retailers; API users are admin-created only.
+  // Offering more than that showed a role the server would refuse, which read as a broken form.
+  const creatable = useMemo(() => creatableRoles(currentUserTypeID), [currentUserTypeID]);
   const roleOptions = useMemo(() => {
     const rows = roleRows.length
       ? roleRows.map((r) => ({ value: Number(get(r, 'UserTypeID')), label: String(get(r, 'UserType') ?? '') }))
       : FALLBACK_ROLES.map((id) => ({ value: id, label: roleLabel(id) }));
-    return rows.filter((o) => ALLOWED_PARENTS[o.value]);
-  }, [roleRows]);
+    return rows.filter((o) => ALLOWED_PARENTS[o.value] && creatable.includes(o.value));
+  }, [roleRows, creatable]);
 
   // The User Code (Alias Name) is generated from the role, never typed in. As soon as a role is
   // picked we show the code this user will receive; the number itself is only consumed on save,
@@ -293,12 +300,33 @@ export function UserFormScreen({ def }: CustomScreenProps) {
   // gets one the moment it is saved.
   const userCode = isEdit ? form.AliasName : nextUserCode;
 
-  const allowedParents = ALLOWED_PARENTS[form.UserTypeID] ?? [];
-  const needsParentUser = form.ParentType !== UserTypeCode.Admin;
+  // Where the new user is placed.
+  //
+  // The admin tier holds the whole network, so it picks the tier AND the upline user.
+  //
+  // A super-distributor or distributor only ever places inside their OWN branch, so there is no
+  // tier dropdown for them. They may still have a real choice of upline within it: of the tiers
+  // this role may sit under, the ones BELOW the creator's own tier are theirs to hand the user
+  // to. A super-distributor creating a retailer can therefore pass it to one of its distributors
+  // (allowed tiers Admin/SD/Dist → Dist is below SD), while a distributor creating a retailer has
+  // nobody below it and simply gets the user itself. The server applies the same rule and refuses
+  // anything outside the branch, so the picker can never offer more than the API accepts.
+  const allowedParents = isAdmin ? (ALLOWED_PARENTS[form.UserTypeID] ?? []) : [];
+  const branchParentTiers = useMemo(() => {
+    if (isAdmin || form.UserTypeID <= 0) return [];
+    return (ALLOWED_PARENTS[form.UserTypeID] ?? []).filter((tier) => tier > currentUserTypeID);
+  }, [isAdmin, form.UserTypeID, currentUserTypeID]);
+
+  // Which tier the upline picker is listing, for either audience.
+  const parentPickerTier = isAdmin ? form.ParentType : (branchParentTiers[0] ?? 0);
+  // Admin must name an upline once it has chosen a tier below itself; a non-admin never must —
+  // leaving it empty means "under me", which is the default and the common case.
+  const needsParentUser = isAdmin && form.ParentType !== UserTypeCode.Admin;
+  const showBranchParentPicker = !isAdmin && parentPickerTier > 0;
 
   const onRole = (id: number) => {
     const allowed = ALLOWED_PARENTS[id] ?? [UserTypeCode.Admin];
-    setForm((f) => ({ ...f, UserTypeID: id, ParentType: allowed[0], ParentID: '' }));
+    setForm((f) => ({ ...f, UserTypeID: id, ParentType: isAdmin ? allowed[0] : UserTypeCode.Admin, ParentID: '' }));
   };
 
   // State dropdown.
@@ -307,11 +335,12 @@ export function UserFormScreen({ def }: CustomScreenProps) {
     queryFn: () => fetchList('State/GetDropdown', {}),
   });
 
-  // Upline (parent) users of the selected tier.
+  // Upline (parent) users of the tier being picked. For a non-admin the API clips this to the
+  // caller's own branch, so it lists their distributors and nobody else's.
   const { data: uplineRows = [] } = useQuery({
-    queryKey: ['upline-ddl', form.ParentType],
-    queryFn: () => fetchList('Users/SelectForDDLWithUserType', { UserTypeID: form.ParentType }),
-    enabled: needsParentUser && Boolean(form.ParentType),
+    queryKey: ['upline-ddl', parentPickerTier],
+    queryFn: () => fetchList('Users/SelectForDDLWithUserType', { UserTypeID: parentPickerTier }),
+    enabled: (needsParentUser || showBranchParentPicker) && parentPickerTier > 0,
   });
 
   // Commission slabs (admin-only).
@@ -600,7 +629,11 @@ export function UserFormScreen({ def }: CustomScreenProps) {
           ...statutoryNos(),
         });
       }
-      const parentId = needsParentUser && form.ParentID ? Number(form.ParentID) : null;
+      // Null = "under the caller". Admin must have named an upline by here; a non-admin may have
+      // picked one of their own downline, and the server re-checks it is inside their branch.
+      const parentId = (needsParentUser || showBranchParentPicker) && form.ParentID
+        ? Number(form.ParentID)
+        : null;
       const servicesPayload = buildServices();
       const documentsPayload = await buildDocuments();
       return apiPost('Users/Insert', {
@@ -704,10 +737,13 @@ export function UserFormScreen({ def }: CustomScreenProps) {
   // Names for the Review step.
   const roleName = form.UserTypeID > 0 ? roleLabel(form.UserTypeID) : '';
   const parentName = useMemo(() => {
-    if (!needsParentUser) return 'Admin (you)';
+    // Nothing picked: admin maps the user under itself, anyone else under themselves. Saying
+    // "Admin (you)" to a distributor named the wrong upline on the review step.
+    if (!form.ParentID) return isAdmin ? 'Admin (you)' : 'You';
+    if (!needsParentUser && !showBranchParentPicker) return isAdmin ? 'Admin (you)' : 'You';
     const row = uplineRows.find((r) => String(get(r, 'UserMasterID') ?? '') === form.ParentID);
     return row ? String(get(row, 'FirmName') ?? '') : '';
-  }, [uplineRows, form.ParentID, needsParentUser]);
+  }, [uplineRows, form.ParentID, needsParentUser, showBranchParentPicker, isAdmin]);
   const stateName = useMemo(() => {
     const row = stateRows.find((r) => String(get(r, 'StateID') ?? '') === form.StateID);
     return row ? String(get(row, 'StateName') ?? '') : '';
@@ -804,15 +840,17 @@ export function UserFormScreen({ def }: CustomScreenProps) {
                       <option value={0}>Select role</option>
                       {roleOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </Select>
-                    {form.UserTypeID > 0 && (
+                    {isAdmin && form.UserTypeID > 0 && (
                       <Select label="Maps under *" value={form.ParentType} onChange={(e) => setForm((f) => ({ ...f, ParentType: Number(e.target.value), ParentID: '' }))}>
                         {allowedParents.map((tier) => <option key={tier} value={tier}>{parentTierLabel(tier)}</option>)}
                       </Select>
                     )}
-                    {needsParentUser && (
+                    {(needsParentUser || showBranchParentPicker) && (
                       <Autocomplete
-                        label={`${parentTierLabel(form.ParentType)} *`}
-                        placeholder={`Search ${parentTierLabel(form.ParentType).toLowerCase()}…`}
+                        label={showBranchParentPicker
+                          ? `${parentTierLabel(parentPickerTier)} (optional)`
+                          : `${parentTierLabel(parentPickerTier)} *`}
+                        placeholder={`Search ${parentTierLabel(parentPickerTier).toLowerCase()}…`}
                         value={form.ParentID}
                         options={uplineRows.map((r) => ({
                           value: String(get(r, 'UserMasterID') ?? ''),
@@ -824,7 +862,19 @@ export function UserFormScreen({ def }: CustomScreenProps) {
                     )}
                   </FieldGrid>
                   {form.UserTypeID <= 0 && (
-                    <p className="mt-4 text-xs text-slate-400">Pick the role first — the tiers this user can map under depend on it.</p>
+                    <p className="mt-4 text-xs text-slate-400">
+                      {isAdmin
+                        ? 'Pick the role first — the tiers this user can map under depend on it.'
+                        : 'Pick the role first. The new user joins your network, under you.'}
+                    </p>
+                  )}
+                  {/* A non-admin never chooses a tier, so say plainly where the user lands. */}
+                  {!isAdmin && form.UserTypeID > 0 && (
+                    <p className="mt-4 text-xs text-slate-400">
+                      {showBranchParentPicker
+                        ? `Leave the ${parentTierLabel(parentPickerTier).toLowerCase()} empty to map this user directly under you.`
+                        : 'This user maps directly under you.'}
+                    </p>
                   )}
                   {isEdit && (
                     <p className="mt-4 text-xs text-slate-400">
@@ -921,10 +971,16 @@ export function UserFormScreen({ def }: CustomScreenProps) {
                   <FieldGrid>
                     <Autocomplete
                       label="State"
-                      placeholder="Search a state…"
+                      placeholder={stateRows.length === 0 ? 'No states configured' : 'Search a state…'}
                       value={form.StateID}
                       options={stateRows.map((r) => ({ value: String(get(r, 'StateID') ?? ''), label: String(get(r, 'StateName') ?? '') }))}
                       onChange={(v) => set('StateID', String(v))}
+                      // An empty StateMasters table used to render a dropdown that opened onto
+                      // nothing, with no error anywhere — the API answers "no record found" and
+                      // the list layer turns that into an empty array. Say so instead.
+                      error={stateRows.length === 0
+                        ? 'No states configured — the states list on this installation is empty.'
+                        : undefined}
                     />
                     <Input label="City" value={form.CityName} onChange={(e) => set('CityName', e.target.value)} />
                     <Input label="Pincode" value={form.Pincode} inputMode="numeric" onChange={(e) => set('Pincode', e.target.value.replace(/\D/g, '').slice(0, 6))} />

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Upload, X, ImageIcon, Building2, QrCode } from 'lucide-react';
 import { fetchList } from '@/api/list.api';
@@ -12,6 +12,15 @@ import { useToast } from './Toast';
 import type { FieldDef } from '@/screens/crudTypes';
 
 type Values = Record<string, string | number | boolean>;
+
+/** `optionsFilter` applied to a loaded option list — see FieldDef. */
+function applyOptionsFilter(rows: Record<string, unknown>[], field: FieldDef): Record<string, unknown>[] {
+  const f = field.optionsFilter;
+  if (!f || !f.pattern) return rows;
+  let re: RegExp;
+  try { re = new RegExp(f.pattern, 'i'); } catch { return rows; }
+  return rows.filter((r) => re.test(f.keys.map((k) => String(r[k] ?? '')).join(' ')));
+}
 
 /** Field label with a red asterisk appended when the field is required. */
 function withRequired(field: FieldDef) {
@@ -38,10 +47,24 @@ function initialValues(fields: FieldDef[], initial?: Record<string, unknown>): V
   return v;
 }
 
-/** Converts form strings to the types the API expects (numbers, booleans). */
-function coerce(values: Values, fields: FieldDef[]): Record<string, unknown> {
+/**
+ * Converts form strings to the types the API expects (numbers, booleans).
+ *
+ * `skip` holds the fields that were never on screen — a cascade child whose parent has no value
+ * yet, or one whose parent turned out to have no options at all (Fund Request with Mode =
+ * "Others", which has no sub modes). Those are LEFT OUT of the payload entirely rather than sent
+ * as "". The API's request models type those ids as `int`, and an empty string is not an int: the
+ * server could only answer "An error occurred while processing your request." for a form the user
+ * had filled in correctly. Omitted, the field simply takes its default and the server decides
+ * whether it was needed.
+ *
+ * A select the user COULD see and chose to leave blank is still sent as "": on an edit form that
+ * is how a value is cleared, and the API reads a blank number as "not supplied" anyway.
+ */
+function coerce(values: Values, fields: FieldDef[], skip?: (f: FieldDef) => boolean): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of fields) {
+    if (skip?.(f)) continue;
     const raw = values[f.name];
     if (f.type === 'number') out[f.name] = raw === '' || raw === undefined ? 0 : Math.max(0, Number(raw));
     else if (f.type === 'checkbox') out[f.name] = Boolean(raw);
@@ -77,12 +100,13 @@ function AsyncSelectField({
   const payload = gated
     ? { ...(field.optionsPayload ?? {}), [field.optionsPayloadKey ?? field.dependsOn!]: dependsValue }
     : field.optionsPayload ?? {};
-  const { data: rows = [], isLoading } = useQuery({
+  const { data: rawRows = [], isLoading } = useQuery({
     queryKey: ['fk-options', field.optionsEndpoint, payload],
     queryFn: () => fetchList(field.optionsEndpoint!, payload),
     staleTime: 60_000,
     enabled: ready,
   });
+  const rows = useMemo(() => applyOptionsFilter(rawRows, field), [rawRows, field]);
   const valueKey = field.optionValue ?? 'id';
   const labelKey = field.optionLabel ?? valueKey;
   const placeholder = !ready ? 'Select the previous field first…' : isLoading ? 'Loading…' : 'Select…';
@@ -143,12 +167,13 @@ function AsyncAutocompleteField({
   const payload = gated
     ? { ...(field.optionsPayload ?? {}), [field.optionsPayloadKey ?? field.dependsOn!]: dependsValue }
     : field.optionsPayload ?? {};
-  const { data: rows = [], isLoading } = useQuery({
+  const { data: rawRows = [], isLoading } = useQuery({
     queryKey: ['fk-options', field.optionsEndpoint, payload],
     queryFn: () => fetchList(field.optionsEndpoint!, payload),
     staleTime: 60_000,
     enabled: ready,
   });
+  const rows = useMemo(() => applyOptionsFilter(rawRows, field), [rawRows, field]);
   const valueKey = field.optionValue ?? 'id';
   const labelKey = field.optionLabel ?? valueKey;
   const subKeys = field.optionSublabel == null ? [] : Array.isArray(field.optionSublabel) ? field.optionSublabel : [field.optionSublabel];
@@ -230,7 +255,7 @@ function OptionDetails({ fields, row }: { fields: { key: string; label: string }
 
 /** Optional image / slip upload. Stores the uploaded public path as the field's string value.
  *  Failures are toasted and swallowed — the form never crashes on a bad file. */
-function ImageField({ field, value, onChange }: { field: FieldDef; value: string; onChange: (v: string) => void }) {
+export function ImageField({ field, value, onChange }: { field: FieldDef; value: string; onChange: (v: string) => void }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -331,7 +356,9 @@ export function DynamicForm({
       }
     }
     setErrors(errs);
-    if (Object.keys(errs).length === 0) onSubmit(coerce(values, fields));
+    if (Object.keys(errs).length === 0) {
+      onSubmit(coerce(values, fields, (f) => isEmptyCascade(f) || isParentPending(f)));
+    }
   };
 
   return (

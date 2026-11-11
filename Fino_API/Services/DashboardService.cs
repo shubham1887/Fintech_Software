@@ -29,10 +29,14 @@ namespace FintechApp.Services
         private const int ServiceId_AEPS = 4;
 
         // FundTransaction Through values
-        private const string Through_RequestTransfer = "BY_REQUEST_TRANSFER";
+        // FundTransaction.Through values — these MUST match what FundService writes. The two request-
+        // approval values were "BY_"-prefixed here, a spelling nothing ever wrote, so approved fund
+        // requests and approved reverse requests matched nothing and were missing from these figures.
+        // See the note in TodaySummaryService.
+        private const string Through_RequestTransfer = "REQUEST_TRANSFER";
         private const string Through_DirectTransfer = "DIRECT_TRANSFER";
         private const string Through_DirectReverse = "DIRECT_REVERSE";
-        private const string Through_ReverseRequest = "BY_REVERSE_REQUEST_TRANSFER";
+        private const string Through_ReverseRequest = "REVERSE_REQUEST_TRANSFER";
         private const string Through_PGTransfer = "PG-TRANSFER";
         private const string Through_ECollection = "E-COLLECTION";
 
@@ -61,6 +65,29 @@ namespace FintechApp.Services
             _logger = new Logger();
         }
 
+        /// <summary>
+        /// The platform operator's own tiers, as opposed to the distribution network. These accounts
+        /// are excluded from the network-float figures: they are the house, not a counterparty.
+        /// </summary>
+        private static bool IsOperatorTier(int userTypeId) =>
+            userTypeId == UserTypeCode.Admin
+            || userTypeId == UserTypeCode.SupportUser
+            || userTypeId == UserTypeCode.Accountant;
+
+        /// <summary>
+        /// The SURCHARGE the operator kept on one transaction — the fee the retailer paid, as
+        /// opposed to commission the operator earned from the provider.
+        ///
+        /// Charge is where a surcharge is recorded; on older rows it only appears as a NEGATIVE
+        /// retailer commission (the same money expressed on the commission column), so both are
+        /// read, Charge first. Magnitude, not sign: a surcharge is income to the operator however
+        /// the row stores it. Returns 0 for a transaction that simply paid commission down.
+        /// </summary>
+        private static decimal SurchargeOf(TransactionMaster t) =>
+            t.Charge != 0m ? Math.Abs(t.Charge)
+            : t.RetailerCommission < 0m ? -t.RetailerCommission
+            : 0m;
+
         public async Task<(string failureMessage, DashboardViewModel? data)> Select(int userId, string date)
         {
             try
@@ -82,8 +109,18 @@ namespace FintechApp.Services
                 var success = txns.Where(t => t.Status == StatusType.Success).ToList();
                 var failed = txns.Where(t => t.Status == StatusType.Failed).ToList();
                 var rofferSuccess = success.Where(t => t.IsROffer).ToList();
+                // Surcharge the operator kept today. Held once: it is both reported on its own and
+                // subtracted from the net to leave the commission margin.
+                decimal surchargeMargin = success.Sum(SurchargeOf);
 
-                var fundsForDate = allFunds.Where(f => f.TransactionDOC.Date == dateStart).ToList();
+                // A user's own wallet-to-wallet move (AEPS → Recharge) is written to this table
+                // with the same user on both sides; it is their money changing pocket, not a fund
+                // movement, and it must never be counted here.
+                var fundsForDate = allFunds
+                    .Where(f => f.TransactionDOC.Date == dateStart && f.SenderID != f.ReceiverID)
+                    .ToList();
+                // Fund transfers = what the operator sent down directly + the requests it approved
+                // (both land here as DIRECT_TRANSFER / REQUEST_TRANSFER with the admin as sender).
                 var transfers = fundsForDate.Where(f => f.SenderID == userId &&
                     (f.Through == Through_RequestTransfer || f.Through == Through_DirectTransfer)).ToList();
                 var pgTransfers = fundsForDate.Where(f => f.SenderID == userId && f.Through == Through_PGTransfer).ToList();
@@ -103,13 +140,26 @@ namespace FintechApp.Services
                 // Balances (sequential — shared scoped DbContext).
                 var allWallets = await _walletRepo.GetAll();
                 decimal adminWalletBalance = allWallets.Where(w => w.UserID == userId).Sum(w => w.Balance);
-                decimal totalUserWalletBalance = allWallets.Where(w => w.UserID != userId).Sum(w => w.Balance);
+                // "User Wallet Float" is what the network holds, so every operator-tier account is
+                // out of it — not just the signed-in admin. A second admin or a support account
+                // used to land in the network figure and inflate it.
+                var operatorUserIds = (await _userRepo.GetAllUsersWithDeleted())
+                    .Where(u => IsOperatorTier(u.UserTypeID ?? 0))
+                    .Select(u => u.UserMasterID)
+                    .ToHashSet();
+                operatorUserIds.Add(userId);
+                decimal totalUserWalletBalance = allWallets
+                    .Where(w => !operatorUserIds.Contains(w.UserID))
+                    .Sum(w => w.Balance);
 
                 var providers = await _providerRepo.GetAll();
-                decimal providerStockTotal = providers.Sum(p => p.RechargeBalance + p.DMTBalance);
+                // Stock is what can be SOLD from, so a switched-off provider's last known balance
+                // is not in the total and not on the list.
+                decimal providerStockTotal = providers.Where(p => p.IsActive).Sum(p => p.RechargeBalance + p.DMTBalance);
 
                 // Provider-wise stock list (already filtered to non-deleted by the repo).
                 var providerStocks = providers
+                    .Where(p => p.IsActive)
                     .Select(p => new ProviderStockItem
                     {
                         ProviderID = p.ProviderID,
@@ -127,8 +177,15 @@ namespace FintechApp.Services
                 var userTypes = await _userTypeRepo.GetAll();
                 var typeNameById = userTypes.ToDictionary(t => t.UserTypeID, t => t.UserType);
                 var typeByUserId = allUsers.ToDictionary(u => u.UserMasterID, u => u.UserTypeID ?? 0);
+                // Network Wallets is the float HELD BY THE NETWORK, so the operator's own money is
+                // not one of its rows. It used to include an "Admin" line, which double-counted the
+                // figure already shown on its own in the balance strip above and made the panel
+                // total read as network float when it was network float plus the operator float.
+                // Support and accountant accounts are excluded for the same reason: they are the
+                // operator's own staff, not a distribution tier, and hold no trading balance.
                 var userTypeBalances = allWallets
                     .Where(w => typeByUserId.ContainsKey(w.UserID))
+                    .Where(w => !IsOperatorTier(typeByUserId[w.UserID]))
                     .GroupBy(w => typeByUserId[w.UserID])
                     .Select(g => new UserTypeBalanceItem
                     {
@@ -225,9 +282,32 @@ namespace FintechApp.Services
                     AEPSFail = failed.Where(t => t.ServiceID == ServiceId_AEPS).Sum(t => t.Amount),
 
                     TotalAdminCommission = success.Sum(t => t.AdminCommission),
-                    TotalAdminSurcharge = Math.Abs(success.Sum(t => t.Charge)),
-                    AdminCommissionProfit = success.Sum(t => t.AdminProfit),
-                    AdminSurchargeProfit = 0,
+                    TotalAdminSurcharge = surchargeMargin,
+                    // What the network was PAID on the day: every positive commission credited to
+                    // a retailer, distributor or super-distributor. (A negative retailer figure is
+                    // a surcharge, counted above, not a payout.)
+                    TotalUserCommission = success.Sum(t =>
+                        Math.Max(0m, t.RetailerCommission) + Math.Max(0m, t.DistributerCommission) + Math.Max(0m, t.SuperDistributerCommission)),
+                    TotalUserCommissionCount = success.Count(t =>
+                        t.RetailerCommission > 0m || t.DistributerCommission > 0m || t.SuperDistributerCommission > 0m),
+                    // Admin profit, split by WHERE THE MONEY CAME FROM — the operator's two income
+                    // streams, which is what "surcharge and commission profit, separately" asks for.
+                    //
+                    // AdminCommission is already the operator's NET on a transaction: the provider
+                    // commission it earned, plus any surcharge the retailer paid, less every downline
+                    // commission it funded (see AccountCoreProcessingService). Both streams are
+                    // therefore inside that one column, so the split is a decomposition of it:
+                    //
+                    //   surcharge margin  = what the retailer was charged and the operator kept
+                    //   commission margin = the net, with that surcharge taken back out
+                    //
+                    // The two still add up to the total exactly, with nothing double-counted. The
+                    // earlier split partitioned TRANSACTIONS instead (surcharge-bearing vs not) and
+                    // summed the whole net on each side, so a row's commission margin was reported
+                    // as surcharge income whenever that row happened to carry any charge — the label
+                    // said "surcharge" while the figure was mostly margin.
+                    AdminSurchargeProfit = surchargeMargin,
+                    AdminCommissionProfit = success.Sum(t => t.AdminCommission) - surchargeMargin,
 
                     RofferTotal = rofferTotal,
                     RofferComm = rofferComm,

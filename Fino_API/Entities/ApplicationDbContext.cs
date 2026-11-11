@@ -51,6 +51,12 @@ namespace FintechApp.Data
         public DbSet<ProviderDetails> ProviderDetails { get; set; }
         public DbSet<DMTSetting> DMTSettings { get; set; }
         public DbSet<Notification> Notifications { get; set; }
+
+        // In-app alert feed (the bell) + the devices a push can reach.
+        public DbSet<AppNotification> AppNotifications { get; set; }
+        public DbSet<AppNotificationRecipient> AppNotificationRecipients { get; set; }
+        public DbSet<UserDevice> UserDevices { get; set; }
+
         public DbSet<NewsMaster> NewsMasters { get; set; }
         public DbSet<SettingMaster> SettingMasters { get; set; }
         public DbSet<EmailSettingMaster> EmailSettingMasters { get; set; }
@@ -90,6 +96,8 @@ namespace FintechApp.Data
         public DbSet<UserwiseLowBalance> UserwiseLowBalances { get; set; }
         public DbSet<UserWalletMapping> UserWalletMappings { get; set; }
         public DbSet<UserWalletMaster> UserWalletMasters { get; set; }
+        // Audit of every hold placed on or released from a wallet (see WalletHoldHistory).
+        public DbSet<WalletHoldHistory> WalletHoldHistories { get; set; }
         public DbSet<UserServiceMapping> UserServiceMappings { get; set; }
         public DbSet<ProviderStateConfiguration> ProviderStateConfigurations { get; set; }
         public DbSet<ReconciliationSetting> ReconciliationSettings { get; set; }
@@ -104,6 +112,9 @@ namespace FintechApp.Data
         public DbSet<OperatorwiseCallbackSetting> OperatorwiseCallbackSettings { get; set; }
         public DbSet<ProviderOperatorMaster> ProviderOperatorMasters { get; set; }
         public DbSet<ProviderResponseMaster> ProviderResponseMasters { get; set; }
+
+        /// <summary>Admin-authored rewrites for the words a user is shown (see ResponseMessageRule).</summary>
+        public DbSet<ResponseMessageRule> ResponseMessageRules { get; set; }
         public DbSet<ProviderUserMapping> ProviderUserMappings { get; set; }
         public DbSet<RangeWiseSequence> RangeWiseSequences { get; set; }
         public DbSet<VoucherType> VoucherTypes { get; set; }
@@ -208,10 +219,39 @@ namespace FintechApp.Data
         public DbSet<UserwiseServiceChargeMaster> UserwiseServiceChargeMasters { get; set; }
         public DbSet<TargetSaleCommission> TargetSaleCommissions { get; set; }
         public DbSet<UserActionHistory> UserActionHistorys { get; set; }
+        // Every change the panel makes to a user record - who, what, from what to what, why, from where.
+        public DbSet<UserChangeHistory> UserChangeHistorys { get; set; }
         public DbSet<ReferralRegistration> ReferralRegistrations { get; set; }
         public DbSet<OverdraftDetail> OverdraftDetails { get; set; }
         public DbSet<OverdraftMaster> OverdraftMasters { get; set; }
         public DbSet<TrustableDevice> TrustableDevices { get; set; }
+        public DbSet<UserQuickService> UserQuickServices { get; set; }
+        public DbSet<UserTwoFactor> UserTwoFactors { get; set; }
+
+        // ── Dynamic tax engine (GST / TDS) ──────────────────────────────────────────────
+        // Masters are effective-dated: a rate or rule is never edited in place, the old row is
+        // closed and a new one opened, so a past transaction still answers with what it was
+        // actually charged. TransactionTaxDetails is the stamp reports READ instead of
+        // recomputing tax — see that entity's comment for why that distinction matters.
+        public DbSet<TaxRateMaster> TaxRateMasters { get; set; }
+        public DbSet<HSNSACMaster> HSNSACMasters { get; set; }
+        public DbSet<TDSSectionMaster> TDSSectionMasters { get; set; }
+        public DbSet<TaxRuleMaster> TaxRuleMasters { get; set; }
+        public DbSet<PartyTaxProfile> PartyTaxProfiles { get; set; }
+        public DbSet<PartyServiceRelationship> PartyServiceRelationships { get; set; }
+        public DbSet<TaxRuleAudit> TaxRuleAudits { get; set; }
+        public DbSet<TransactionTaxDetail> TransactionTaxDetails { get; set; }
+
+        // ── GST documents (Phase 2) ─────────────────────────────────────────────────────
+        // Sale and purchase share TaxInvoiceHeaders/Lines so both sides carry the same columns —
+        // gross value, taxable value and the basis between them. Comparing two tables that have
+        // drifted apart is how the 18cr-against-19cr mismatch stayed invisible.
+        public DbSet<TaxDocumentSeries> TaxDocumentSeries { get; set; }
+        public DbSet<TaxInvoiceHeader> TaxInvoiceHeaders { get; set; }
+        public DbSet<TaxInvoiceLine> TaxInvoiceLines { get; set; }
+        public DbSet<TaxInvoiceAnnexureLine> TaxInvoiceAnnexureLines { get; set; }
+        public DbSet<EInvoiceLog> EInvoiceLogs { get; set; }
+        public DbSet<ExchangePartnerLeg> ExchangePartnerLegs { get; set; }
         public DbSet<UserMerchantMaster> UserMerchantMasters { get; set; }
         public DbSet<UserWisePayementGatewaySetting> UserWisePayementGatewaySettings { get; set; }
         public DbSet<OnboardingUser> OnboardingUsers { get; set; }
@@ -272,6 +312,11 @@ namespace FintechApp.Data
             modelBuilder.Entity<UrlTypeMaster>().HasKey(x => x.UrlTypeID);
             modelBuilder.Entity<UserActionHistory>().HasKey(x => x.UserHistoryID);
 
+            // The user change log is read by (user, date) and by (actor, date) - the two questions
+            // the report asks. The table is append-only, so the indexes cost nothing on writes.
+            modelBuilder.Entity<UserChangeHistory>().HasIndex(x => new { x.UserID, x.DateTime });
+            modelBuilder.Entity<UserChangeHistory>().HasIndex(x => new { x.ChangedByUserID, x.DateTime });
+
             // Fund-request SubMode → Mode (Restrict: a mode with sub modes cannot be hard-deleted;
             // the service also soft-blocks deletion while sub modes exist).
             modelBuilder.Entity<SubMode>()
@@ -280,6 +325,119 @@ namespace FintechApp.Data
             modelBuilder.Entity<UserMaster>()
                 .HasIndex(u => u.MobileNumber)
                 .IsUnique();
+
+            // A user pins a service once. Saving the shortcut list replaces it wholesale, so this
+            // index is what stops a double-submit (or two tabs) leaving the same tile twice.
+            modelBuilder.Entity<UserQuickService>()
+                .HasIndex(q => new { q.UserID, q.ServiceID })
+                .IsUnique();
+
+            // One authenticator enrolment per user. Enrolling again replaces that row rather than
+            // adding a second secret — two live secrets would mean a phone the user thought they
+            // had revoked still produces working codes.
+            modelBuilder.Entity<UserTwoFactor>()
+                .HasIndex(t => t.UserID)
+                .IsUnique();
+
+            // ── Tax engine ──────────────────────────────────────────────────────────────
+            // One stamp per transaction, enforced. The engine resolves a transaction once and
+            // writes what it decided; a second stamp would mean two different answers on record
+            // for the same transaction and no way to say which one the return was filed on. The
+            // unique index is also what makes a retry of the stamping job safe.
+            modelBuilder.Entity<TransactionTaxDetail>()
+                .HasIndex(t => t.TransactionMasterID)
+                .IsUnique();
+
+            // The resolver's hot path: every lookup filters on direction, service and date.
+            modelBuilder.Entity<TaxRuleMaster>()
+                .HasIndex(r => new { r.Direction, r.ServiceID, r.EffectiveFrom });
+
+            // One tax profile per party.
+            modelBuilder.Entity<PartyTaxProfile>()
+                .HasIndex(p => p.UserID)
+                .IsUnique();
+
+            // A party's relationship on a service, over time — the Bharti Cellular lookup.
+            modelBuilder.Entity<PartyServiceRelationship>()
+                .HasIndex(p => new { p.UserID, p.ServiceID, p.EffectiveFrom });
+
+            modelBuilder.Entity<TaxRateMaster>().HasIndex(r => new { r.TaxType, r.Code, r.EffectiveFrom });
+            modelBuilder.Entity<HSNSACMaster>().HasIndex(h => h.Code);
+            modelBuilder.Entity<TDSSectionMaster>().HasIndex(s => new { s.SectionCode, s.EffectiveFrom });
+            modelBuilder.Entity<TaxRuleAudit>().HasIndex(a => new { a.EntityName, a.EntityID, a.ChangedOn });
+
+            // ── GST documents ───────────────────────────────────────────────────────────
+            // One live counter per series per registration per financial year. A second row for
+            // the same three would be a second counter handing out the same numbers.
+            modelBuilder.Entity<TaxDocumentSeries>()
+                .HasIndex(s => new { s.SeriesCode, s.CompanyGSTIN, s.FinancialYear })
+                .IsUnique();
+
+            // No duplicate invoice number under one registration — the most expensive GST error
+            // available. Filtered to sales because a purchase carries the SUPPLIER's number, and
+            // two suppliers may legitimately both have an "INV-001".
+            modelBuilder.Entity<TaxInvoiceHeader>()
+                .HasIndex(h => new { h.CompanyGSTIN, h.DocumentType, h.DocumentNo })
+                .IsUnique()
+                .HasFilter("[Direction] = 'SALE' AND [IsDeleted] = 0");
+
+            // The same supplier bill cannot be entered twice — the control that stops a purchase
+            // register inflating, which is half of what the 1 crore question was about.
+            modelBuilder.Entity<TaxInvoiceHeader>()
+                .HasIndex(h => new { h.PartyUserID, h.DocumentNo })
+                .IsUnique()
+                .HasFilter("[Direction] = 'PURCHASE' AND [IsDeleted] = 0");
+
+            modelBuilder.Entity<TaxInvoiceHeader>().HasIndex(h => new { h.Direction, h.PeriodKey, h.Status });
+            modelBuilder.Entity<TaxInvoiceLine>().HasIndex(l => l.TaxInvoiceHeaderID);
+            modelBuilder.Entity<TaxInvoiceAnnexureLine>().HasIndex(a => a.TaxInvoiceHeaderID);
+
+            // A source can be invoiced ONCE. These two indexes are what make invoice generation
+            // safe to re-run: a half-finished batch is simply run again, because the sources it
+            // already covered cannot be picked up a second time. Filtered because exactly one of
+            // the two ids is set on any given row.
+            modelBuilder.Entity<TaxInvoiceAnnexureLine>()
+                .HasIndex(a => a.TransactionMasterID)
+                .IsUnique()
+                .HasFilter("[TransactionMasterID] > 0 AND [IsDeleted] = 0");
+
+            modelBuilder.Entity<TaxInvoiceAnnexureLine>()
+                .HasIndex(a => a.FundTransactionID)
+                .IsUnique()
+                .HasFilter("[FundTransactionID] > 0 AND [IsDeleted] = 0");
+
+            // Drives the daily "IRN still pending and the 30-day limit is approaching" alert.
+            modelBuilder.Entity<EInvoiceLog>().HasIndex(e => new { e.Status, e.ReportingDeadline });
+            modelBuilder.Entity<EInvoiceLog>().HasIndex(e => e.TaxInvoiceHeaderID);
+
+            // One leg per wallet movement per direction, so replaying the swap detector cannot
+            // double-count a barter — and double-counting turnover is as wrong as missing it.
+            modelBuilder.Entity<ExchangePartnerLeg>()
+                .HasIndex(l => new { l.FundTransactionID, l.Direction })
+                .IsUnique();
+            modelBuilder.Entity<ExchangePartnerLeg>().HasIndex(l => new { l.DocumentStatus, l.PeriodKey });
+
+            // One row per physical device. The same token arriving again is an update, not a
+            // second row — otherwise a reinstalled app would be pushed to twice.
+            modelBuilder.Entity<UserDevice>()
+                .HasIndex(d => d.FcmToken)
+                .IsUnique();
+
+            modelBuilder.Entity<UserDevice>()
+                .HasIndex(d => new { d.UserID, d.IsActive });
+
+            // The bell asks exactly one question — "my unread, newest first" — so that is the index.
+            modelBuilder.Entity<AppNotificationRecipient>()
+                .HasIndex(r => new { r.UserID, r.IsRead });
+
+            modelBuilder.Entity<AppNotificationRecipient>()
+                .HasIndex(r => r.AppNotificationID);
+
+            modelBuilder.Entity<AppNotificationRecipient>()
+                .HasOne(r => r.AppNotification)
+                .WithMany()
+                .HasForeignKey(r => r.AppNotificationID)
+                .OnDelete(DeleteBehavior.Cascade);
 
             // Index for RefreshTokens (JWT)
             modelBuilder.Entity<RefreshToken>()

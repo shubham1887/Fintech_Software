@@ -3,6 +3,7 @@ using FintechApp.Data;
 using FintechApp.Helpers;
 using FintechApp.Middleware;
 using FintechApp.Services;
+using FintechApp.Interfaces.Providers;
 using FintechApp.Interfaces.Services;
 using FintechApp.Repositories;
 using FintechApp.Interfaces.Repositories;
@@ -16,8 +17,27 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Every controller decrypts its body with JsonConvert.DeserializeObject<T>(...) and has no way to
+// report a parse failure except the generic "An error occurred while processing your request."
+// A blank optional dropdown sends "" for an int field, which Newtonsoft treats as fatal — so the
+// default settings are relaxed once, here, to read a blank number as "not supplied".
+Newtonsoft.Json.JsonConvert.DefaultSettings = () => new Newtonsoft.Json.JsonSerializerSettings
+{
+    Converters = { new FintechApp.Helpers.LenientNumberConverter() },
+};
+
+// Lets the published build run as a Windows Service (how the installer deploys it: no IIS, no
+// separate runtime install, starts with the machine). A no-op when started from a console or a
+// container, so the same binaries serve every hosting model.
+builder.Host.UseWindowsService(options => options.ServiceName = "Fino API");
+
 // Add services to the container
-builder.Services.AddControllers()
+builder.Services.AddControllers(options =>
+    {
+        // Last stop before a reply leaves the server: the admin's message rewrites are applied to
+        // the one human-readable field every response carries. See ResponseMessageRewriteFilter.
+        options.Filters.Add<FintechApp.Authorization.ResponseMessageRewriteFilter>();
+    })
     .AddNewtonsoftJson(options =>
     {
         options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;
@@ -29,6 +49,14 @@ builder.Services.AddOpenApi();
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"))
 );
+
+// First-run database setup: create the database if missing, apply Scripts/install/*.sql once each,
+// seed the first administrator. Enabled by Database:AutoSetup, which the installer turns on, so
+// deploying for a new client is "set the connection string and start the service" rather than a
+// manual SQL run. It runs behind the started host — see DatabaseBootstrapHostedService for why —
+// and /health reports progress.
+builder.Services.AddSingleton<FintechApp.Helpers.BootstrapStatus>();
+builder.Services.AddHostedService<FintechApp.Helpers.DatabaseBootstrapHostedService>();
 
 // Add Memory Cache
 builder.Services.AddMemoryCache();
@@ -82,16 +110,32 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// Add CORS
+// CORS. In Development any origin is allowed, because the UI dev server's port moves around.
+// In Production the panel's own origin(s) must be listed in Cors:AllowedOrigins (the installer
+// writes them): the browser sends the session cookie/JWT on these calls, so an open policy would
+// let any site a signed-in operator visits drive the panel on their behalf.
+var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("CORSFintechApp", policy =>
     {
-        // Dev-friendly: allow any origin/port the UI dev server uses (tighten for production).
-        policy.SetIsOriginAllowed(_ => true)
-        .AllowAnyMethod()
-        .AllowAnyHeader()
-        .AllowCredentials();
+        if (builder.Environment.IsDevelopment() || corsOrigins.Contains("*"))
+        {
+            policy.SetIsOriginAllowed(_ => true);
+        }
+        else if (corsOrigins.Length > 0)
+        {
+            policy.WithOrigins(corsOrigins).SetIsOriginAllowedToAllowWildcardSubdomains();
+        }
+        else
+        {
+            // Nothing configured: same-origin only (the panel served from the API host still works).
+            policy.SetIsOriginAllowed(_ => false);
+        }
+
+        policy.AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
 
@@ -103,6 +147,14 @@ builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<ICredentialService, CredentialService>();
 builder.Services.AddScoped<IOTPService, OTPService>();
+// Authenticator-app two-step verification (TOTP). Codes are computed locally, so unlike the SMS
+// OTP path above this needs no gateway and costs nothing per sign-in.
+builder.Services.AddScoped<IUserTwoFactorRepository, UserTwoFactorRepository>();
+builder.Services.AddScoped<ITwoFactorService, TwoFactorService>();
+// The header's single poll (queue counts + wallet balances). Scoped like everything else, but it
+// reads and writes a SHARED IMemoryCache, which is what collapses a thousand users' polls into a
+// trickle of actual database work.
+builder.Services.AddScoped<ILiveSummaryService, LiveSummaryService>();
 builder.Services.AddScoped<IAppbarService, AppbarService>();
 builder.Services.AddScoped<IPinGenerationService, PinGenerationService>();
 builder.Services.AddScoped<IDMTSenderFlowService, DMTSenderFlowService>();
@@ -119,12 +171,16 @@ builder.Services.AddScoped<IeKYCService, eKYCService>();
 builder.Services.AddScoped<IMicroATMService, MicroATMService>();
 builder.Services.AddScoped<IHitachiYesBankAEPSService, HitachiYesBankAEPSService>();
 builder.Services.AddScoped<IFundService, FundService>();
-builder.Services.AddScoped<IPushNotificationService, PushNotificationService>();
 builder.Services.AddScoped<ICircleSwitchingService, CircleSwitchingService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IUserService, UserService>();
+// Where the current request came from (IP / channel), for the audit trail written by the user
+// and fund services. Needs the HttpContext accessor registered below.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<IAuditContextService, AuditContextService>();
 builder.Services.AddScoped<IServiceService, ServiceService>();
+builder.Services.AddScoped<IUserQuickServiceService, UserQuickServiceService>();
 builder.Services.AddScoped<IOperatorService, OperatorService>();
 // Maps app operators onto the plan provider's own operator codes (PlanApiCatalog).
 builder.Services.AddScoped<IPlanOperatorCodeService, PlanOperatorCodeService>();
@@ -135,6 +191,15 @@ builder.Services.AddScoped<ICallMeCategoryMasterService, CallMeCategoryMasterSer
 builder.Services.AddScoped<ICallMeRequestService, CallMeRequestService>();
 builder.Services.AddScoped<ITicketMasterService, TicketMasterService>();
 builder.Services.AddScoped<ITicketCategoryService, TicketCategoryService>();
+
+// In-app alerts (the bell) + the FCM transport behind them.
+// FcmSender is a singleton on purpose: it caches the Google OAuth2 access token for the hour
+// Google issues it for. Scoped, every alert would re-mint one.
+builder.Services.AddSingleton<IFcmSender, FcmSender>();
+builder.Services.AddScoped<IAppNotificationRepository, AppNotificationRepository>();
+builder.Services.AddScoped<IAppNotificationService, AppNotificationService>();
+// "What is waiting for me?" — the counts behind the strip on every screen.
+builder.Services.AddScoped<IWorkQueueService, WorkQueueService>();
 builder.Services.AddScoped<IFundTransactionRepository, FundTransactionRepository>();
 builder.Services.AddScoped<IFundTransactionService, FundTransactionService>();
 // Fund-request Mode / SubMode masters (dynamic Add/Edit/Delete/View + dependent dropdowns)
@@ -161,6 +226,9 @@ builder.Services.AddScoped<FintechApp.Interfaces.Providers.IRechargeProviderClie
 // Slab commission engine: resolves retailer/distributor/super-distributor commission (or
 // surcharge) from the user's assigned slab for every recharge-family transaction.
 builder.Services.AddScoped<ISlabCommissionResolver, SlabCommissionResolver>();
+// Which wallet a service debits, from the admin's Service Wallet Mapping. Used by every
+// transaction pipeline so the mapping screen actually governs where the money comes from.
+builder.Services.AddScoped<IServiceWalletResolver, ServiceWalletResolver>();
 builder.Services.AddScoped<IRechargeService, RechargeService>();
 // Bank-transfer (DMT / payout / vendor-pay) provider seam. "DMTProvider:Mode" = "Simulation" wires
 // the sandbox client that completes transfers end-to-end (dev/UAT); any other value (default) keeps
@@ -187,9 +255,11 @@ builder.Services.AddJaiJuiApi();
 // cannot express, so its protocol lives in the library and the gateway calls into it.
 builder.Services.AddPay1Api();
 builder.Services.AddScoped<FintechApp.Interfaces.Providers.ITransactionProviderClient, FintechApp.Providers.DynamicTransactionProviderClient>();
-// Automated pending-recharge status checker (replaces the old FinovativeAPI Hangfire "Txn Status
-// Check" recurring job). Re-enquires PENDING recharges against the provider every StatusCheck:IntervalMinutes.
-builder.Services.AddHostedService<RechargeStatusCheckBackgroundService>();
+// Automated settlement sweeps, scheduled by Hangfire (see Helpers/HangfireSetup.cs): the pending
+// RECHARGE and DMT status checks, plus the held-DMT release. The schedule lives in SQL, so one tick
+// runs on one server at a time, an overrunning run is skipped instead of stacking, and every run is
+// visible in the dashboard — none of which the in-process timer it replaced could do.
+builder.Services.AddFintechHangfire(builder.Configuration);
 builder.Services.AddScoped<IDMTSenderService, DMTSenderService>();
 builder.Services.AddScoped<IDMTBeneficiaryService, DMTBeneficiaryService>();
 builder.Services.AddScoped<ILoginHistoryService, LoginHistoryService>();
@@ -258,6 +328,16 @@ builder.Services.AddSingleton<IApiUserCallbackQueue, ApiUserCallbackQueue>();
 builder.Services.AddScoped<IApiUserCallbackSender, ApiUserCallbackSender>();
 builder.Services.AddHostedService<ApiUserCallbackBackgroundService>();
 
+// ── Compiled provider integrations ──────────────────────────────────────────────
+// A provider whose protocol cannot be expressed as a URL template (Pay1 hashes its API key
+// into every request; JaiJui ships its own client) arrives as a sibling project plus ONE
+// adapter class, registered here. Order is the match order, like the callback parsers below.
+// Everything else — routing, switching, logging, the money rules — is unchanged for them.
+// Adding a new one: see Providers/README.md.
+builder.Services.AddScoped<ICodedProvider, FintechApp.Providers.Coded.Pay1CodedProvider>();
+builder.Services.AddScoped<ICodedProvider, FintechApp.Providers.Coded.JaiJuiCodedProvider>();
+builder.Services.AddScoped<ICodedProviderRegistry, FintechApp.Providers.CodedProviderRegistry>();
+
 // ── Inbound provider callbacks: one shared address, /api/Callback/p/{CallbackKey} ──
 // The key identifies the provider; the router applies the same source check, verification,
 // settlement and logging to every upstream. Parser ORDER IS THE MATCH ORDER — a provider with
@@ -273,6 +353,27 @@ builder.Services.AddScoped<IApiUserAuthService, ApiUserAuthService>();
 builder.Services.AddScoped<IApiUserResponseBuilder, ApiUserResponseBuilder>();
 builder.Services.AddScoped<IApiUserGatewayService, ApiUserGatewayService>();
 
+// ── B2B DMT: the /api/v1/dmt contract ───────────────────────────────────────────
+// Money-out over the B2B channel carries far larger tickets than recharge, so these requests
+// pass a second gate on top of the credential check: an HMAC signature over the raw body, bound
+// to a timestamp and a single-use nonce, which makes a captured request useless to replay,
+// re-point or alter. The nonce ledger lives in IMemoryCache, so it is per-instance — behind a
+// load balancer, pin the DMT route to one node or move the ledger to a shared cache.
+builder.Services.AddScoped<IApiUserRequestSecurityService, ApiUserRequestSecurityService>();
+builder.Services.AddScoped<IApiUserDmtGatewayService, ApiUserDmtGatewayService>();
+
+// Which DMT rail is live — pure DMT (register + OTP the remitter and beneficiary) or payout DMT
+// (nothing pre-registered, send straight to the account). Read from DMTSetting.IsPayoutDMT by
+// everything that would otherwise demand a registration the payout rail never keeps.
+builder.Services.AddScoped<IDmtGatewayModeService, DmtGatewayModeService>();
+
+// ── B2B payout: the /api/v1/payout contract ─────────────────────────────────────
+// Same two gates as DMT, one call instead of four: a payout moves the API user's own wallet
+// balance to an account named on the request, so there is no remitter to register and no
+// beneficiaryid to quote. It rides the same money-out pipeline (IBankTransferService) as the
+// panel's own payout screen, so limits, slabs, settlement and refunds behave identically.
+builder.Services.AddScoped<IApiUserPayoutGatewayService, ApiUserPayoutGatewayService>();
+
 builder.Services.AddScoped<IWebHookSettingService, WebHookSettingService>();
 builder.Services.AddScoped<IWebHookLogService, WebHookLogService>();
 builder.Services.AddScoped<IUserServiceChargeService, UserServiceChargeService>();
@@ -282,6 +383,7 @@ builder.Services.AddScoped<IOperatorSequenceUserWiseService, OperatorSequenceUse
 builder.Services.AddScoped<IOperatorwiseCallbackSettingService, OperatorwiseCallbackSettingService>();
 builder.Services.AddScoped<IProviderOperatorMasterService, ProviderOperatorMasterService>();
 builder.Services.AddScoped<IProviderResponseMasterService, ProviderResponseMasterService>();
+builder.Services.AddScoped<IResponseMessageRuleService, ResponseMessageRuleService>();
 builder.Services.AddScoped<IProviderUserMappingService, ProviderUserMappingService>();
 builder.Services.AddScoped<IRangeWiseSequenceService, RangeWiseSequenceService>();
 builder.Services.AddScoped<IVoucherTypeService, VoucherTypeService>();
@@ -361,6 +463,8 @@ builder.Services.AddScoped<IUserCreationWalletRepository, UserCreationWalletRepo
 builder.Services.AddScoped<IUserwiseLowBalanceRepository, UserwiseLowBalanceRepository>();
 builder.Services.AddScoped<IUserWalletMappingRepository, UserWalletMappingRepository>();
 builder.Services.AddScoped<IUserWalletMasterRepository, UserWalletMasterRepository>();
+builder.Services.AddScoped<IWalletHoldHistoryRepository, WalletHoldHistoryRepository>();
+builder.Services.AddScoped<IUserChangeHistoryRepository, UserChangeHistoryRepository>();
 builder.Services.AddScoped<IWalletMasterRepository, WalletMasterRepository>();
 builder.Services.AddScoped<IWalletMasterService, WalletMasterService>();
 // Deny-by-default role-based API access policy (singleton — reads static defaults + config overrides).
@@ -382,6 +486,7 @@ builder.Services.AddScoped<IOperatorSequenceUserWiseRepository, OperatorSequence
 builder.Services.AddScoped<IOperatorwiseCallbackSettingRepository, OperatorwiseCallbackSettingRepository>();
 builder.Services.AddScoped<IProviderOperatorMasterRepository, ProviderOperatorMasterRepository>();
 builder.Services.AddScoped<IProviderResponseMasterRepository, ProviderResponseMasterRepository>();
+builder.Services.AddScoped<IResponseMessageRuleRepository, ResponseMessageRuleRepository>();
 builder.Services.AddScoped<IProviderUserMappingRepository, ProviderUserMappingRepository>();
 builder.Services.AddScoped<IRangeWiseSequenceRepository, RangeWiseSequenceRepository>();
 builder.Services.AddScoped<IVoucherTypeRepository, VoucherTypeRepository>();
@@ -655,6 +760,34 @@ builder.Services.AddScoped<IOverdraftDetailService, OverdraftDetailService>();
 builder.Services.AddScoped<IOverdraftMasterRepository, OverdraftMasterRepository>();
 builder.Services.AddScoped<IOverdraftMasterService, OverdraftMasterService>();
 builder.Services.AddScoped<ITrustableDeviceRepository, TrustableDeviceRepository>();
+builder.Services.AddScoped<IUserQuickServiceRepository, UserQuickServiceRepository>();
+// Dynamic tax engine: one repository for every tax master (they are read together as of one
+// date, so separate caches could hand the engine a rule from one generation and a rate from
+// another), and the single service that decides tax for the whole application.
+builder.Services.AddScoped<ITaxConfigurationRepository, TaxConfigurationRepository>();
+builder.Services.AddScoped<ITaxEngineService, TaxEngineService>();
+// Document numbering. Allocates in one atomic UPDATE..OUTPUT rather than from an in-memory
+// counter, because two workers reading the same number is the most expensive GST error there is.
+builder.Services.AddScoped<ITaxDocumentNumberService, TaxDocumentNumberService>();
+// Generates sale documents from wallet top-ups and from commission, idempotently - a source
+// already covered by an annexure row cannot be invoiced twice (unique index, not bookkeeping).
+builder.Services.AddScoped<ITaxInvoiceService, TaxInvoiceService>();
+// Finds both halves of a reciprocal wallet swap. Under GST s.7(1)(a) barter is supply and each
+// leg is taxable, so the turnover is the SUM of the legs - the net, which is what a swap looks
+// like from the wallet, is exactly how that turnover goes missing.
+builder.Services.AddScoped<IExchangeLegService, ExchangeLegService>();
+// Credit notes: the only correct way to undo an issued document. Tax is pro-rated from the
+// ORIGINAL, never re-resolved, so a reversal carries the rate that was actually charged.
+builder.Services.AddScoped<ICreditNoteService, CreditNoteService>();
+// e-invoice (IRN) queue. The gateway is an interface because each reseller registers with its own
+// GSP; the default refuses loudly rather than pretending to succeed, because a document marked
+// Registered with no IRN would drop off the deadline alert that is meant to catch it.
+builder.Services.AddScoped<IEInvoiceGateway, NotConfiguredEInvoiceGateway>();
+builder.Services.AddScoped<IEInvoiceService, EInvoiceService>();
+// Rule administration. Separate from the engine on purpose: the engine only ever reads, and a
+// rule is never edited in place - it is superseded, so every figure already stamped on a
+// transaction can still be explained by the rule that was live when it was stamped.
+builder.Services.AddScoped<ITaxRuleAdminService, TaxRuleAdminService>();
 builder.Services.AddScoped<ITrustableDeviceService, TrustableDeviceService>();
 builder.Services.AddScoped<IUserMerchantMasterRepository, UserMerchantMasterRepository>();
 builder.Services.AddScoped<IUserMerchantMasterService, UserMerchantMasterService>();
@@ -681,6 +814,51 @@ builder.Services.AddScoped<IUpiSenderService, UpiSenderService>();
 builder.Services.AddScoped<IUpiBeneficiaryRepository, UpiBeneficiaryRepository>();
 builder.Services.AddScoped<IUpiBeneficiaryService, UpiBeneficiaryService>();
 
+// ---------------------------------------------------------------------------
+// Refuse to start on a configuration that cannot work.
+//
+// A blank JWT secret does not fail at startup on its own: the application comes up, serves static
+// files, and then throws "key length is zero" inside the authentication middleware on every single
+// request - surfacing as an opaque 500. Ten minutes of the wrong investigation. The same goes for
+// the AES key and IV, which have to be exactly 32 and 16 characters or every encrypted request
+// body fails to decrypt.
+//
+// Development is exempt so a developer can run with a half-filled appsettings.json.
+if (!builder.Environment.IsDevelopment())
+{
+    var configurationProblems = new List<string>();
+
+    var jwtSecret = builder.Configuration["JwtSettings:SecretKey"] ?? string.Empty;
+    if (jwtSecret.Length < 32)
+    {
+        configurationProblems.Add(jwtSecret.Length == 0
+            ? "JwtSettings:SecretKey is not set. Nobody can sign in without it."
+            : $"JwtSettings:SecretKey is only {jwtSecret.Length} characters; it needs at least 32.");
+    }
+
+    var aesKey = builder.Configuration["Encryption:Key"] ?? string.Empty;
+    var aesIv = builder.Configuration["Encryption:IV"] ?? string.Empty;
+    if (aesKey.Length != 32) configurationProblems.Add($"Encryption:Key must be exactly 32 characters (it is {aesKey.Length}).");
+    if (aesIv.Length != 16) configurationProblems.Add($"Encryption:IV must be exactly 16 characters (it is {aesIv.Length}).");
+
+    if (string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("DefaultConnection")))
+    {
+        configurationProblems.Add("ConnectionStrings:DefaultConnection is not set.");
+    }
+
+    if (configurationProblems.Count > 0)
+    {
+        var message =
+            "This installation is not configured and cannot start:" + Environment.NewLine +
+            string.Join(Environment.NewLine, configurationProblems.Select(p => "  - " + p)) + Environment.NewLine +
+            "These belong in appsettings.Production.json, which the setup writes. " +
+            "Run Setup.bat / FinoSetup.exe, or Configure-Split.ps1 for an IIS deployment.";
+
+        Console.Error.WriteLine(message);
+        throw new InvalidOperationException(message);
+    }
+}
+
 var app = builder.Build();
 
 // Warm up the EF Core model at startup. The model has 200+ entities, so the first
@@ -698,9 +876,47 @@ if (app.Environment.IsDevelopment())
     app.UseDeveloperExceptionPage(); // This will show detailed errors
 }
 
+// Behind a reverse proxy (IIS/ARR, nginx, Cloudflare) TLS is terminated at the edge, so the
+// request reaches this process as plain http even though the browser asked for https. Without
+// this the app believes it is on http and UseHttpsRedirection below bounces every call with a
+// 307 - including CORS preflights, which is fatal: a redirect carries no
+// Access-Control-Allow-Origin, so the browser reports the request as "blocked by CORS policy"
+// when the real cause is the redirect. Trusting X-Forwarded-Proto makes the app see https and
+// stop redirecting. KnownNetworks/Proxies are cleared because the proxy is not on a network
+// this process can enumerate (same host, or a container).
+app.UseForwardedHeaders(new Microsoft.AspNetCore.Builder.ForwardedHeadersOptions
+{
+    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+                     | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+                     | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedHost,
+    KnownNetworks = { },
+    KnownProxies = { },
+});
+
 // Use Custom Middleware
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
+
+// Hold API calls off with a 503 while a brand-new installation is still building its database.
+app.UseMiddleware<FintechApp.Helpers.BootstrapGateMiddleware>();
+
+// CORS goes BEFORE the HTTPS redirect, not after.
+//
+// A preflight (OPTIONS) that meets a 307 never reaches the CORS middleware, so the response has
+// no Access-Control-Allow-Origin and the browser blocks the real request. Putting CORS first
+// means the preflight is answered here and returns 204 with the right headers whatever the
+// redirect would have done. ForwardedHeaders above should stop the redirect firing at all, but
+// the order matters on its own - a misconfigured proxy must not be able to break the panel.
+app.UseCors("CORSFintechApp");
+
+// Say out loud what the policy resolved to. "Blocked by CORS policy" in a browser console
+// says nothing about which of the three cases the server is in, and on a customer's server
+// there is no debugger to find out - one startup line turns it into a five-second check.
+app.Logger.LogInformation(
+    "CORS: {Mode} (Cors:AllowedOrigins = {Origins})",
+    app.Environment.IsDevelopment() || corsOrigins.Contains("*") ? "any origin allowed"
+        : corsOrigins.Length > 0 ? "allow-list" : "SAME-ORIGIN ONLY - a separately hosted panel will be blocked",
+    corsOrigins.Length > 0 ? string.Join(", ", corsOrigins) : "(not set)");
 
 // Skip HTTPS redirection in Development so the Vite dev proxy can reach the API over
 // http://localhost:5266 without a cross-origin 307 to the https port (which breaks CORS).
@@ -708,8 +924,6 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
 }
-
-app.UseCors("CORSFintechApp");
 
 // Serve uploaded images (service/operator icons) from <contentroot>/wwwroot/uploads.
 
@@ -721,9 +935,128 @@ app.UseStaticFiles(new StaticFileOptions
     FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(staticWebRoot),
 });
 
+// Optionally serve the operator console (the built Fino_Web bundle) from this same process, out of
+// wwwroot/panel. One service instead of two means one hostname, one certificate and no CORS at all
+// — which is what an on-premise installation should be, and removes the commonest install mistake
+// (panel and API on different origins with mismatched settings). Left off by default so an
+// existing deployment that serves the panel from IIS/nginx is unaffected.
+var panelRoot = Path.Combine(staticWebRoot, "panel");
+var servePanel = app.Configuration.GetValue("Panel:ServeStaticFiles", false) && File.Exists(Path.Combine(panelRoot, "index.html"));
+if (servePanel)
+{
+    var panelFiles = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(panelRoot);
+
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = panelFiles });
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = panelFiles,
+        OnPrepareResponse = ctx =>
+        {
+            // The bundle's filenames carry a content hash, so they can be cached hard; index.html
+            // and config.json must not be, or a client keeps running the previous release (and,
+            // worse, the previous API URL) after an update.
+            var name = ctx.File.Name;
+            ctx.Context.Response.Headers.CacheControl =
+                name.Equals("index.html", StringComparison.OrdinalIgnoreCase) || name.Equals("config.json", StringComparison.OrdinalIgnoreCase)
+                    ? "no-cache, no-store, must-revalidate"
+                    : "public, max-age=31536000, immutable";
+        }
+    });
+}
+
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Register the recurring settlement jobs and (in development) mount the job dashboard.
+app.UseFintechHangfire();
+
+// Liveness/readiness probe. Anonymous and deliberately thin: the installer polls it to decide
+// whether the deployment worked, and a load balancer or uptime monitor uses the same URL. It
+// reports whether the database is reachable, and nothing else — no version or schema detail that
+// would help someone fingerprint the deployment.
+app.MapGet("/health", async (FintechApp.Data.ApplicationDbContext db, FintechApp.Helpers.BootstrapStatus bootstrap) =>
+{
+    // While a new installation is building its database this reports "starting", and the installer
+    // keeps waiting instead of declaring failure. A setup that failed says so, with the reason —
+    // that message is the whole diagnosis for whoever is doing the install.
+    if (!bootstrap.IsReady)
+    {
+        return Results.Json(new
+        {
+            status = bootstrap.State == FintechApp.Helpers.BootstrapState.Failed ? "setup-failed" : "starting",
+            setup = bootstrap.State.ToString().ToLowerInvariant(),
+            error = bootstrap.Error
+        }, statusCode: 503);
+    }
+
+    try
+    {
+        var dbUp = await db.Database.CanConnectAsync();
+        return dbUp
+            ? Results.Ok(new { status = "ok", database = "up" })
+            : Results.Json(new { status = "degraded", database = "down" }, statusCode: 503);
+    }
+    catch
+    {
+        return Results.Json(new { status = "degraded", database = "down" }, statusCode: 503);
+    }
+}).AllowAnonymous();
+
 app.MapControllers();
+
+// The Android app's download page, at /app/. Mapped explicitly rather than left to the default
+// document: with routing in front of the static middleware, "/app/" matches the SPA fallback
+// endpoint and the panel shell wins over the page in that folder. An explicit endpoint is
+// unambiguous, and the page is a plain file that the installer writes.
+if (servePanel)
+{
+    var downloadPage = Path.Combine(panelRoot, "app", "index.html");
+    if (File.Exists(downloadPage))
+    {
+        // One route, not two: routing treats "/app" and "/app/" as the same template, and mapping
+        // both raises AmbiguousMatchException on every request to either.
+        app.MapGet("/app", async context =>
+        {
+            context.Response.ContentType = "text/html";
+            context.Response.Headers.CacheControl = "no-cache";
+            await context.Response.SendFileAsync(downloadPage);
+        }).AllowAnonymous();
+    }
+}
+
+// Client-side routing: /reports, /users/12 and friends are React Router paths, not files, so any
+// unmatched GET that is not an API call returns the panel shell. API paths are deliberately left
+// to 404 as JSON — a partner integration debugging a wrong URL should see a 404, not a page.
+if (servePanel)
+{
+    app.MapFallback(async context =>
+    {
+        var path = context.Request.Path.Value ?? string.Empty;
+        if (path.StartsWith("/api", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/health", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/hangfire", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("/uploads", StringComparison.OrdinalIgnoreCase))
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
+        // A path whose last segment has a file extension is a FILE, not a client-side route. A
+        // missing one must 404. Returning the app shell instead means a browser downloads an HTML
+        // page under the requested name - which is how an .apk that was never uploaded arrives on
+        // a phone as a "corrupt" app.
+        var lastSegment = path.AsSpan(path.LastIndexOf('/') + 1);
+        var dot = lastSegment.LastIndexOf('.');
+        if (dot > 0 && dot < lastSegment.Length - 1 && lastSegment.Length - dot <= 9)
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
+        context.Response.ContentType = "text/html";
+        context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
+        await context.Response.SendFileAsync(Path.Combine(panelRoot, "index.html"));
+    });
+}
 
 app.Run();

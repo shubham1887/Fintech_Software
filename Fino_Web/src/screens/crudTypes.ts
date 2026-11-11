@@ -34,6 +34,13 @@ export interface FieldDef {
    * and images are never rendered — text only.
    */
   detailFields?: { key: string; label: string }[];
+  /**
+   * Keep only the loaded options whose named fields match the pattern (case-insensitive regex,
+   * tested against the fields joined with a space). For a picker that must offer ONE family of
+   * a shared master — the DMT range routing's Service picker shows the DMT service and nothing
+   * else, because a range rule on a recharge operator is not a thing.
+   */
+  optionsFilter?: { keys: string[]; pattern: string };
 }
 
 /** A standalone action form (kind 'form') — one DynamicForm POSTing to one endpoint. */
@@ -70,4 +77,11 @@ export interface CrudConfig {
   remove?: { endpoint: string; successMessage?: string };
   /** Per-row navigation links (e.g. Slab → Commission setup). */
   links?: { label: string; to: (row: Record<string, unknown>) => string }[];
+  /**
+   * Dropdown filters above the table, one per listed column, each offering the distinct values
+   * the loaded rows carry. For masters where the free-text search is not enough — BBPS fields
+   * are read one operator at a time, and typing "Airtel" also matches every label that
+   * mentions it.
+   */
+  filters?: { key: string; label: string }[];
 }

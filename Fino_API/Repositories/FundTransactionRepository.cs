@@ -85,8 +85,26 @@ namespace FintechApp.Repositories
 
         public async Task<int> Update(FundTransaction fundTransaction)
         {
-            _context.FundTransactions.Update(fundTransaction);
-            var result = await _context.SaveChangesAsync();
+            // Copy the changed COLUMNS onto a freshly tracked row rather than DbSet.Update on the
+            // cached entity. The cached rows are loaded with Sender / Receiver / RequestTo included,
+            // and Update paints that whole graph Modified — so approving a fund request also issued
+            // UPDATEs against three UserMasters rows it had no business touching, and with several
+            // of them in one save EF refused with "circular dependency ... Index { 'MobileNumber' }"
+            // AFTER the money had already moved (seen on live, Fund/AcceptReject, 10 Nov 2026).
+            var tracked = await _context.FundTransactions
+                .FirstOrDefaultAsync(f => f.FundTransactionID == fundTransaction.FundTransactionID);
+            int result;
+            if (tracked == null)
+            {
+                _context.FundTransactions.Update(fundTransaction);
+                result = await _context.SaveChangesAsync();
+            }
+            else
+            {
+                _context.Entry(tracked).CurrentValues.SetValues(fundTransaction);
+                result = await _context.SaveChangesAsync();
+                _context.Entry(tracked).State = EntityState.Detached;
+            }
 
             if (result > 0) ClearCache();
             return result;
