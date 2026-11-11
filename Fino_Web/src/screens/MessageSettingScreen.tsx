@@ -16,8 +16,8 @@ const str = (v: unknown) => String(v ?? '');
 
 /** Placeholders the backend swaps in at send time. Click a chip to insert it into the last-focused box. */
 const PLACEHOLDERS = [
-  '{AppName}', '{CustomerName}', '{Number}', '{OTP}', '{Amount}', '{Balance}',
-  '{TxnID}', '{Operator}', '{Date}', '{SupportNo}', '{Remark}', '{Password}',
+  '{AppName}', '{CustomerName}', '{FirmName}', '{Number}', '{OTP}', '{Amount}', '{Balance}',
+  '{TxnID}', '{Operator}', '{Date}', '{DateTime}', '{SupportNo}', '{Remark}', '{Password}',
 ];
 
 /** A message-setting row as edited on screen. */
@@ -49,32 +49,127 @@ function toDraft(r: Row): Draft {
   };
 }
 
-/** Well-written default templates for every common event. Seeded on demand (admin). */
-const DEFAULT_TEMPLATES: Array<Pick<Draft, 'Type' | 'IsSMS' | 'IsOTP' | 'IsWhatsUp' | 'SmsMessage'>> = [
-  { Type: 'Welcome / Registration', IsSMS: true, IsOTP: false, IsWhatsUp: true, SmsMessage: 'Welcome to {AppName}, {CustomerName}! Your account is now active. Enjoy recharges, bill payments & money transfer. Help: {SupportNo}' },
-  { Type: 'Registration OTP', IsSMS: true, IsOTP: true, IsWhatsUp: false, SmsMessage: '{OTP} is your OTP to verify your mobile number with {AppName}. Valid for 10 minutes. Never share your OTP with anyone.' },
-  { Type: 'Login OTP', IsSMS: true, IsOTP: true, IsWhatsUp: false, SmsMessage: '{OTP} is your {AppName} login OTP. Valid for 10 minutes. Do not share it with anyone for security reasons.' },
-  { Type: 'Forgot Password OTP', IsSMS: true, IsOTP: true, IsWhatsUp: false, SmsMessage: '{OTP} is your OTP to reset your {AppName} password. Valid for 10 minutes. Do not share with anyone.' },
-  { Type: 'Password Changed', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'Your {AppName} password was changed on {Date}. If this was not you, contact support immediately at {SupportNo}.' },
-  { Type: 'New Login Credentials', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'Welcome to {AppName}! Login ID: {Number}, Password: {Password}. Please change your password after first login.' },
-  { Type: 'Recharge Success', IsSMS: true, IsOTP: false, IsWhatsUp: true, SmsMessage: 'Recharge SUCCESS. {Operator} {Number} recharged with Rs.{Amount}. Txn ID: {TxnID}. Wallet bal: Rs.{Balance}. - {AppName}' },
-  { Type: 'Recharge Failed', IsSMS: true, IsOTP: false, IsWhatsUp: true, SmsMessage: 'Recharge FAILED for {Operator} {Number} of Rs.{Amount}. Amount refunded to your wallet. Txn ID: {TxnID}. - {AppName}' },
-  { Type: 'Recharge Pending', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'Your recharge of Rs.{Amount} for {Operator} {Number} is PENDING. Txn ID: {TxnID}. We will update you shortly. - {AppName}' },
-  { Type: 'Bill Payment Success', IsSMS: true, IsOTP: false, IsWhatsUp: true, SmsMessage: 'Bill payment SUCCESS. {Operator} bill of Rs.{Amount} paid for {Number}. Txn ID: {TxnID}. Wallet bal: Rs.{Balance}. - {AppName}' },
-  { Type: 'Money Transfer Success', IsSMS: true, IsOTP: false, IsWhatsUp: true, SmsMessage: 'Rs.{Amount} sent successfully to A/c {Number}. UTR/Txn ID: {TxnID}. Wallet bal: Rs.{Balance}. - {AppName}' },
-  { Type: 'Money Transfer Failed', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'Money transfer of Rs.{Amount} to A/c {Number} FAILED. Amount refunded to your wallet. Txn ID: {TxnID}. - {AppName}' },
-  { Type: 'AEPS Withdrawal', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'AEPS cash withdrawal of Rs.{Amount} successful. Txn ID: {TxnID}. Available bal: Rs.{Balance}. - {AppName}' },
-  { Type: 'Fund Request Raised', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'Your fund request of Rs.{Amount} has been submitted. You will be notified once it is approved. - {AppName}' },
-  { Type: 'Fund Request Approved', IsSMS: true, IsOTP: false, IsWhatsUp: true, SmsMessage: 'Your fund request of Rs.{Amount} is APPROVED. Rs.{Amount} credited to your wallet. New bal: Rs.{Balance}. - {AppName}' },
-  { Type: 'Fund Request Rejected', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'Your fund request of Rs.{Amount} was REJECTED. Reason: {Remark}. Please contact your upline for details. - {AppName}' },
-  { Type: 'Wallet Credited', IsSMS: true, IsOTP: false, IsWhatsUp: true, SmsMessage: 'Rs.{Amount} credited to your {AppName} wallet on {Date}. New balance: Rs.{Balance}. Ref: {TxnID}.' },
-  { Type: 'Wallet Debited', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'Rs.{Amount} debited from your {AppName} wallet on {Date}. New balance: Rs.{Balance}. Ref: {TxnID}.' },
-  { Type: 'Low Balance Alert', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'Low balance alert! Your {AppName} wallet balance is Rs.{Balance}. Please add funds to continue transactions.' },
-  { Type: 'Complaint Registered', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'Your complaint for Txn ID {TxnID} is registered. We will resolve it within 24-48 hours. - {AppName}' },
-  { Type: 'Complaint Resolved', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'Your complaint for Txn ID {TxnID} has been RESOLVED. Thank you for your patience. - {AppName}' },
-  { Type: 'KYC Approved', IsSMS: true, IsOTP: false, IsWhatsUp: true, SmsMessage: 'Congratulations {CustomerName}! Your KYC is APPROVED. All services are now active on {AppName}.' },
-  { Type: 'KYC Rejected', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'Your KYC was REJECTED. Reason: {Remark}. Please re-submit your documents on {AppName}.' },
-  { Type: 'New User Added', IsSMS: true, IsOTP: false, IsWhatsUp: false, SmsMessage: 'A new user {CustomerName} ({Number}) has been added under your network on {AppName}.' },
+/**
+ * The same catalogue that Scripts/install/50_seed_message_templates.sql seeds on install, kept here
+ * so "Load default templates" can put back an event somebody deleted. This block is GENERATED from
+ * that script -- if you change wording, change it there and regenerate, or the two drift and which
+ * one a client ends up with depends on whether the admin ever pressed the button.
+ *
+ * Plain ASCII on purpose: SmsMessage and WhatsUpMessage are non-Unicode varchar columns, so an
+ * emoji or a Rupee sign saved through this screen reaches the customer as "?".
+ */
+const DEFAULT_TEMPLATES: Array<Pick<Draft, 'Type' | 'IsSMS' | 'IsOTP' | 'IsWhatsUp' | 'SmsMessage' | 'WhatsUpMessage'>> = [
+  { Type: 'Account Activated', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Dear {CustomerName}, your {AppName} account has been activated. You can sign in and start transacting again.',
+    WhatsUpMessage: '*Account activated*\n\nDear *{CustomerName}*, your {AppName} account was activated on {Date}.\n\nYou can sign in and start transacting again.\n\n- {AppName}' },
+  { Type: 'Account Deactivated', IsSMS: true, IsOTP: false, IsWhatsUp: false,
+    SmsMessage: 'Dear {CustomerName}, your {AppName} account has been deactivated. Please contact your service provider for details.',
+    WhatsUpMessage: '*Account deactivated*\n\nDear *{CustomerName}*, your {AppName} account was deactivated on {Date} and you will not be able to transact.\n\nPlease contact your service provider for details.\n\n- {AppName}' },
+  { Type: 'AEPS Withdrawal', IsSMS: true, IsOTP: false, IsWhatsUp: false,
+    SmsMessage: 'AEPS cash withdrawal of Rs.{Amount} is successful. Txn ID {TxnID}. Wallet balance Rs.{Balance}. - {AppName}',
+    WhatsUpMessage: '*AEPS withdrawal successful*\n\nAmount: *Rs.{Amount}*\nTxn ID: {TxnID}\nDate: {DateTime}\n\nWallet balance: *Rs.{Balance}*\n\n- {AppName}' },
+  { Type: 'API Token', IsSMS: true, IsOTP: true, IsWhatsUp: false,
+    SmsMessage: '{OTP} is your OTP to generate a new API token on {AppName}. Valid for 10 minutes. This OTP gives access to your API credentials - share it with no one.',
+    WhatsUpMessage: '' },
+  { Type: 'Beneficiary Registration', IsSMS: true, IsOTP: true, IsWhatsUp: false,
+    SmsMessage: '{OTP} is your OTP to confirm the new beneficiary you added for money transfer on {AppName}. Valid for 10 minutes. Do not share this OTP with anyone.',
+    WhatsUpMessage: '' },
+  { Type: 'Bill Payment Failed', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Bill payment failed. {Operator} bill of Rs.{Amount} for {Number} could not be completed and the amount is refunded to your wallet. Txn ID {TxnID}. - {AppName}',
+    WhatsUpMessage: '*Bill payment failed*\n\nBiller: *{Operator}*\nConsumer number: *{Number}*\nAmount: *Rs.{Amount}*\nTxn ID: {TxnID}\nDate: {DateTime}\n\nThe amount has been refunded to your wallet. Wallet balance: *Rs.{Balance}*\n\n- {AppName}' },
+  { Type: 'Bill Payment Success', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Bill payment successful. {Operator} bill of Rs.{Amount} paid for {Number}. Txn ID {TxnID}. Wallet balance Rs.{Balance}. - {AppName}',
+    WhatsUpMessage: '*Bill payment successful*\n\nBiller: *{Operator}*\nConsumer number: *{Number}*\nAmount: *Rs.{Amount}*\nTxn ID: {TxnID}\nDate: {DateTime}\n\nWallet balance: *Rs.{Balance}*\n\n- {AppName}' },
+  { Type: 'Complaint Registered', IsSMS: true, IsOTP: false, IsWhatsUp: false,
+    SmsMessage: 'Your complaint for Txn ID {TxnID} is registered. We will update you within 24 to 48 hours. - {AppName}',
+    WhatsUpMessage: '*Complaint registered*\n\nTxn ID: *{TxnID}*\nRaised on: {DateTime}\n\nOur team is looking into it and you will get an update within 24 to 48 working hours.\n\n- {AppName}' },
+  { Type: 'Complaint Resolved', IsSMS: true, IsOTP: false, IsWhatsUp: false,
+    SmsMessage: 'Your complaint for Txn ID {TxnID} is resolved. {Remark} Thank you for your patience. - {AppName}',
+    WhatsUpMessage: '*Complaint resolved*\n\nTxn ID: *{TxnID}*\nResolved on: {DateTime}\nOutcome: {Remark}\n\nThank you for your patience. Please raise a fresh ticket if anything still looks wrong.\n\n- {AppName}' },
+  { Type: 'Forgot MPIN OTP', IsSMS: true, IsOTP: true, IsWhatsUp: false,
+    SmsMessage: '{OTP} is your OTP to reset your {AppName} MPIN. Valid for 10 minutes. Your MPIN authorises payments, so do not share this OTP with anyone.',
+    WhatsUpMessage: '' },
+  { Type: 'Forgot Password OTP', IsSMS: true, IsOTP: true, IsWhatsUp: false,
+    SmsMessage: '{OTP} is your OTP to reset your {AppName} password. Valid for 10 minutes. Do not share it. If you did not ask for a reset, ignore this message.',
+    WhatsUpMessage: '' },
+  { Type: 'Fund Request Approved', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Your fund request of Rs.{Amount} is approved and credited to your wallet. Available balance Rs.{Balance}. - {AppName}',
+    WhatsUpMessage: '*Fund request approved*\n\nAmount credited: *Rs.{Amount}*\nDate: {DateTime}\nRemark: {Remark}\n\nAvailable balance: *Rs.{Balance}*\n\n- {AppName}' },
+  { Type: 'Fund Request Raised', IsSMS: true, IsOTP: false, IsWhatsUp: false,
+    SmsMessage: 'Your fund request of Rs.{Amount} has been submitted to your upline. You will get a message once it is approved or rejected. - {AppName}',
+    WhatsUpMessage: '*Fund request submitted*\n\nAmount: *Rs.{Amount}*\nDate: {DateTime}\nRemark: {Remark}\n\nYour request has gone to your upline for approval. You will get a message as soon as it is approved or rejected.\n\n- {AppName}' },
+  { Type: 'Fund Request Rejected', IsSMS: true, IsOTP: false, IsWhatsUp: false,
+    SmsMessage: 'Your fund request of Rs.{Amount} was rejected. Reason: {Remark}. Please contact your upline for details. - {AppName}',
+    WhatsUpMessage: '*Fund request rejected*\n\nAmount: *Rs.{Amount}*\nDate: {DateTime}\nReason: *{Remark}*\n\nNothing has been credited to your wallet. Please contact your upline for details.\n\n- {AppName}' },
+  { Type: 'Fund Reverse OTP', IsSMS: true, IsOTP: true, IsWhatsUp: false,
+    SmsMessage: '{OTP} is your OTP to authorise a reversal of Rs.{Amount} from your {AppName} wallet. Valid for 10 minutes. Do not share this OTP with anyone.',
+    WhatsUpMessage: '' },
+  { Type: 'Fund Reverse Request Raised', IsSMS: true, IsOTP: false, IsWhatsUp: false,
+    SmsMessage: 'A reversal of Rs.{Amount} from your {AppName} wallet has been requested and is awaiting approval. Remark: {Remark}',
+    WhatsUpMessage: '*Wallet reversal requested*\n\nAmount: *Rs.{Amount}*\nDate: {DateTime}\nRemark: {Remark}\n\nThis reversal is waiting for approval -- nothing has left your wallet yet. If you did not expect it, contact your service provider immediately.\n\n- {AppName}' },
+  { Type: 'KYC Approved', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Congratulations {CustomerName}, your KYC is approved and all {AppName} services are now active on your account.',
+    WhatsUpMessage: '*KYC approved*\n\nCongratulations *{CustomerName}*!\n\nYour KYC was approved on {Date} and every {AppName} service is now active on your account.\n\n- {AppName}' },
+  { Type: 'KYC Rejected', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Your {AppName} KYC could not be approved. Reason: {Remark}. Please check your documents and submit them again.',
+    WhatsUpMessage: '*KYC not approved*\n\nDear *{CustomerName}*, your KYC submission was not approved.\n\nReason: *{Remark}*\n\nPlease check the documents against the requirements and submit them again from the app.\n\n- {AppName}' },
+  { Type: 'Login OTP', IsSMS: true, IsOTP: true, IsWhatsUp: false,
+    SmsMessage: '{OTP} is your login OTP for {AppName}. It is valid for 10 minutes. Never share this OTP with anyone, including {AppName} staff.',
+    WhatsUpMessage: '' },
+  { Type: 'Low Balance Alert', IsSMS: true, IsOTP: false, IsWhatsUp: false,
+    SmsMessage: 'Low balance alert. Your {AppName} wallet balance is Rs.{Balance}. Please add funds to keep transacting.',
+    WhatsUpMessage: '*Low balance*\n\nYour {AppName} wallet balance is *Rs.{Balance}*.\n\nPlease add funds to keep transacting - services start declining once the balance runs out.\n\n- {AppName}' },
+  { Type: 'Money Transfer Failed', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Money transfer of Rs.{Amount} to account {Number} failed and the amount is refunded to your wallet. Txn ID {TxnID}. - {AppName}',
+    WhatsUpMessage: '*Money transfer failed*\n\nBeneficiary account: *{Number}*\nBank: {Operator}\nAmount: *Rs.{Amount}*\nTxn ID: {TxnID}\nDate: {DateTime}\n\nThe amount has been refunded to your wallet. Wallet balance: *Rs.{Balance}*\n\n- {AppName}' },
+  { Type: 'Money Transfer Success', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Rs.{Amount} sent successfully to account {Number}. UTR / Txn ID {TxnID}. Wallet balance Rs.{Balance}. - {AppName}',
+    WhatsUpMessage: '*Money transfer successful*\n\nBeneficiary account: *{Number}*\nBank: {Operator}\nAmount: *Rs.{Amount}*\nUTR / Txn ID: *{TxnID}*\nDate: {DateTime}\n\nWallet balance: *Rs.{Balance}*\n\nKeep the UTR for your records - the bank needs it for any query on this transfer.\n\n- {AppName}' },
+  { Type: 'MPIN Changed', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Your {AppName} MPIN was changed on {DateTime}. Your MPIN authorises payments - if this was not you, contact support immediately.',
+    WhatsUpMessage: '*MPIN changed*\n\nThe MPIN on your {AppName} account was changed on *{DateTime}*.\n\nYour MPIN authorises payments from your wallet. If you did not do this, contact support immediately.\n\n- {AppName}' },
+  { Type: 'New Device OTP', IsSMS: true, IsOTP: true, IsWhatsUp: false,
+    SmsMessage: '{OTP} is your OTP to approve a sign-in from a new device on {AppName}. Valid for 10 minutes. If this was not you, change your password immediately.',
+    WhatsUpMessage: '' },
+  { Type: 'New Login Credentials', IsSMS: true, IsOTP: false, IsWhatsUp: false,
+    SmsMessage: 'Welcome to {AppName}. Login ID: {Number}. Temporary password: {Password}. Please sign in and change your password straight away.',
+    WhatsUpMessage: '*Welcome to {AppName}*\n\nYour account is ready.\n\nLogin ID: *{Number}*\nTemporary password: *{Password}*\n\nFor your security, please sign in and change this password straight away. Do not forward this message to anyone.\n\n- {AppName}' },
+  { Type: 'New User Added', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'A new user {CustomerName} ({Number}) has been added under your {AppName} network.',
+    WhatsUpMessage: '*New user in your network*\n\nA new user has been added under you on {AppName}.\n\nName: *{CustomerName}*\nFirm: {FirmName}\nMobile: *{Number}*\nAdded on: {Date}\n\n- {AppName}' },
+  { Type: 'Password Changed', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Your {AppName} password was changed on {DateTime}. If this was not you, reset your password and contact support immediately.',
+    WhatsUpMessage: '*Password changed*\n\nThe password on your {AppName} account was changed on *{DateTime}*.\n\nIf you did not do this, reset your password now and contact support immediately.\n\n- {AppName}' },
+  { Type: 'PIN OTP', IsSMS: true, IsOTP: true, IsWhatsUp: false,
+    SmsMessage: '{OTP} is your OTP to set your {AppName} MPIN. Valid for 10 minutes. Your MPIN authorises payments, so do not share this OTP with anyone.',
+    WhatsUpMessage: '' },
+  { Type: 'Recharge Failed', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Recharge failed. Rs.{Amount} for {Operator} {Number} could not be completed and the amount is refunded to your wallet. Txn ID {TxnID}. - {AppName}',
+    WhatsUpMessage: '*Recharge failed*\n\nOperator: *{Operator}*\nNumber: *{Number}*\nAmount: *Rs.{Amount}*\nTxn ID: {TxnID}\nDate: {DateTime}\n\nThe amount has been refunded to your wallet. Wallet balance: *Rs.{Balance}*\n\n- {AppName}' },
+  { Type: 'Recharge Pending', IsSMS: true, IsOTP: false, IsWhatsUp: false,
+    SmsMessage: 'Your recharge of Rs.{Amount} for {Operator} {Number} is pending with the operator. Txn ID {TxnID}. We will update you as soon as it settles. - {AppName}',
+    WhatsUpMessage: '*Recharge pending*\n\nOperator: *{Operator}*\nNumber: *{Number}*\nAmount: *Rs.{Amount}*\nTxn ID: {TxnID}\n\nThe operator has not confirmed this recharge yet. You will get a message as soon as it settles - please do not retry it in the meantime.\n\n- {AppName}' },
+  { Type: 'Recharge Success', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Recharge successful. Rs.{Amount} for {Operator} {Number}. Txn ID {TxnID}. Wallet balance Rs.{Balance}. - {AppName}',
+    WhatsUpMessage: '*Recharge successful*\n\nOperator: *{Operator}*\nNumber: *{Number}*\nAmount: *Rs.{Amount}*\nTxn ID: {TxnID}\nDate: {DateTime}\n\nWallet balance: *Rs.{Balance}*\n\n- {AppName}' },
+  { Type: 'Registration OTP', IsSMS: true, IsOTP: true, IsWhatsUp: false,
+    SmsMessage: '{OTP} is your OTP to verify your mobile number with {AppName}. It is valid for 10 minutes. Do not share this OTP with anyone.',
+    WhatsUpMessage: '' },
+  { Type: 'Secure IP', IsSMS: true, IsOTP: true, IsWhatsUp: false,
+    SmsMessage: '{OTP} is your OTP to change the whitelisted IP addresses on your {AppName} API account. Valid for 10 minutes. Do not share this OTP with anyone.',
+    WhatsUpMessage: '' },
+  { Type: 'Sender Registration', IsSMS: true, IsOTP: true, IsWhatsUp: false,
+    SmsMessage: '{OTP} is your OTP to complete money transfer registration with {AppName}. Valid for 10 minutes. Do not share this OTP with anyone.',
+    WhatsUpMessage: '' },
+  { Type: 'Wallet Credited', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Rs.{Amount} credited to your {AppName} wallet on {Date}. Available balance Rs.{Balance}. {Remark}',
+    WhatsUpMessage: '*Wallet credited*\n\nAmount: *Rs.{Amount}*\nDate: {DateTime}\nRemark: {Remark}\n\nAvailable balance: *Rs.{Balance}*\n\n- {AppName}' },
+  { Type: 'Wallet Debited', IsSMS: true, IsOTP: false, IsWhatsUp: false,
+    SmsMessage: 'Rs.{Amount} debited from your {AppName} wallet on {Date}. Available balance Rs.{Balance}. {Remark}',
+    WhatsUpMessage: '*Wallet debited*\n\nAmount: *Rs.{Amount}*\nDate: {DateTime}\nRemark: {Remark}\n\nAvailable balance: *Rs.{Balance}*\n\nIf you do not recognise this debit, contact your service provider immediately.\n\n- {AppName}' },
+  { Type: 'Welcome / Registration', IsSMS: true, IsOTP: false, IsWhatsUp: true,
+    SmsMessage: 'Welcome to {AppName}, {CustomerName}. Your account is active - recharges, bill payments and money transfer are ready to use.',
+    WhatsUpMessage: '*Welcome to {AppName}*\n\nDear *{CustomerName}*, your account is active.\n\nYou can now use:\n- Mobile and DTH recharge\n- Electricity, gas and other bill payments\n- Money transfer\n\nSign in to get started.\n\n- {AppName}' },
 ];
 
 const BLANK: Draft = {
@@ -118,15 +213,23 @@ export function MessageSettingScreen() {
   // Seed any of the default events that don't exist yet (matched by Type, case-insensitive).
   const [seeding, setSeeding] = useState(false);
   const seedDefaults = async () => {
-    const existing = new Set(rows.map((r) => r.Type.trim().toLowerCase()));
-    const missing = DEFAULT_TEMPLATES.filter((t) => !existing.has(t.Type.toLowerCase()));
+    // Matched the way the backend matches an event to a row -- letters and digits only -- so a row
+    // saved as "LoginOTP" is recognised as the "Login OTP" default and does not get a twin. Two
+    // rows for one event is not cosmetic: the lookup takes the first it finds, so which wording
+    // goes out becomes arbitrary.
+    const key = (s: string) => s.replace(/[^a-z0-9]/gi, '').toLowerCase();
+    const existing = new Set(rows.map((r) => key(r.Type)));
+    const missing = DEFAULT_TEMPLATES.filter((t) => !existing.has(key(t.Type)));
     if (missing.length === 0) { toast.info('All default templates already exist.'); return; }
     setSeeding(true);
     try {
       for (const t of missing) {
         await createMut.mutateAsync({
           Type: t.Type, IsSMS: t.IsSMS, IsOTP: t.IsOTP, IsWhatsUp: t.IsWhatsUp, IsMail: false,
-          SmsMessage: t.SmsMessage, WhatsUpMessage: t.IsWhatsUp ? t.SmsMessage : '', EmailMessage: '', TemplateID: '',
+          // The WhatsApp body is its own text, not a copy of the SMS line: WhatsApp has no
+          // 160-character segment and no DLT, so the same event is written as a multi-line receipt
+          // there. Saved even when the channel is off, so switching it on later needs no retyping.
+          SmsMessage: t.SmsMessage, WhatsUpMessage: t.WhatsUpMessage, EmailMessage: '', TemplateID: '',
         });
       }
       toast.success(`${missing.length} default template${missing.length > 1 ? 's' : ''} added.`);

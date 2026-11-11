@@ -144,6 +144,13 @@ NativeApp.statusBarColor("#7C3AED")
 
 await NativeApp.notifications()                   // { granted: true|false }
 
+// Push notifications
+NativeApp.pushAvailable()                         // is Firebase configured for this client?
+NativeApp.requestPushToken()                      // answers with the 'pushToken' event
+
+NativeApp.on("pushToken", e => e.detail.token)    // register it: AppNotification/RegisterDevice
+NativeApp.on("push",      e => e.detail.url)      // a push arrived, or the user tapped one
+
 // Biometric login
 if (NativeApp.biometricAvailable()) {
   const r = await NativeApp.biometric("Login", "Unlock with your fingerprint")
@@ -292,10 +299,56 @@ All three are visible in the Network tab of `chrome://inspect` against a debug b
 - [ ] Install the release APK on a phone and run the whole flow: login → recharge →
       report download → KYC image upload → logout
 
-## 10. Not included yet (say the word)
+## 10. Push notifications (FCM)
 
-- **Push notifications (FCM)** — deliberately left out because it needs each client's own
-  `google-services.json`. Roughly an hour of work to add.
+Push is built in, and it is configured at **run time** — there is no `google-services.json`
+in this repo and the `com.google.gms.google-services` Gradle plugin is deliberately not
+applied. One APK serves every client; switching push on for a new client is an edit to that
+client's hosted `app-config.json`, not a rebuild and a Play Store release.
+
+**Per client, once:**
+
+1. Firebase Console → add a project (or reuse the client's) → add an **Android app** with
+   this client's `applicationId` from `whitelabel/clients.json`.
+2. Open the generated `google-services.json` and copy four values into the client's
+   `app-config.json`:
+
+   | app-config.json | google-services.json |
+   |---|---|
+   | `fcmProjectId`  | `project_info.project_id` |
+   | `fcmAppId`      | `client[0].client_info.mobilesdk_app_id` |
+   | `fcmApiKey`     | `client[0].api_key[0].current_key` |
+   | `fcmSenderId`   | `project_info.project_number` |
+
+3. Server side: Firebase Console → Project settings → **Service accounts** → *Generate new
+   private key*. Put that JSON on the API server and point `FCM:ServiceAccountFile` at it in
+   `appsettings.json` (or paste it into `FCM:ServiceAccountJson`).
+
+Leave any of it blank and nothing breaks: alerts are still stored and shown in the app's
+notification bell, they just don't reach the phone's tray.
+
+**How it flows**
+
+```
+Admin → App Alert  ─▶  AppNotification/Send      (row per recipient — the durable part)
+                            │
+                            └▶ FCM HTTP v1 ──▶ PortalMessagingService ──▶ tray
+                                                        │ tap
+                                                        ▼
+                                          MainActivity → native:push → console navigates
+```
+
+The token flows the other way: `PushManager` → `native:pushToken` → the console's
+`lib/push.ts` → `AppNotification/RegisterDevice` → a `UserDevices` row.
+
+**Channels** (`push/PushChannels.kt`) are `fino_alerts`, `fino_txn` and `fino_promo`, and the
+ids must stay identical to `NotificationKind.ChannelFor` on the server — Android silently
+discards a notification whose channel does not exist, with no error anywhere.
+
+---
+
+## 11. Not included yet (say the word)
+
 - **QR / barcode scanner** — scanning UPI QRs needs ML Kit or ZXing, which grows the app size,
   so it is not in yet.
 - **SMS OTP autofill** — needs Google's SMS Retriever, and the backend's SMS template has to

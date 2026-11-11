@@ -33,7 +33,24 @@ namespace FintechApp.Controllers
             if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
-            try { var data = await _service.GetAll(); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
+            // Scoped to the caller: admin/support see the whole queue, an upline sees its network,
+            // everyone else only the complaints they raised. (It used to return every complaint on
+            // the platform to any signed-in user.)
+            try { var data = await _service.GetAllForCaller(keyDataModel.UserID, keyDataModel.UserTypeID); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
+
+        // Complaints raised against one transaction. The manual-update flow calls this before
+        // settling a transaction by hand, so the admin can see an open dispute on it first.
+        [HttpPost("GetByTransaction")] public async Task<APIResponse> GetByTransaction([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel; GetComplaintByTransactionRequest? request;
+            try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); request = JsonConvert.DeserializeObject<GetComplaintByTransactionRequest>(_encryptDecrypt.Decrypt(apiRequest.Request)); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+            try { var data = await _service.GetByTransaction(request.TransactionMasterID, keyDataModel.UserID, keyDataModel.UserTypeID); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 
@@ -96,8 +113,24 @@ namespace FintechApp.Controllers
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
             if (keyDataModel.UserTypeID != StaticModels.UserTypeCode.Admin && keyDataModel.UserTypeID != StaticModels.UserTypeCode.SupportUser)
-                return ResponseProcess.GetFailResponse(Messages.Common.Message.Unauthorized);
+                return ResponseProcess.GetFailResponse(Messages.ComplaintMasterMessages.ResolveNotAllowed);
             try { fail = await _service.Resolve(request); if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return ResponseProcess.GetSuccessResponse(Messages.ComplaintMasterMessages.UpdatedSuccessfully); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
+
+        // Withdraw a complaint. Accept/Reject is an admin decision that can move money; Cancel is
+        // what the person who RAISED the complaint gets instead — it closes their own still-open
+        // complaint and moves nothing. Any authenticated user may call it; the service enforces
+        // ownership (an admin may also cancel on a user's behalf).
+        [HttpPost("Cancel")] public async Task<APIResponse> Cancel([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel; CancelComplaintMasterRequest? request;
+            try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); request = JsonConvert.DeserializeObject<CancelComplaintMasterRequest>(_encryptDecrypt.Decrypt(apiRequest.Request)); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+            try { fail = await _service.Cancel(request, keyDataModel.UserID, keyDataModel.UserTypeID); if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return ResponseProcess.GetSuccessResponse(Messages.ComplaintMasterMessages.CancelledSuccessfully); }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 

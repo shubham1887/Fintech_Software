@@ -20,6 +20,7 @@ namespace FintechApp.Services
         private readonly IMessageService _messageService;
         private readonly IMessageSettingRepository _messageSettingRepo;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IDmtGatewayModeService _mode;
         private readonly Logger _logger;
 
         private const string BeneficiaryRegMsgType = "BeneficiaryRegistration";
@@ -36,8 +37,10 @@ namespace FintechApp.Services
             ISettingMasterRepository settingRepo,
             IMessageService messageService,
             IMessageSettingRepository messageSettingRepo,
-            IHttpClientFactory httpClientFactory)
+            IHttpClientFactory httpClientFactory,
+            IDmtGatewayModeService mode)
         {
+            _mode = mode;
             _senderRepo = senderRepo;
             _beneficiaryRepo = beneficiaryRepo;
             _beneficiaryOtpRepo = beneficiaryOtpRepo;
@@ -68,7 +71,7 @@ namespace FintechApp.Services
                 var allSenders = await _senderRepo.GetAll();
                 var sender = allSenders.FirstOrDefault(s => s.GUID == request.SenderGUID && !s.IsDeleted);
                 if (sender == null) return ("Invalid sender.", null);
-                if (!sender.IsOTPVerified) return ("Sender OTP not verified. Please verify sender first.", null);
+                if (!sender.IsOTPVerified && !await _mode.IsPayoutDmt()) return ("Sender OTP not verified. Please verify sender first.", null);
 
                 // Check if beneficiary already exists
                 var allBeneficiaries = await _beneficiaryRepo.GetAll();
@@ -197,7 +200,7 @@ namespace FintechApp.Services
                 var allSenders = await _senderRepo.GetAll();
                 var sender = allSenders.FirstOrDefault(s => s.GUID == request.SenderGUID);
                 if (sender == null) return ("Invalid sender.", new());
-                if (!sender.IsOTPVerified) return ("Sender OTP not verified.", new());
+                if (!sender.IsOTPVerified && !await _mode.IsPayoutDmt()) return ("Sender OTP not verified.", new());
 
                 var all = await _beneficiaryRepo.GetAll();
                 var list = all.Where(b => b.SenderID == sender.SenderID && b.IsActive && !b.IsDeleted).ToList();
@@ -239,7 +242,7 @@ namespace FintechApp.Services
                 var allSenders = await _senderRepo.GetAll();
                 var sender = allSenders.FirstOrDefault(s => s.SenderID == bene.SenderID);
                 if (sender == null) return ("Sender not found.", null);
-                if (!sender.IsOTPVerified) return ("Sender OTP not verified.", null);
+                if (!sender.IsOTPVerified && !await _mode.IsPayoutDmt()) return ("Sender OTP not verified.", null);
 
                 return (StatusType.Ok, new BeneficiaryDetailResponse
                 {
@@ -346,15 +349,15 @@ namespace FintechApp.Services
             {
                 try
                 {
-                    string msg = (setting?.SmsMessage ?? "Your OTP for beneficiary registration is [OTP].")
-                        .Replace("[OTP]", otp).Replace("[FirmName]", sender.Name);
+                    string msg = FillOtpTokens(setting?.SmsMessage ?? "Your OTP for beneficiary registration is {OTP}.", otp, sender.Name);
                     if (setting == null || setting.IsSMS)
                         await _messageService.SendOtpSmsAsync(userId, bene.SenderMobile, msg, setting?.TemplateID ?? string.Empty, BeneficiaryRegMsgType);
 
                     if (setting?.IsWhatsUp == true)
                     {
-                        string wpMsg = (string.IsNullOrWhiteSpace(setting.WhatsUpMessage) ? setting.SmsMessage : setting.WhatsUpMessage)
-                            .Replace("[OTP]", otp).Replace("[FirmName]", sender.Name);
+                        string wpMsg = FillOtpTokens(
+                            string.IsNullOrWhiteSpace(setting.WhatsUpMessage) ? setting.SmsMessage : setting.WhatsUpMessage,
+                            otp, sender.Name);
                         await _messageService.SendWhatsAppAsync(userId, bene.SenderMobile, bene.SenderMobile, wpMsg, setting.TemplateID, BeneficiaryRegMsgType);
                     }
                 }
@@ -362,8 +365,23 @@ namespace FintechApp.Services
             });
         }
 
+        /// <summary>
+        /// Fill the two event tokens this template has, in either spelling — the Message Settings
+        /// screen's placeholder chips insert {OTP} / {FirmName} while only the bracket spelling was
+        /// ever replaced here. See the same helper in DMTSenderFlowService.
+        /// </summary>
+        private static string FillOtpTokens(string template, string otp, string firmName) =>
+            (template ?? string.Empty)
+                .Replace("[OTP]", otp).Replace("{OTP}", otp)
+                .Replace("[FirmName]", firmName).Replace("{FirmName}", firmName);
+
         private async Task<bool> IsOTPRequiredForBeneficiary()
         {
+            // A payout rail keeps no beneficiary registration, so there is nothing for an OTP to
+            // activate — it would only block a transfer the rail would have accepted. This check
+            // comes first and overrides the Key Settings below.
+            if (await _mode.IsPayoutDmt()) return false;
+
             // Preferred explicit switch (Key Setting): 'IsBeneficiaryOTP' — true ⇒ require OTP, false ⇒ skip.
             var beneOtp = await _settingRepo.GetByKey(IsBeneficiaryOtpSettingKey);
             if (beneOtp != null) return ParseBool(beneOtp.Value, beneOtp.IsOn);

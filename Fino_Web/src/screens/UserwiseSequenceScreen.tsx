@@ -94,11 +94,13 @@ export function UserwiseSequenceScreen({ def }: CustomScreenProps) {
     queryFn: () => fetchUserwiseSequence(Number(userId), Number(serviceId)),
     enabled: mode === 'add' && userId !== '' && serviceId !== '',
   });
+  // Scoped to the chosen service, so the chips are the providers that can actually serve it —
+  // the unscoped list offered recharge gateways for a biller and nothing at all for BBPS.
   const providersQ = useQuery({
-    queryKey: ['seq', 'bulk-providers'],
-    queryFn: fetchBulkSequenceProviders,
+    queryKey: ['seq', 'bulk-providers', serviceId],
+    queryFn: () => fetchBulkSequenceProviders(Number(serviceId)),
     staleTime: 60_000,
-    enabled: mode === 'add',
+    enabled: mode === 'add' && serviceId !== '',
   });
 
   const refreshAll = () => {

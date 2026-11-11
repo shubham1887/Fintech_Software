@@ -321,8 +321,9 @@ function EditModal({ draft, saving, onCancel, onSave }: {
         <Section title="API credentials">
           <p className="-mt-1 text-xs text-slate-500 sm:col-span-2">
             When a provider is linked above, the DMT pipeline uses that provider's saved credentials
-            (e.g. JaiJui's mobile / API token / auth code from Add API). The fields below are only a
-            fallback for gateways that store their credentials on the DMT row itself.
+            (JaiJui's mobile / API token / auth code, Nexmint's client_id / client_secret / webhook
+            secret — all entered once in Add API). The fields below are only a fallback for gateways
+            that store their credentials on the DMT row itself.
           </p>
           <Input label="Username" value={d.UserName} leftIcon={<KeyRound className="size-4" />} placeholder="Provider API username" onChange={(e) => set({ UserName: e.target.value })} />
           <Input label="Wallet ID" value={d.WalletID} placeholder="Provider wallet / merchant id" onChange={(e) => set({ WalletID: e.target.value })} />
@@ -347,7 +348,7 @@ function EditModal({ draft, saving, onCancel, onSave }: {
 
         <Section title="Options">
           <CheckRow label="Allow NEFT" hint="Offer NEFT alongside IMPS" checked={d.IsNeft} onChange={(v) => set({ IsNeft: v })} />
-          <CheckRow label="Payout DMT" hint="Route through the payout rail" checked={d.IsPayoutDMT} onChange={(v) => set({ IsPayoutDMT: v })} />
+          <CheckRow label="Payout DMT" hint="Payout rail: no sender registration, no OTP. Required for Nexmint; leave off for pure DMT." checked={d.IsPayoutDMT} onChange={(v) => set({ IsPayoutDMT: v })} />
           <CheckRow label="Express DMT" hint="Faster settlement channel" checked={d.IsExpressDMT} onChange={(v) => set({ IsExpressDMT: v })} />
           <CheckRow label="Charge CCF" hint="Apply customer convenience fee" checked={d.IsCCF} onChange={(v) => set({ IsCCF: v })} />
           <CheckRow label="Active" hint="Available to the DMT pipeline" checked={d.IsActive} onChange={(v) => set({ IsActive: v })} />

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A standalone tester for the /api/v1/payout contract. Deliberately has NO reference to the
+    FintechApp project: it must prove that an outside integrator, with nothing but the published
+    scheme, can sign a request correctly. If this talks to the API, so can the partner.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PayoutApiTest</RootNamespace>
+    <AssemblyName>PayoutApiTest</AssemblyName>
+  </PropertyGroup>
+
+</Project>

@@ -39,7 +39,8 @@ namespace FintechApp.Providers
                         {
                             Credentials = JaiJuiProviderResolver.CredentialsFrom(provider),
                             ProviderID = provider.ProviderID,
-                            ProviderName = provider.ProviderName
+                            ProviderName = provider.ProviderName,
+                            Sequence = row.Sequence
                         };
                 }
 
@@ -53,7 +54,8 @@ namespace FintechApp.Providers
                             ApiToken = row.Token,    // API token          (KeyData header)
                             AuthCode = row.WalletID  // auth code          (request body)
                         },
-                        ProviderName = string.IsNullOrWhiteSpace(row.ProviderCode) ? row.Name : row.ProviderCode
+                        ProviderName = string.IsNullOrWhiteSpace(row.ProviderCode) ? row.Name : row.ProviderCode,
+                        Sequence = row.Sequence
                     };
             }
 

@@ -41,7 +41,7 @@ namespace FintechApp.Controllers
 
         [HttpPost("Outbox")]
         public Task<APIResponse> Outbox([FromForm] APIRequest apiRequest) =>
-            Handle<LedgerQueryRequest>(apiRequest, async (request, _) => Ok(await _ledger.GetOutbox(request.Status)));
+            Handle<LedgerQueryRequest>(apiRequest, async (request, _) => Ok(await _ledger.GetOutbox(request)));
 
         /// <summary>Record a business event for posting. Idempotent on its event key.</summary>
         [HttpPost("Enqueue")]

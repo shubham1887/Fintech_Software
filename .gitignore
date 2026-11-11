@@ -1,0 +1,27 @@
+# Build output of every .NET project (API, gateway libraries, tools/*).
+bin/
+obj/
+*.user
+.vs/
+
+# Self-contained API publishes made by deploy/Build-Release.ps1 and friends - artifacts, not source.
+deploy/publish-api-*/
+
+# Web build and TypeScript incremental state.
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Android / Kotlin daemon scratch.
+.kotlin/
+
+# Per-machine Claude Code state and worktrees.
+.claude/settings.local.json
+.claude/worktrees/
+
+# Per-install secrets (also covered by the folder-level ignores, kept here as a backstop).
+appsettings.Production.json
+fcm-service-account.json
+keystore.properties
+*.keystore
+*.jks

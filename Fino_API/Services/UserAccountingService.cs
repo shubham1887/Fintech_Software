@@ -23,11 +23,16 @@ namespace FintechApp.Services
         private readonly IUserWalletMasterRepository _userWalletRepo;
         private readonly IUserRepository _userRepo;
         private readonly IWalletMasterRepository _walletRepo;
+        // The TransactionDetails ledger — the only complete record of a wallet's balance over time.
+        private readonly ITransactionDetailsRepository _ledgerRepo;
         private readonly Logger _logger;
 
         // Through-type constants mirror LedgerService for cross-report consistency
-        private static readonly string[] PurchaseThrough = { "DIRECT_TRANSFER", "BY_REQUEST_TRANSFER", "PG-TRANSFER" };
-        private static readonly string[] ReverseThrough = { "DIRECT_REVERSE", "BY_REVERSE_REQUEST_TRANSFER" };
+        // Through values MUST match what FundService writes. "REQUEST_TRANSFER" and
+        // "REVERSE_REQUEST_TRANSFER" were "BY_"-prefixed here, a spelling nothing ever wrote, so every
+        // approved fund request / reverse request was excluded. See the note in TodaySummaryService.
+        private static readonly string[] PurchaseThrough = { "DIRECT_TRANSFER", "REQUEST_TRANSFER", "PG-TRANSFER" };
+        private static readonly string[] ReverseThrough = { "DIRECT_REVERSE", "REVERSE_REQUEST_TRANSFER" };
 
         // Accounting is kept for the roles that actually transact and hold a float. Matched on the
         // numeric UserTypeID, not the display name: UserTypeMaster stores "Retailer" while
@@ -45,7 +50,8 @@ namespace FintechApp.Services
             IUserBalanceHistoryRepository balHistoryRepo,
             IUserWalletMasterRepository userWalletRepo,
             IUserRepository userRepo,
-            IWalletMasterRepository walletRepo)
+            IWalletMasterRepository walletRepo,
+            ITransactionDetailsRepository ledgerRepo)
         {
             _txnRepo = txnRepo;
             _manualRepo = manualRepo;
@@ -54,6 +60,7 @@ namespace FintechApp.Services
             _userWalletRepo = userWalletRepo;
             _userRepo = userRepo;
             _walletRepo = walletRepo;
+            _ledgerRepo = ledgerRepo;
             _logger = new Logger();
         }
 
@@ -106,8 +113,17 @@ namespace FintechApp.Services
                     .ToList();
 
                 var manualAll = await _manualRepo.GetAll();
-                var balHistAll = await _balHistoryRepo.GetAll();
                 var walletBalAll = await _userWalletRepo.GetAll();
+
+                // Opening and closing come from the TransactionDetails ledger, where every posting
+                // stamps the balance before and after it. They used to be read from
+                // UserBalanceHistory — a table nothing in the running system writes — so Opening was
+                // 0 for every user and, on any past date, Closing was 0 too. That is what made this
+                // report's numbers wrong. One scan of the ledger for this wallet, grouped per user.
+                var walletLedger = (await _ledgerRepo.GetAll())
+                    .Where(e => !e.IsDeleted && e.WalletID == walletId)
+                    .GroupBy(e => e.UserID)
+                    .ToDictionary(g => g.Key, g => g.ToList());
 
                 // Manual adjustments: map TransactionMasterID → manual update (latest)
                 var manualByTxn = manualAll
@@ -135,21 +151,14 @@ namespace FintechApp.Services
                     // Adjustments from the reliable TransactionManualUpdate audit table (failed + manually adjusted)
                     var (oldAdj, newAdj) = await ComputeAdjustmentTotals(uid, walletId, dayStart, dayEnd, manualByTxn);
 
-                    decimal openingBal = balHistAll
-                        .Where(b => b.UserID == uid && b.WalletID == walletId && b.DateTime < dayStart)
-                        .OrderByDescending(b => b.DateTime)
-                        .Select(b => b.Balance)
-                        .FirstOrDefault();
+                    decimal liveBal = walletBalAll.Where(w => w.UserID == uid && w.WalletID == walletId).Sum(w => w.Balance);
+                    var dayBalance = LedgerBalances.ForDate(
+                        walletLedger.TryGetValue(uid, out var entries) ? entries : new List<Entities.TransactionDetails>(),
+                        dayStart,
+                        liveBal);
 
-                    decimal closingBal;
-                    if (isToday)
-                        closingBal = walletBalAll.Where(w => w.UserID == uid && w.WalletID == walletId).Sum(w => w.Balance);
-                    else
-                        closingBal = balHistAll
-                            .Where(b => b.UserID == uid && b.WalletID == walletId && b.DateTime < dayEnd)
-                            .OrderByDescending(b => b.DateTime)
-                            .Select(b => b.Balance)
-                            .FirstOrDefault();
+                    decimal openingBal = dayBalance.Opening;
+                    decimal closingBal = isToday ? liveBal : dayBalance.Closing;
 
                     decimal commissionAmount = retailerCommission - surcharge;
                     decimal totalCr = openingBal + purchase + oldAdj;

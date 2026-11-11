@@ -19,7 +19,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { StatTile } from '@/components/ui/StatTile';
+import { cn } from '@/lib/cn';
+import { StatTile, STAT_STRIP } from '@/components/ui/StatTile';
 import { DynamicTable } from '@/components/ui/DynamicTable';
 import { pickIcon } from '@/components/layout/iconMap';
 import type { CustomScreenProps } from './registry';
@@ -133,7 +134,7 @@ export function ProviderPerformanceScreen({ def }: CustomScreenProps) {
         }
       />
 
-      <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className={cn(STAT_STRIP, "grid-cols-2 lg:grid-cols-4")}>
         <StatTile label="Total transactions" value={num(totals.total)} icon={Activity} tone="bg-brand-50 text-brand-600" loading={isFetching} />
         <StatTile label="Successful" value={num(totals.success)} icon={CheckCircle2} tone="bg-success-50 text-success-600" loading={isFetching} />
         <StatTile label="Failed" value={num(totals.failed)} icon={XCircle} tone="bg-danger-50 text-danger-600" loading={isFetching} />

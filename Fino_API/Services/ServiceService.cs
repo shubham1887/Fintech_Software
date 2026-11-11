@@ -162,6 +162,37 @@ namespace FintechApp.Services
             return result > 0 ? StatusType.Ok : FintechApp.Messages.Common.Message.ExceptionOccured;
         }
 
+        /// <summary>
+        /// Save the admin's chosen display order for the whole service grid in one go.
+        ///
+        /// The order is what every client renders by — the web dashboard, the phone home screen
+        /// and the Android shell all read the same catalogue — so it is applied as one set, and a
+        /// row naming a service that no longer exists is skipped rather than failing the save:
+        /// the admin reordering a list should not be blocked by a service someone else deleted
+        /// while the screen was open.
+        /// </summary>
+        public async Task<string> UpdateServiceSequence(UpdateServiceSequenceRequest request)
+        {
+            if (request.Items == null || request.Items.Count == 0)
+                return FintechApp.Messages.ServiceMessages.InvalidValue;
+
+            var services = await _serviceRepository.GetAllServices();
+            var byId = services.ToDictionary(s => s.ServiceID);
+
+            int saved = 0;
+            foreach (var item in request.Items)
+            {
+                if (!byId.TryGetValue(item.ServiceID, out var service)) continue;
+                if (service.UISequence == item.UISequence) { saved++; continue; }
+
+                service.UISequence = item.UISequence;
+                service.UpdatedateTime = DateTime.UtcNow;
+                if (await _serviceRepository.Update(service) > 0) saved++;
+            }
+
+            return saved > 0 ? StatusType.Ok : FintechApp.Messages.Common.Message.ExceptionOccured;
+        }
+
         public async Task<string> DeleteService(int serviceId)
         {
             var service = await _serviceRepository.GetServiceById(serviceId);

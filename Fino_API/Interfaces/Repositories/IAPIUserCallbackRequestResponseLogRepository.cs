@@ -6,6 +6,7 @@ namespace FintechApp.Interfaces.Repositories
         Task<List<APIUserCallbackRequestResponseLog>> GetAll();
         Task<APIUserCallbackRequestResponseLog?> GetByID(int id);
         Task<List<APIUserCallbackRequestResponseLog>> GetByUserID(int userID);
+        Task<List<APIUserCallbackRequestResponseLog>> GetByTransaction(int transactionMasterID);
         Task<int> Insert(APIUserCallbackRequestResponseLog entity);
         Task<int> Update(APIUserCallbackRequestResponseLog entity);
         Task<int> Delete(int id);

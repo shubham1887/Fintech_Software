@@ -41,8 +41,9 @@ namespace FintechApp.Controllers
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
 
-            var (failMsg, wrapper) = await _cashCollectionService.OutstandingReport(req);
-            if (!string.IsNullOrEmpty(failMsg)) return ResponseProcess.GetFailResponse(failMsg);
+            var (failMsg, wrapper) = await _cashCollectionService.OutstandingReport(
+                req, keyDataModel.UserID, keyDataModel.UserTypeID);
+            if (!failMsg.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(failMsg);
             if (wrapper == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.DataNotFound);
             return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(wrapper));
         }
@@ -64,7 +65,7 @@ namespace FintechApp.Controllers
 
             int targetUserID = req.UserID > 0 ? req.UserID : keyDataModel.UserID;
             var (failMsg, data) = await _cashCollectionService.SelectUserOutstanding(targetUserID);
-            if (!string.IsNullOrEmpty(failMsg)) return ResponseProcess.GetFailResponse(failMsg);
+            if (!failMsg.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(failMsg);
             if (data == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.DataNotFound);
             return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(data));
         }

@@ -45,8 +45,30 @@ data class AppConfig(
     /** Support */
     val supportWhatsApp: String,
     val supportEmail: String,
-    val supportPhone: String
+    val supportPhone: String,
+
+    /**
+     * Push (Firebase Cloud Messaging).
+     *
+     * These four are the contents of the client's `google-services.json`, but read at RUN
+     * TIME from app-config.json instead of baked into the APK — one build serves every
+     * client, and switching push on for a new client is an edit to a JSON file on their own
+     * server rather than a rebuild and a Play Store release. Blank = push off; the app still
+     * works and alerts still arrive in the in-app bell.
+     */
+    val fcmProjectId: String,
+    /** The mobilesdk_app_id, e.g. "1:1234567890:android:abc123". */
+    val fcmAppId: String,
+    /** The Android API key (current_key) from the Firebase project. */
+    val fcmApiKey: String,
+    /** The project number / GCM sender id, e.g. "1234567890". */
+    val fcmSenderId: String
 ) {
+
+    /** True when there is enough here to talk to Firebase at all. */
+    fun pushConfigured(): Boolean =
+        fcmProjectId.isNotBlank() && fcmAppId.isNotBlank() &&
+            fcmApiKey.isNotBlank() && fcmSenderId.isNotBlank()
 
     companion object {
 
@@ -75,7 +97,12 @@ data class AppConfig(
                 maintenanceMessage = "",
                 supportWhatsApp = BuildConfig.SUPPORT_WHATSAPP,
                 supportEmail = BuildConfig.SUPPORT_EMAIL,
-                supportPhone = BuildConfig.SUPPORT_PHONE
+                supportPhone = BuildConfig.SUPPORT_PHONE,
+                // Push stays off until the hosted app-config.json supplies these four.
+                fcmProjectId = "",
+                fcmAppId = "",
+                fcmApiKey = "",
+                fcmSenderId = ""
             )
         }
 
@@ -127,7 +154,11 @@ data class AppConfig(
                 maintenanceMessage = str("maintenanceMessage", base.maintenanceMessage),
                 supportWhatsApp = str("supportWhatsApp", base.supportWhatsApp),
                 supportEmail = str("supportEmail", base.supportEmail),
-                supportPhone = str("supportPhone", base.supportPhone)
+                supportPhone = str("supportPhone", base.supportPhone),
+                fcmProjectId = str("fcmProjectId", base.fcmProjectId),
+                fcmAppId = str("fcmAppId", base.fcmAppId),
+                fcmApiKey = str("fcmApiKey", base.fcmApiKey),
+                fcmSenderId = str("fcmSenderId", base.fcmSenderId)
             )
         }
     }

@@ -1,0 +1,20 @@
+# Release packages built by Build-Release.ps1 - artifacts, not source.
+dist/
+
+# Per-installation settings written by docker/install.sh. This file holds the database password,
+# the JWT secret and the AES key for ONE client; it must never be committed or copied between
+# installations.
+docker/.env
+docker/panel-config.json
+docker/INSTALLATION-SUMMARY.txt
+
+# Build output of the graphical setup (gui/FinoSetup). Source only.
+gui/**/bin/
+gui/**/obj/
+
+# Android signing material. One keystore per client, kept forever - Android refuses to update an
+# app signed with a different key. Back these up somewhere other than a git repository.
+signing/
+
+# APKs dropped in for Build-Release to pick up. Build artifacts, not source.
+prebuilt-apk/*.apk

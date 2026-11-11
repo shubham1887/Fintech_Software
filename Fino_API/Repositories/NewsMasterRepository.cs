@@ -24,6 +24,7 @@ namespace FintechApp.Repositories
                 _context.NewsMasters
                     .AsNoTracking()
                     .Where(x => !x.IsDeleted)
+                    .Include(x => x.UserMaster)
                     .ToList()
             ) ?? new List<NewsMaster>();
         }

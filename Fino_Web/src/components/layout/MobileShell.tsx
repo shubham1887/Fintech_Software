@@ -2,25 +2,35 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  AlertTriangle, ChevronRight, History, Home, LogOut, MoreHorizontal, UserRound, Wallet, X,
+  AlertTriangle, ArrowLeftRight, ChevronRight, History, Home, LogOut, MoreHorizontal, UserRound,
+  Wallet, X,
 } from 'lucide-react';
 import { getMenu, type MenuNode } from '@/api/menu.api';
-import { getMyWallets } from '@/api/wallet.api';
 import { useAuth } from '@/features/auth/AuthContext';
+import { useLiveSummary } from '@/features/live/useLiveSummary';
 import { useBrand } from '@/theme/BrandProvider';
+import { useUISettings } from '@/theme/UISettingsProvider';
+import { headerStyleFor, type HeaderStyle, type TabStyle } from '@/theme/mobileLayouts';
 import { inr } from '@/lib/format';
 import { roleLabel } from '@/lib/roles';
 import { cn } from '@/lib/cn';
 import { haptic, setNativeStatusBar } from '@/lib/native';
 import { useBalanceMasked } from '@/lib/balanceMask';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { NewsBanner } from './NewsBanner';
 import { NotificationsBell } from './NotificationsBell';
+import { SystemDownBanner } from './SystemDownBanner';
+import { WorkQueueStrip } from './WorkQueueStrip';
 import { pickIcon } from './iconMap';
 import { resolveHref } from './resolveRoute';
-import { BrandGlyph } from '@/components/ui/BrandMark';
+import { BrandBadge } from '@/components/ui/BrandMark';
 
 /**
  * The console's phone layout — used inside the Android shell and on phone-sized browsers.
+ *
+ * The app bar treatment and the tab bar are driven by the layout preset the admin publishes
+ * (Settings → Appearance → Mobile app), resolved in `theme/mobileLayouts.ts`. That is what
+ * makes the Android UI changeable without shipping a new APK.
  *
  * Three decisions worth knowing:
  *
@@ -40,6 +50,7 @@ import { BrandGlyph } from '@/components/ui/BrandMark';
 export function MobileShell() {
   const [moreOpen, setMoreOpen] = useState(false);
   const location = useLocation();
+  const { mobileLayout } = useUISettings();
 
   // NOTE: AppShell already locks the document scroll while the console is mounted, so the
   // <main> below is the only scroll region and the tab bar stays pinned. Don't lock it here
@@ -59,36 +70,55 @@ export function MobileShell() {
 
   const onHome = location.pathname === '/dashboard';
 
+  // The `hero` balance block is full-bleed and bleeds UP into the app bar, so nothing may sit
+  // between it and the header. On that one layout the home page renders the work-queue strip
+  // and the news banner itself, directly under the hero — see MobileHomePage, which derives
+  // this from the same resolved layout so the two can never both draw them.
+  const heroHome = onHome && mobileLayout.showBalanceCard && mobileLayout.balanceStyle === 'hero';
+
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-canvas">
-      <MobileHeader showBalance={!onHome} />
+      {/* Home carries its own balance block, so the app bar strip would be the second copy —
+          unless the layout has the block switched off, in which case the strip IS the balance. */}
+      <MobileHeader
+        showBalance={!onHome || !mobileLayout.showBalanceCard}
+        headerStyle={mobileLayout.headerStyle}
+      />
 
       <main id="app-scroll" className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
         <div className="px-4 pb-28 pt-4">
+          {/* Same strip as the desktop console — a retailer's phone is where "is my fund request
+              approved yet?" actually gets asked. Horizontally scrollable, so a narrow handset
+              never has to wrap it onto a second line. */}
+          {/* Unconditional, even on the hero home: the counter operator is the person who will
+              otherwise try a recharge and be refused without being told why. */}
+          <SystemDownBanner className="mb-3" />
+          {!heroHome && <WorkQueueStrip className="mb-3" />}
+          {onHome && !heroHome && <NewsBanner className="mb-3" />}
           <Outlet />
         </div>
       </main>
 
-      <TabBar onMore={() => setMoreOpen(true)} moreActive={moreOpen} />
+      <TabBar onMore={() => setMoreOpen(true)} moreActive={moreOpen} tabStyle={mobileLayout.tabStyle} />
 
-      {moreOpen && <MoreSheet onClose={() => setMoreOpen(false)} />}
+      {moreOpen && <MoreSheet onClose={() => setMoreOpen(false)} headerStyle={mobileLayout.headerStyle} />}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ header */
 
-function MobileHeader({ showBalance }: { showBalance: boolean }) {
+function MobileHeader({ showBalance, headerStyle }: { showBalance: boolean; headerStyle: HeaderStyle }) {
   const { user } = useAuth();
   const { appName } = useBrand();
 
   const name = user?.PersonName?.trim() || user?.FirmName?.trim() || 'User';
 
   return (
-    <header className="shrink-0 text-[var(--ui-fore)]" style={{ backgroundColor: 'var(--ui-appbar)' }}>
+    <header className="shrink-0 text-[var(--ui-fore)]" style={headerStyleFor(headerStyle)}>
       <div className="flex h-14 items-center gap-3 px-4">
         <Link to="/profile" className="flex min-w-0 flex-1 items-center gap-2.5" onClick={() => haptic()}>
-          <BrandGlyph className="size-9 shrink-0 rounded-xl" />
+          <BrandBadge className="h-9 shrink-0 rounded-xl" />
           <span className="min-w-0">
             <span className="block truncate text-[14px] font-semibold leading-tight">{name}</span>
             <span className="block truncate text-[11px] leading-tight text-[var(--ui-fore)]/60">
@@ -110,24 +140,21 @@ function MobileHeader({ showBalance }: { showBalance: boolean }) {
  * full card lives — so this is a reminder, not a second control surface.
  */
 function BalanceBar() {
-  const { user } = useAuth();
-  const userId = user?.UserID ?? 0;
   const [masked] = useBalanceMasked();
 
-  const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['my-wallets', userId],
-    queryFn: () => getMyWallets(userId),
-    enabled: userId > 0,
-    refetchInterval: 30_000,
-    retry: 1,
-  });
+  // The shared live feed, not a poll of its own. This bar sits on EVERY mobile screen, so a
+  // private 30-second refresh here was, at a thousand users, the single most expensive thing the
+  // app did — and it duplicated what the header was already asking for.
+  const { summary, isLoading, error, refresh } = useLiveSummary();
+  const data = summary.wallets;
+  const isError = Boolean(error) || (!isLoading && !summary.walletsAvailable && data.length === 0);
 
   if (isError) {
-    // A failed read is never rendered as ₹0.00 — see getMyWallets.
+    // A failed read is never rendered as ₹0.00 — a wrong balance is worse than no balance.
     return (
       <button
         type="button"
-        onClick={() => refetch()}
+        onClick={() => refresh()}
         className="flex w-full items-center gap-1.5 border-t border-white/10 px-4 py-2 text-left"
       >
         <AlertTriangle className="size-3.5 shrink-0 text-amber-300" />
@@ -174,11 +201,47 @@ const TABS = [
   { to: '/s/Fund/Request', label: 'Fund', icon: Wallet },
 ] as const;
 
-function TabBar({ onMore, moreActive }: { onMore: () => void; moreActive: boolean }) {
+/**
+ * The bottom tabs, in the three shapes a preset can ask for:
+ *  - `labelled` icon + text (the default; clearest for a first-time retailer)
+ *  - `icons`    icon only, shorter bar — buys back a row of content on a small phone
+ *  - `floating` a detached pill, the look of a consumer payments app
+ */
+function TabBar({
+  onMore,
+  moreActive,
+  tabStyle,
+}: {
+  onMore: () => void;
+  moreActive: boolean;
+  tabStyle: TabStyle;
+}) {
+  const showLabels = tabStyle !== 'icons';
+  const floating = tabStyle === 'floating';
+
+  const itemClass = (active: boolean) =>
+    cn(
+      'flex flex-1 flex-col items-center gap-1 transition-colors',
+      showLabels ? 'py-2.5 text-[11px] font-medium' : 'py-3',
+      active ? 'text-brand-600' : 'text-slate-400',
+    );
+
   return (
     <nav
-      className="shrink-0 border-t border-slate-200 bg-white"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      className={cn(
+        'shrink-0',
+        floating
+          ? 'mx-3 rounded-2xl border border-slate-200/80 bg-white/95 shadow-pop backdrop-blur'
+          : 'border-t border-slate-200 bg-white',
+      )}
+      // A detached bar has to clear the gesture area itself — the safe-area inset is margin
+      // for it and padding for the attached bar, or the last row of tabs sits under the
+      // Android navigation pill.
+      style={
+        floating
+          ? { marginBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)' }
+          : { paddingBottom: 'env(safe-area-inset-bottom, 0px)' }
+      }
     >
       <div className="flex items-stretch">
         {TABS.map((t) => (
@@ -186,35 +249,21 @@ function TabBar({ onMore, moreActive }: { onMore: () => void; moreActive: boolea
             key={t.to}
             to={t.to}
             onClick={() => haptic()}
-            className={({ isActive }) =>
-              cn(
-                'flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-medium transition-colors',
-                isActive && !moreActive ? 'text-brand-600' : 'text-slate-400',
-              )
-            }
+            aria-label={t.label}
+            className={({ isActive }) => itemClass(isActive && !moreActive)}
           >
             {({ isActive }) => (
               <>
                 <t.icon className={cn('size-[22px]', isActive && !moreActive && 'stroke-[2.4]')} />
-                {t.label}
+                {showLabels && t.label}
               </>
             )}
           </NavLink>
         ))}
 
-        <button
-          type="button"
-          onClick={() => {
-            haptic();
-            onMore();
-          }}
-          className={cn(
-            'flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-medium transition-colors',
-            moreActive ? 'text-brand-600' : 'text-slate-400',
-          )}
-        >
+        <button type="button" onClick={() => { haptic(); onMore(); }} aria-label="More" className={itemClass(moreActive)}>
           <MoreHorizontal className={cn('size-[22px]', moreActive && 'stroke-[2.4]')} />
-          More
+          {showLabels && 'More'}
         </button>
       </div>
     </nav>
@@ -224,9 +273,14 @@ function TabBar({ onMore, moreActive }: { onMore: () => void; moreActive: boolea
 /* -------------------------------------------------------------- more sheet */
 
 /** Everything else the role may open — same menu tree the desktop sidebar renders. */
-function MoreSheet({ onClose }: { onClose: () => void }) {
-  const { user, signOut } = useAuth();
+function MoreSheet({ onClose, headerStyle }: { onClose: () => void; headerStyle: HeaderStyle }) {
+  const { user, signOut, profiles, switchProfile } = useAuth();
   const navigate = useNavigate();
+  const [switching, setSwitching] = useState(false);
+
+  // The other role this mobile number holds. Empty for everyone else, so the sheet is
+  // unchanged for them.
+  const otherProfiles = profiles.filter((p) => p.UserID !== user?.UserID);
   const { data, isLoading } = useQuery({ queryKey: ['menu'], queryFn: getMenu, staleTime: 300_000 });
 
   const sections = useMemo(() => (data ?? []).filter((n) => !/dashboard/i.test(n.name)), [data]);
@@ -236,7 +290,7 @@ function MoreSheet({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 z-50 flex flex-col bg-canvas animate-rise">
       <header
         className="flex h-14 shrink-0 items-center justify-between px-4 text-[var(--ui-fore)]"
-        style={{ backgroundColor: 'var(--ui-appbar)' }}
+        style={headerStyleFor(headerStyle)}
       >
         <span className="font-display text-base font-bold">Menu</span>
         <button type="button" onClick={onClose} aria-label="Close" className="-mr-2 grid size-10 place-items-center">
@@ -267,6 +321,44 @@ function MoreSheet({ onClose }: { onClose: () => void }) {
           </span>
           <ChevronRight className="size-5 shrink-0 text-slate-300" />
         </button>
+
+        {otherProfiles.length > 0 && (
+          <div className="mb-4 overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card">
+            <p className="px-4 pt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              Switch to
+            </p>
+            {otherProfiles.map((p) => (
+              <button
+                key={p.UserID}
+                type="button"
+                disabled={switching}
+                onClick={async () => {
+                  haptic('medium');
+                  setSwitching(true);
+                  try {
+                    // switchProfile lands on the dashboard itself; this only closes the sheet.
+                    const res = await switchProfile(p.UserID);
+                    if (res.ok) onClose();
+                  } finally {
+                    setSwitching(false);
+                  }
+                }}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-slate-50 disabled:opacity-60"
+              >
+                <span className="grid size-9 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-500">
+                  <ArrowLeftRight className="size-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-slate-800">
+                    {roleLabel(p.UserTypeID, p.UserType)}
+                  </span>
+                  <span className="block truncate text-xs text-slate-500">{p.FirmName}</span>
+                </span>
+                <ChevronRight className="size-5 shrink-0 text-slate-300" />
+              </button>
+            ))}
+          </div>
+        )}
 
         {isLoading ? (
           <p className="py-10 text-center text-sm text-slate-400">Loading menu…</p>

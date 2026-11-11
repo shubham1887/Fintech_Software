@@ -1,61 +1,166 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Pencil, Plus, Power, Radio, Signal, Trash2, Wifi } from 'lucide-react';
-import { exportToCsv } from '@/lib/csv';
-import { useClientSearch } from '@/lib/useClientSearch';
+import { fetchListPage } from '@/api/list.api';
+import { useCsvExport } from '@/lib/exportAll';
 import { getField as get } from '@/lib/row';
+import { inr } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { Card } from '@/components/ui/Card';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { StatTile } from '@/components/ui/StatTile';
-import { TableToolbar } from '@/components/ui/TableToolbar';
+import { StatTile, STAT_STRIP } from '@/components/ui/StatTile';
 import { Modal } from '@/components/ui/Modal';
 import { DynamicForm } from '@/components/ui/DynamicForm';
+import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
+import { ReportActions, ReportFilterBar, ReportTable, type ReportTableColumn } from '@/components/report';
 import { useCrud } from './useCrud';
 import type { CustomScreenProps } from './registry';
 
-const TILE_TONES = [
-  'bg-brand-500',
-  'bg-emerald-500',
-  'bg-amber-500',
-  'bg-rose-500',
-  'bg-violet-500',
-  'bg-sky-500',
-  'bg-cyan-500',
-  'bg-indigo-500',
-];
-function tileTone(seed: string) {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return TILE_TONES[h % TILE_TONES.length];
-}
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || 'OP';
-}
-function inr(v: unknown) {
+type Row = Record<string, unknown>;
+const str = (r: Row, k: string) => String(get(r, k) ?? '').trim();
+
+/** A number only counts as a limit when it is actually set — 0 means "no limit configured". */
+function limit(v: unknown) {
   const n = Number(v);
-  return Number.isFinite(n) && n > 0 ? `₹${n.toLocaleString('en-IN')}` : '—';
+  return Number.isFinite(n) && n > 0 ? inr(n) : '—';
 }
 
+/**
+ * Operator Details.
+ *
+ * This was a grid of cards showing an operator's name, opcode and recharge limits. Two problems:
+ * it never showed the SERVICE the operator belongs to — the one field that says what the operator
+ * actually is, and without which "Airtel" under Prepaid and "Airtel" under DTH are indistinguishable
+ * — and a card per operator meant a network with sixty operators could not be scanned or compared
+ * at all. It is now the same table every other admin list uses, with the service, the input rules
+ * (number length, prefix) and the limits side by side, plus filters for service and status.
+ */
 export function OperatorsScreen({ def }: CustomScreenProps) {
   const crud = def.crud;
   const { rows, isFetching, adding, setAdding, editing, setEditing, createMut, updateMut, deleteMut, toggleMut, onDelete } = useCrud(
     crud ?? { idField: 'OperatorID', list: { endpoint: 'Operator/GetAll', payload: {} } },
   );
-  const { query, setQuery, filtered } = useClientSearch(rows);
 
-  const stats = useMemo(() => {
-    const total = rows.length;
-    const active = rows.filter((r) => Boolean(get(r, 'IsActive'))).length;
-    const bbps = rows.filter((r) => Boolean(get(r, 'IsBBPS'))).length;
-    return { total, active, bbps };
-  }, [rows]);
+  const [serviceFilter, setServiceFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [search, setSearch] = useState('');
+  const [applied, setApplied] = useState({ service: '', status: '', search: '' });
+  const { exporting, runExport } = useCsvExport();
+
+  const services = useMemo(
+    () => Array.from(new Set(rows.map((r) => str(r, 'ServiceName')).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [rows],
+  );
+
+  /**
+    * The filter bar as one predicate. Written as a function rather than inline so the export can
+    * narrow the rows it fetches by exactly what the table is showing.
+    */
+  const matchesFilters = (r: Row) => {
+    const q = applied.search.toLowerCase();
+    if (applied.service && str(r, 'ServiceName') !== applied.service) return false;
+    if (applied.status === 'active' && !get(r, 'IsActive')) return false;
+    if (applied.status === 'off' && get(r, 'IsActive')) return false;
+    if (!q) return true;
+    return ['OperatorName', 'Opcode', 'ServiceName', 'Prefix', 'HSNCode']
+      .some((k) => str(r, k).toLowerCase().includes(q));
+  };
+
+  const filtered = useMemo(() => rows.filter(matchesFilters), [rows, applied]);
+
+  const stats = useMemo(() => ({
+    total: rows.length,
+    active: rows.filter((r) => Boolean(get(r, 'IsActive'))).length,
+    bbps: rows.filter((r) => Boolean(get(r, 'IsBBPS'))).length,
+  }), [rows]);
+
+  const runSearch = () => setApplied({ service: serviceFilter, status: statusFilter, search: search.trim() });
+  const reset = () => {
+    setServiceFilter(''); setStatusFilter(''); setSearch('');
+    setApplied({ service: '', status: '', search: '' });
+  };
 
   if (!crud) return null;
+
+  const columns: ReportTableColumn<Row>[] = [
+    { key: '_serial', label: '#', type: 'serial' },
+    {
+      key: 'OperatorName',
+      label: 'Operator',
+      render: (r) => (
+        <div className="flex items-center gap-2">
+          {Boolean(str(r, 'OperatorImagePath')) && (
+            <img
+              src={str(r, 'OperatorImagePath')}
+              alt=""
+              className="size-6 rounded object-contain"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+            />
+          )}
+          <span className="font-medium text-slate-800">{str(r, 'OperatorName') || '—'}</span>
+        </div>
+      ),
+    },
+    // The field the card grid never showed, and the reason two identically-named operators are
+    // not the same operator.
+    { key: 'ServiceName', label: 'Service' },
+    { key: 'Opcode', label: 'Opcode' },
+    {
+      key: 'IsActive',
+      label: 'Status',
+      render: (r) => <Badge tone={get(r, 'IsActive') ? 'success' : 'danger'}>{get(r, 'IsActive') ? 'Active' : 'Off'}</Badge>,
+    },
+    {
+      key: '_flags',
+      label: 'Flags',
+      render: (r) => {
+        const flags: string[] = [];
+        if (get(r, 'IsBBPS')) flags.push('BBPS');
+        if (get(r, 'IsBillFetch')) flags.push('Bill fetch');
+        if (get(r, 'IsDenominationApplicable')) flags.push('Denomination');
+        return flags.length === 0
+          ? <span className="text-slate-300">—</span>
+          : <span className="text-xs text-slate-600">{flags.join(' · ')}</span>;
+      },
+    },
+    { key: 'MinimumRechargeAmount', label: 'Min', align: 'right', render: (r) => <span className="tabular-nums">{limit(get(r, 'MinimumRechargeAmount'))}</span> },
+    { key: 'MaximumRechargeAmount', label: 'Max', align: 'right', render: (r) => <span className="tabular-nums">{limit(get(r, 'MaximumRechargeAmount'))}</span> },
+    { key: 'NumberLength', label: 'No. length', type: 'number', optional: true },
+    { key: 'Prefix', label: 'Prefix', optional: true },
+    { key: 'HSNCode', label: 'HSN', optional: true },
+    { key: 'RepeatRechargeInMinute', label: 'Repeat (min)', type: 'number', optional: true },
+    {
+      key: '_actions',
+      label: 'Actions',
+      render: (r) => (
+        <div className="flex items-center justify-end gap-1">
+          {crud.update && (
+            <Button variant="ghost" size="sm" loading={toggleMut.isPending} onClick={() => toggleMut.mutate(r)} title="Toggle active">
+              <Power className={cn('size-4', get(r, 'IsActive') ? 'text-success-600' : 'text-slate-400')} />
+            </Button>
+          )}
+          {crud.update && (
+            <Button variant="ghost" size="sm" onClick={() => setEditing(r)} title="Edit">
+              <Pencil className="size-4" />
+            </Button>
+          )}
+          {crud.remove && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-danger-600 hover:bg-danger-50"
+              loading={deleteMut.isPending}
+              onClick={() => onDelete(r)}
+              title="Delete"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ];
 
   return (
     <>
@@ -64,122 +169,55 @@ export function OperatorsScreen({ def }: CustomScreenProps) {
         subtitle={def.subtitle}
         icon={Radio}
         actions={
-          crud.create && (
-            <Button onClick={() => setAdding(true)}>
-              <Plus className="size-4" />
-              Add operator
-            </Button>
-          )
+          <ReportActions
+            total={filtered.length}
+            loading={isFetching}
+            exportLoading={exporting}
+            onExport={() => runExport({
+              filename: def.title,
+              onScreen: filtered,
+              fetchAll: (skip, take) => fetchListPage(crud.list.endpoint, crud.list.payload ?? {}, skip, take),
+              filter: (all) => all.filter(matchesFilters),
+            })}
+            exportDisabled={filtered.length === 0}
+          >
+            {crud.create && (
+              <Button size="sm" onClick={() => setAdding(true)}>
+                <Plus className="size-4" />
+                Add operator
+              </Button>
+            )}
+          </ReportActions>
         }
       />
 
-      <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-3">
+      <div className={cn(STAT_STRIP, "grid-cols-2 lg:grid-cols-3")}>
         <StatTile label="Total operators" value={stats.total} icon={Radio} tone="bg-brand-50 text-brand-600" loading={isFetching} />
         <StatTile label="Active" value={stats.active} icon={Signal} tone="bg-success-50 text-success-600" loading={isFetching} />
         <StatTile label="BBPS enabled" value={stats.bbps} icon={Wifi} tone="bg-info-50 text-info-600" loading={isFetching} />
       </div>
 
-      <TableToolbar query={query} onQuery={setQuery} count={filtered.length} onExport={() => exportToCsv(filtered, def.title)} />
+      <ReportFilterBar onSearch={runSearch} onReset={reset} loading={isFetching}>
+        <Select label="Service" value={serviceFilter} onChange={(e) => setServiceFilter(e.target.value)}>
+          <option value="">All services</option>
+          {services.map((s) => <option key={s} value={s}>{s}</option>)}
+        </Select>
+        <Select label="Status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="">All</option>
+          <option value="active">Active only</option>
+          <option value="off">Off only</option>
+        </Select>
+        <Input label="Search" placeholder="Name / opcode / prefix…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      </ReportFilterBar>
 
-      {isFetching ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Card key={i} className="p-4">
-              <Skeleton className="h-24 w-full" />
-            </Card>
-          ))}
-        </div>
-      ) : filtered.length === 0 ? (
-        <Card>
-          <EmptyState
-            icon={Radio}
-            title="No operators yet"
-            description="Add an operator to start routing recharges and bill payments."
-            action={
-              crud.create && (
-                <Button onClick={() => setAdding(true)}>
-                  <Plus className="size-4" />
-                  Add operator
-                </Button>
-              )
-            }
-          />
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filtered.map((r, i) => {
-            const name = String(get(r, 'OperatorName', 'Name') ?? '—');
-            const opcode = String(get(r, 'Opcode') ?? '');
-            const active = Boolean(get(r, 'IsActive'));
-            const bbps = Boolean(get(r, 'IsBBPS'));
-            const min = get(r, 'MinimumRechargeAmount');
-            const max = get(r, 'MaximumRechargeAmount');
-            return (
-              <Card key={i} className="group flex flex-col gap-3 p-4 transition-shadow hover:shadow-lg">
-                <div className="flex items-start gap-3">
-                  <span
-                    className={cn(
-                      'grid size-12 shrink-0 place-items-center rounded-xl text-base font-bold text-white shadow-sm',
-                      tileTone(name),
-                    )}
-                  >
-                    {initials(name)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold text-slate-800">{name}</p>
-                    {opcode && <p className="text-xs uppercase tracking-wide text-slate-400">{opcode}</p>}
-                  </div>
-                  <Badge tone={active ? 'success' : 'danger'}>{active ? 'Active' : 'Off'}</Badge>
-                </div>
-
-                <div className="flex flex-wrap gap-1.5">
-                  {bbps && <Badge tone="info">BBPS</Badge>}
-                  {Boolean(get(r, 'IsBillFetch')) && <Badge tone="neutral">Bill fetch</Badge>}
-                  {Boolean(get(r, 'IsDenominationApplicable')) && <Badge tone="warning">Denomination</Badge>}
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-2.5 text-sm">
-                  <div>
-                    <p className="text-xs text-slate-400">Min</p>
-                    <p className="font-medium text-slate-700">{inr(min)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-slate-400">Max</p>
-                    <p className="font-medium text-slate-700">{inr(max)}</p>
-                  </div>
-                </div>
-
-                <div className="mt-auto flex items-center justify-end gap-1 border-t border-slate-100 pt-2">
-                  {crud.update && (
-                    <Button variant="ghost" size="sm" loading={toggleMut.isPending} onClick={() => toggleMut.mutate(r)} title="Toggle active">
-                      <Power className={cn('size-4', active ? 'text-success-600' : 'text-slate-400')} />
-                      {active ? 'On' : 'Off'}
-                    </Button>
-                  )}
-                  {crud.update && (
-                    <Button variant="ghost" size="sm" onClick={() => setEditing(r)}>
-                      <Pencil className="size-4" />
-                      Edit
-                    </Button>
-                  )}
-                  {crud.remove && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-danger-600 hover:bg-danger-50"
-                      loading={deleteMut.isPending}
-                      onClick={() => onDelete(r)}
-                    >
-                      <Trash2 className="size-4" />
-                      Delete
-                    </Button>
-                  )}
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
+      <ReportTable
+        columns={columns}
+        rows={filtered}
+        loading={isFetching}
+        rowKey={(r, i) => String(get(r, 'OperatorID') ?? i)}
+        emptyTitle="No operators"
+        emptyDescription="Nothing matches these filters. Add an operator to start routing recharges and bill payments."
+      />
 
       {crud.create && (
         <Modal open={adding} onClose={() => setAdding(false)} title={`Add ${def.title}`} size="lg">

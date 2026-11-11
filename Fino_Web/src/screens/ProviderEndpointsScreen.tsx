@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Cable, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
 import { fetchList } from '@/api/list.api';
 import { getField } from '@/lib/row';
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Autocomplete } from '@/components/ui/Autocomplete';
+import { Modal } from '@/components/ui/Modal';
 import {
   KIND_BADGE, KIND_OPTIONS, PlaceholderChips, Pill, TemplateArea, ToggleDot,
   normalizeKind, useServices, type Row,
@@ -206,16 +207,17 @@ export function EndpointsPanel({ providerId }: { providerId: string }) {
         </div>
       </div>
 
-      {formOpen && (
-        <div className="mt-6 rounded-card border border-brand-200/70 bg-white p-5 shadow-card">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 font-display text-base font-bold text-slate-900">
-              <Cable className="size-4 text-brand-600" />
-              {form.ProviderDetailID ? 'Edit endpoint' : 'New endpoint'}
-            </h2>
-            <Button size="sm" variant="ghost" onClick={() => setFormOpen(false)}><X className="size-4" /></Button>
-          </div>
-
+      {/* Add / edit opens as a dialog rather than a panel appended under the table.
+          Below a full list of endpoints the panel was off-screen, so pressing "Add endpoint"
+          looked like it did nothing — and the provider Add form on the hub is already a dialog,
+          so the two halves of the same job now behave the same way. */}
+      <Modal
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        size="xl"
+        title={form.ProviderDetailID ? 'Edit endpoint' : 'New endpoint'}
+      >
+        <div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Autocomplete
               label="Service *"
@@ -270,12 +272,12 @@ export function EndpointsPanel({ providerId }: { providerId: string }) {
             </div>
           </div>
 
-          <div className="mt-4 flex justify-end gap-2">
+          <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
             <Button variant="secondary" onClick={() => setFormOpen(false)}>Cancel</Button>
             <Button loading={saveMut.isPending} onClick={onSave}>{form.ProviderDetailID ? 'Save changes' : 'Add endpoint'}</Button>
           </div>
         </div>
-      )}
+      </Modal>
     </>
   );
 }

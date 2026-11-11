@@ -15,7 +15,8 @@ namespace FintechApp.Interfaces.Services
         Task<List<OperatorSequenceGridResponse>> SelectByService(int serviceID);
         Task<string> InsertSequence(InsertOperatorSequenceRequest request);
         Task<string> BulkUpdate(List<BulkUpdateOperatorSequenceRequest> requests);
-        Task<List<SequenceProviderItemResponse>> SelectProviderForBulkSequence();
+        Task<List<SequenceProviderItemResponse>> SelectProviderForBulkSequence(int serviceID);
+        Task<List<SequenceServiceResponse>> SelectRoutableServices();
         Task<List<SequenceProviderDropdownResponse>> SelectForViewApiDropdown();
     }
 }

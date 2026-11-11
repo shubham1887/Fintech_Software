@@ -9,7 +9,7 @@ import {
   KYC_STATUS, type KycDocumentRow, type KycPolicyService, type KycUserRow,
 } from '@/api/kyc.api';
 import { imageUrl } from '@/api/catalog.api';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvDownload } from '@/lib/exportAll';
 import { useClientSearch } from '@/lib/useClientSearch';
 import { roleLabel, UserTypeCode } from '@/lib/roles';
 import { cn } from '@/lib/cn';
@@ -109,6 +109,7 @@ export function KycApprovalsScreen() {
 // ── Review queue ───────────────────────────────────────────────────────────────
 
 function ReviewQueue({ canDecide }: { canDecide: boolean }) {
+  const downloadCsv = useCsvDownload();
   const [status, setStatus] = useState<string>(KYC_STATUS.pending);
   const [role, setRole] = useState<number>(0);
   const [openUser, setOpenUser] = useState<number | null>(null);
@@ -207,7 +208,7 @@ function ReviewQueue({ canDecide }: { canDecide: boolean }) {
             variant="outline"
             size="sm"
             disabled={visible.length === 0}
-            onClick={() => exportToCsv(visible.map((r) => ({
+            onClick={() => downloadCsv(visible.map((r) => ({
               Name: r.PersonName,
               Firm: r.FirmName,
               Mobile: r.MobileNumber,

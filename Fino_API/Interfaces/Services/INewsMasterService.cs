@@ -6,6 +6,7 @@ namespace FintechApp.Interfaces.Services
     public interface INewsMasterService
     {
         Task<List<NewsResponse>> GetAll();
+        Task<List<NewsResponse>> GetPublished();
         Task<NewsResponse?> GetByID(int newsId);
         Task<string> Create(CreateNewsRequest request);
         Task<string> Update(UpdateNewsRequest request);

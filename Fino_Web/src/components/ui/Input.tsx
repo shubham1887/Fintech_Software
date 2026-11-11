@@ -71,11 +71,17 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           disabled={disabled}
           onKeyDown={handleKeyDown}
           className={cn(
-            'h-12 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-[15px] text-slate-800 shadow-sm',
-            'md:h-10 md:rounded-lg md:px-3 md:text-sm',
+            'h-12 w-full rounded-xl border border-slate-300 bg-white text-[15px] text-slate-800 shadow-sm',
+            'md:h-10 md:rounded-lg md:text-sm',
             'transition-colors placeholder:text-slate-400',
             'focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30',
-            leftIcon && 'pl-10',
+            // Horizontal padding is picked here rather than layered as "px-* … pl-*", because the
+            // two cannot be mixed safely across breakpoints: a responsive `md:px-*` lands in a
+            // media query, which the stylesheet emits AFTER the unprefixed `pl-*`, so the icon's
+            // reserved space silently collapsed on desktop and the placeholder ran under the icon.
+            // Keeping the cases mutually exclusive means no padding-left ever has to win a
+            // specificity race. The left values match the icon box (w-11 / md:w-10) exactly.
+            leftIcon ? 'pl-11 pr-3.5 md:pl-10 md:pr-3' : 'px-3.5 md:px-3',
             error && 'border-danger-500 focus:border-danger-500 focus:ring-danger-500/30',
             className,
           )}

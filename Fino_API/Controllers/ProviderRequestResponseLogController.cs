@@ -37,6 +37,21 @@ namespace FintechApp.Controllers
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 
+        // Filtered, paged provider log for the Provider Log screen. GetAll stays for callers that
+        // genuinely want everything (exports); the screen uses this so it stops downloading the
+        // entire request/response history on every visit.
+        [HttpPost("Search")] public async Task<APIResponse> Search([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel; SearchProviderRequestResponseLogRequest? request;
+            try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); request = JsonConvert.DeserializeObject<SearchProviderRequestResponseLogRequest>(_encryptDecrypt.Decrypt(apiRequest.Request)); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+            try { var data = await _service.Search(request); if (data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
+
         // Status-check / dispatch logs for one transaction — shows whether the recharge status
         // was re-checked against the provider, and when.
         [HttpPost("GetByTransaction")] public async Task<APIResponse> GetByTransaction([FromForm] APIRequest apiRequest)
@@ -47,7 +62,7 @@ namespace FintechApp.Controllers
             if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
-            try { var data = await _service.GetByTransaction(request.TransactionID); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
+            try { var data = await _service.GetByTransaction(request.TransactionID, keyDataModel.UserTypeID); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 

@@ -11,7 +11,8 @@ namespace FintechApp.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [JwtAuthorization]
+    // Provider routing & circle configuration decides where real money is sent — admin only.
+    [JwtAuthorization(FintechApp.StaticModels.UserTypeCode.Admin)]
     public class CircleAPIMasterController : ControllerBase
     {
         private readonly ICircleAPIMasterService _service;

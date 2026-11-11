@@ -12,6 +12,9 @@ namespace Fino.PlanApi.Messages
             public const string NumberRequired = "DTH/customer number is required.";
             public const string DthNumberRequired = "DTH customer/VC number is required.";
             public const string CacheNotRequired = "Plan data is fetched live per request; no cache refresh is required.";
+            public const string BillNumberRequired = "Bill / consumer number is required.";
+            public const string BillFetchFailed = "Bill details could not be fetched for this consumer number.";
+            public const string DistrictCodeUnavailable = "District codes are not available right now. Please try again later.";
         }
     }
 }

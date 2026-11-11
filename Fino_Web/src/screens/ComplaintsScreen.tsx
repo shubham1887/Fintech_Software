@@ -1,15 +1,15 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { subDays, format } from 'date-fns';
-import {
-  Check, X, MoreVertical, RefreshCw, SlidersHorizontal, ChevronDown,
-  RotateCcw, Download,
-} from 'lucide-react';
+import { Check, X, MoreVertical, Ban } from 'lucide-react';
+import { ReportActions, ReportFilterBar } from '@/components/report';
 import { apiPost } from '@/lib/apiClient';
 import { fetchList } from '@/api/list.api';
 import { getField } from '@/lib/row';
+import { loadSession } from '@/lib/storage';
 import { apiDate, inr, dateTime } from '@/lib/format';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvDownload } from '@/lib/exportAll';
+import { complaintBucket, canResolveComplaints, canCancelComplaint, type ComplaintBucket } from '@/lib/complaints';
 import { useToast } from '@/components/ui/Toast';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
@@ -25,21 +25,17 @@ import { pickIcon } from '@/components/layout/iconMap';
 import type { CustomScreenProps } from './registry';
 
 type Row = Record<string, unknown>;
-type Bucket = 'pending' | 'accept' | 'reject';
+type Bucket = ComplaintBucket;
 
 const USER_PAGE = { PageNumber: 1, PageSize: 1000, IsActive: true, TakeCount: 1000, SkipCount: 0 };
 const LIST_PAGE = { IsActive: true, PageNumber: 1, PageSize: 500 };
 
 /**
- * A complaint has exactly three states: pending (nobody decided yet), accept, or reject.
- * Legacy rows may carry SUCCESS/FAILED — fold those into accept/reject so the count is honest.
+ * A complaint is pending (nobody decided yet), accepted, rejected, or withdrawn by whoever raised
+ * it. Legacy rows carry SUCCESS/FAILED — `complaintBucket` folds those in, and it is the same
+ * mapping the API uses, so the tab counts here match what the server thinks.
  */
-function bucketOf(row: Row): Bucket {
-  const s = String(getField(row, 'ComplaintStatus') ?? '').toUpperCase().trim();
-  if (s === 'ACCEPT' || s === 'ACCEPTED' || s === 'SUCCESS') return 'accept';
-  if (s === 'REJECT' || s === 'REJECTED' || s === 'FAILED' || s === 'FAIL') return 'reject';
-  return 'pending';
-}
+const bucketOf = (row: Row): Bucket => complaintBucket(getField(row, 'ComplaintStatus'));
 
 /** Just the date part, e.g. "2026-07-07" — the API sends a full ".fffffff" timestamp we don't want. */
 function ymd(v: unknown): string {
@@ -72,10 +68,19 @@ const COLUMNS: { key: string; label: string }[] = [
  * Pending Recharge or Search if it still needs it.
  */
 export function ComplaintsScreen({ def }: CustomScreenProps) {
+  const downloadCsv = useCsvDownload();
   const toast = useToast();
   const qc = useQueryClient();
 
-  const [showFilters, setShowFilters] = useState(false);
+  // Who is looking decides which actions exist at all. Accept / Reject decide the dispute and
+  // Accept moves money, so they are Admin + Support only — the API refuses them for anyone else,
+  // and offering a button that always fails is worse than not offering it. Everyone else gets
+  // Cancel: withdrawing a complaint they raised themselves, which moves nothing.
+  const session = loadSession();
+  const userTypeId = Number(session?.user?.UserTypeID ?? 0);
+  const currentUserId = Number(session?.user?.UserID ?? 0);
+  const canResolve = canResolveComplaints(userTypeId);
+
   const [fromDate, setFromDate] = useState(apiDate(subDays(new Date(), 30)));
   const [toDate, setToDate] = useState(apiDate(new Date()));
   const [userId, setUserId] = useState('');
@@ -84,7 +89,7 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
   const [bucket, setBucket] = useState<Bucket>('pending');
 
   const [target, setTarget] = useState<Row | null>(null);
-  const [outcome, setOutcome] = useState<'ACCEPT' | 'REJECT' | ''>('');
+  const [outcome, setOutcome] = useState<'ACCEPT' | 'REJECT' | 'CANCEL' | ''>('');
   const [remark, setRemark] = useState('');
   const [busy, setBusy] = useState(false);
   const [logTarget, setLogTarget] = useState<Row | null>(null);
@@ -94,6 +99,7 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
     queryFn: () => fetchList('ComplaintMaster/GetAll', {}),
   });
   const { data: users = [] } = useQuery({
+    enabled: canResolve, // only the admin filter needs the user list — don't fetch it otherwise
     queryKey: ['complaint-users'], staleTime: 300_000,
     queryFn: () => fetchList('Users/Select', USER_PAGE),
   });
@@ -124,7 +130,7 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
   }, [rows, fromDate, toDate, userId, serviceId]);
 
   const counts = useMemo(() => {
-    const c = { pending: 0, accept: 0, reject: 0 };
+    const c: Record<Bucket, number> = { pending: 0, accept: 0, reject: 0, cancel: 0 };
     for (const r of baseRows) c[bucketOf(r)]++;
     return c;
   }, [baseRows]);
@@ -160,7 +166,7 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
   };
 
   const exportCsv = () =>
-    exportToCsv(
+    downloadCsv(
       shown.map((r) =>
         Object.fromEntries(
           COLUMNS.map((c) => [
@@ -176,18 +182,29 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
 
   const close = () => { setTarget(null); setOutcome(''); setRemark(''); };
 
+  // Cancel goes to its own endpoint, not Resolve: Resolve is the admin decision (and Accept there
+  // refunds the transaction), while Cancel only withdraws the complaint. Keeping them apart is what
+  // lets a retailer be given one without being given the other.
   async function submit() {
     if (!target || !outcome) return;
-    if (!remark.trim()) { toast.error('An admin remark is required.'); return; }
+    const cancelling = outcome === 'CANCEL';
+    if (!remark.trim()) { toast.error(cancelling ? 'Please say why you are withdrawing it.' : 'An admin remark is required.'); return; }
     setBusy(true);
     try {
-      const res = await apiPost('ComplaintMaster/Resolve', {
-        ComplaintMasterID: getField(target, 'ComplaintMasterID'),
-        ComplaintStatus: outcome,
-        AdminRemark: remark.trim(),
-      });
+      const res = cancelling
+        ? await apiPost('ComplaintMaster/Cancel', {
+            ComplaintMasterID: getField(target, 'ComplaintMasterID'),
+            Remark: remark.trim(),
+          })
+        : await apiPost('ComplaintMaster/Resolve', {
+            ComplaintMasterID: getField(target, 'ComplaintMasterID'),
+            ComplaintStatus: outcome,
+            AdminRemark: remark.trim(),
+          });
       if (!res.ok) { toast.error(res.message || 'Could not update the complaint.'); return; }
-      toast.success(`Complaint ${outcome === 'ACCEPT' ? 'accepted' : 'rejected'}.`);
+      toast.success(
+        cancelling ? 'Complaint withdrawn.' : `Complaint ${outcome === 'ACCEPT' ? 'accepted' : 'rejected'}.`,
+      );
       close();
       await qc.invalidateQueries({ queryKey: ['complaints'] });
     } catch (e) {
@@ -201,6 +218,7 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
     { key: 'pending', label: 'Pending', n: counts.pending },
     { key: 'accept', label: 'Accepted', n: counts.accept },
     { key: 'reject', label: 'Rejected', n: counts.reject },
+    { key: 'cancel', label: 'Withdrawn', n: counts.cancel },
   ];
 
   const cell = (row: Row, key: string): ReactNode => {
@@ -220,54 +238,28 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
         subtitle={def.subtitle}
         icon={pickIcon(def.title)}
         actions={
-          <Button variant="outline" size="sm" onClick={() => refetch()} loading={isFetching}>
-            <RefreshCw className="size-4" />
-            Refresh
-          </Button>
+          <ReportActions
+            total={shown.length}
+            loading={isFetching}
+            onRefresh={() => refetch()}
+            onExport={exportCsv}
+            exportDisabled={shown.length === 0}
+          />
         }
       />
 
+      {/* The same filter bar as every other report. Collapsed by default here, because the status
+          tabs below carry most of the day-to-day filtering and the queue is usually worked as-is. */}
+      <ReportFilterBar collapsible defaultOpen={false} onReset={resetFilters}>
+        <Input label="From date" type="date" max={toDate} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+        <Input label="To date" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+        {/* Only an admin sees more than their own complaints, so only an admin needs this. */}
+        {canResolve && <Autocomplete label="User" options={userOpts} value={userId} onChange={(v) => setUserId(String(v))} />}
+        <Autocomplete label="Service" options={serviceOpts} value={serviceId} onChange={(v) => setServiceId(String(v || '0'))} />
+        <Input label="Search" placeholder="Number / remark / operator…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      </ReportFilterBar>
+
       <Card className="overflow-hidden">
-        {/* Export + filter toggle */}
-        <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-3 border-b border-slate-100 px-5 py-3.5">
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={exportCsv} disabled={shown.length === 0}>
-              <Download className="size-4" />
-              Export
-            </Button>
-            <button
-              type="button"
-              onClick={() => setShowFilters((s) => !s)}
-              aria-expanded={showFilters}
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
-                showFilters ? 'border-brand-200 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50',
-              )}
-            >
-              <SlidersHorizontal className="size-3.5" />
-              Filters
-              <ChevronDown className={cn('size-3.5 transition-transform', showFilters && 'rotate-180')} />
-            </button>
-          </div>
-        </div>
-
-        {/* Collapsible filter drawer */}
-        {showFilters && (
-          <div className="grid grid-cols-1 gap-4 border-b border-slate-100 bg-slate-50/60 px-5 py-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Input label="From date" type="date" max={toDate} value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
-            <Input label="To date" type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
-            <Autocomplete label="User" options={userOpts} value={userId} onChange={(v) => setUserId(String(v))} />
-            <Autocomplete label="Service" options={serviceOpts} value={serviceId} onChange={(v) => setServiceId(String(v || '0'))} />
-            <Input label="Search" placeholder="Number / remark / operator…" value={search} onChange={(e) => setSearch(e.target.value)} />
-            <div className="flex items-end">
-              <Button type="button" variant="outline" onClick={resetFilters}>
-                <RotateCcw className="size-4" />
-                Reset filters
-              </Button>
-            </div>
-          </div>
-        )}
-
         {/* Status tabs */}
         <div className="flex gap-1 border-b border-slate-200 px-5 pt-3">
           {TABS.map((t) => (
@@ -315,6 +307,13 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
               ) : (
                 shown.map((row, i) => {
                   const pending = bucketOf(row) === 'pending';
+                  // Admin / Support decide (Accept refunds, Reject closes). Anyone else can only
+                  // withdraw a complaint they raised themselves.
+                  const showCancel = !canResolve && canCancelComplaint(
+                    { status: getField(row, 'ComplaintStatus'), ownerUserId: Number(getField(row, 'UserID') ?? 0) },
+                    currentUserId,
+                    userTypeId,
+                  );
                   return (
                     <tr key={String(getField(row, 'ComplaintMasterID') ?? i)} className="border-b border-slate-100 transition-colors last:border-0 hover:bg-slate-50/60">
                       {COLUMNS.map((c) => (
@@ -322,11 +321,14 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
                       ))}
                       <td className="whitespace-nowrap px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {pending && (
+                          {pending && canResolve && (
                             <>
                               <ActionBtn tone="approve" onClick={() => { setTarget(row); setOutcome('ACCEPT'); setRemark(''); }}><Check className="size-3.5" />Accept</ActionBtn>
                               <ActionBtn tone="reject" onClick={() => { setTarget(row); setOutcome('REJECT'); setRemark(''); }}><X className="size-3.5" />Reject</ActionBtn>
                             </>
+                          )}
+                          {showCancel && (
+                            <ActionBtn tone="neutral" onClick={() => { setTarget(row); setOutcome('CANCEL'); setRemark(''); }}><Ban className="size-3.5" />Cancel</ActionBtn>
                           )}
                           <IconBtn title="View request / response" onClick={() => setLogTarget(row)}>
                             <MoreVertical className="size-4" />
@@ -348,8 +350,12 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
         )}
       </Card>
 
-      {/* Accept / Reject */}
-      <Modal open={target !== null} onClose={close} title={outcome === 'REJECT' ? 'Reject complaint' : 'Accept complaint'}>
+      {/* Accept / Reject (admin + support) or Cancel (the user who raised it) */}
+      <Modal
+        open={target !== null}
+        onClose={close}
+        title={outcome === 'CANCEL' ? 'Withdraw complaint' : outcome === 'REJECT' ? 'Reject complaint' : 'Accept complaint'}
+      >
         <div className="space-y-4">
           <p className="text-sm text-slate-500">
             {target && (
@@ -363,26 +369,29 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
             {outcome === 'ACCEPT' ? (
               <>Accepting refunds the transaction amount to the user and debits back the commission
               credited to the distributor and super-distributor. This cannot be undone.</>
+            ) : outcome === 'CANCEL' ? (
+              <>Withdrawing takes this complaint off the queue. No money moves, and it cannot be
+              reopened — raise a new complaint if the issue comes back.</>
             ) : (
               <>This records the outcome of the complaint only. Rejecting moves no money.</>
             )}
           </p>
           <Input
-            label="Admin remark (required)"
-            placeholder="Why is this being accepted / rejected?"
+            label={outcome === 'CANCEL' ? 'Reason (required)' : 'Admin remark (required)'}
+            placeholder={outcome === 'CANCEL' ? 'Why are you withdrawing this complaint?' : 'Why is this being accepted / rejected?'}
             value={remark}
             onChange={(e) => setRemark(e.target.value)}
           />
           <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={close}>Cancel</Button>
+            <Button variant="outline" size="sm" onClick={close}>Close</Button>
             <Button
               size="sm"
-              variant={outcome === 'REJECT' ? 'danger' : 'primary'}
+              variant={outcome === 'REJECT' ? 'danger' : outcome === 'CANCEL' ? 'outline' : 'primary'}
               loading={busy}
               disabled={!remark.trim()}
               onClick={submit}
             >
-              {outcome === 'REJECT' ? 'Reject' : 'Accept'}
+              {outcome === 'CANCEL' ? 'Withdraw complaint' : outcome === 'REJECT' ? 'Reject' : 'Accept'}
             </Button>
           </div>
         </div>
@@ -430,18 +439,19 @@ export function ComplaintsScreen({ def }: CustomScreenProps) {
   );
 }
 
-/** Compact coloured pill button used for the row's Accept / Reject actions. */
-function ActionBtn({ tone, onClick, children }: { tone: 'approve' | 'reject'; onClick: () => void; children: ReactNode }) {
+/** Compact coloured pill button used for the row's Accept / Reject / Cancel actions. */
+function ActionBtn({ tone, onClick, children }: { tone: 'approve' | 'reject' | 'neutral'; onClick: () => void; children: ReactNode }) {
+  const TONES: Record<string, string> = {
+    approve: 'border-success-200 bg-success-50 text-success-700 hover:bg-success-100',
+    reject: 'border-danger-200 bg-danger-50 text-danger-600 hover:bg-danger-100',
+    // Withdrawing moves no money, so it is deliberately not dressed as a destructive action.
+    neutral: 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+  };
   return (
     <button
       type="button"
       onClick={onClick}
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors',
-        tone === 'approve'
-          ? 'border-success-200 bg-success-50 text-success-700 hover:bg-success-100'
-          : 'border-danger-200 bg-danger-50 text-danger-600 hover:bg-danger-100',
-      )}
+      className={cn('inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors', TONES[tone])}
     >
       {children}
     </button>

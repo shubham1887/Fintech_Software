@@ -18,6 +18,7 @@ namespace Fino.Pay1Api.Messages
             public const string BillFetched = "Bill details fetched.";
             public const string BalanceFetched = "Balance fetched.";
             public const string UnreadableResponse = "The bill payment provider returned an unreadable response.";
+            public const string TransactionNotInReply = "The provider's reply did not cover this transaction.";
         }
     }
 }

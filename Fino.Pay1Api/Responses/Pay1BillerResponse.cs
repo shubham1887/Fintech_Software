@@ -10,7 +10,11 @@ namespace Fino.Pay1Api.Responses
         public string Data { get; set; } = string.Empty;
         public List<Pay1Biller> Billers { get; set; } = new();
 
-        public static Pay1BillerResponse Fail(string message) => new() { Success = false, Message = message };
+        /// <summary>A failed catalogue read. Pass <paramref name="data"/> whenever the provider
+        /// actually answered: the host writes it to the provider log, and a dispute is far easier
+        /// to settle with Pay1's own words than with ours.</summary>
+        public static Pay1BillerResponse Fail(string message, string data = "") =>
+            new() { Success = false, Message = message, Data = data ?? string.Empty };
     }
 
     public class Pay1Biller
@@ -19,6 +23,11 @@ namespace Fino.Pay1Api.Responses
         public string ProductID { get; set; } = string.Empty;
 
         public string Name { get; set; } = string.Empty;
+
+        /// <summary>Biller category as the live API reports it — "Electricity", "Gas", "Water",
+        /// "Landline"… Not in the provider document, but it is what makes 450+ billers sortable
+        /// into our own operator/service masters instead of being classified by hand.</summary>
+        public string Category { get; set; } = string.Empty;
 
         /// <summary>Biller supports a live bill enquiry before payment.</summary>
         public bool BillFetch { get; set; }

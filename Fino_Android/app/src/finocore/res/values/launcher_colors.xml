@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The near-black field the artwork sits on. It fills the part of the launcher's 108dp canvas
+         that the phone's icon mask cuts away, so no seam shows around the tile. -->
+    <color name="launcher_background">#00060F</color>
+</resources>

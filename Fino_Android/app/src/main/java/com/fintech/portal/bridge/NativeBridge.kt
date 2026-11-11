@@ -21,6 +21,7 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import com.fintech.portal.BuildConfig
 import com.fintech.portal.config.ConfigStore
+import com.fintech.portal.push.PushManager
 import com.fintech.portal.util.SecureStore
 import com.fintech.portal.util.toColorOr
 import com.fintech.portal.util.toast
@@ -192,12 +193,54 @@ class NativeBridge(
             activity.runOnUiThread {
                 requestPermission(Manifest.permission.POST_NOTIFICATIONS) { granted ->
                     emit("notificationPermission", JSONObject().put("granted", granted))
+                    // Granting is the moment the token becomes worth having.
+                    if (granted) requestPushToken()
                 }
             }
         } else {
             emit("notificationPermission", JSONObject().put("granted", true))
+            requestPushToken()
         }
     }
+
+    // ---------------------------------------------------------------- push
+
+    /**
+     * Hand the site this device's FCM token.
+     *
+     * The console calls this on sign-in (see `lib/push.ts`) and posts the token to
+     * AppNotification/RegisterDevice. Until both halves existed the server had no address to
+     * push to at all — which is why "notification bhej rahe hain" and "Android par kuch nahi
+     * aata" were both true at the same time.
+     *
+     * Answers through the `native:pushToken` event rather than a return value: the token is
+     * fetched asynchronously and may not be in hand yet.
+     */
+    @JavascriptInterface
+    fun requestPushToken() {
+        if (!PushManager.isReady) {
+            // Tell the site explicitly rather than leaving it waiting for an event that will
+            // never come: push simply isn't configured for this client.
+            emit("pushToken", JSONObject().put("token", "").put("configured", false))
+            return
+        }
+
+        PushManager.fetchToken { token ->
+            emit(
+                "pushToken",
+                JSONObject()
+                    .put("token", token)
+                    .put("configured", true)
+                    .put("platform", "android")
+                    .put("device", Build.MANUFACTURER + " " + Build.MODEL)
+                    .put("appVersion", BuildConfig.VERSION_NAME)
+            )
+        }
+    }
+
+    /** Is push actually usable on this install (configured AND permitted)? */
+    @JavascriptInterface
+    fun pushAvailable(): Boolean = PushManager.isReady
 
     // ----------------------------------------------------------- biometric
 

@@ -135,7 +135,7 @@ namespace FintechApp.Controllers
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
 
-            var (failMsg, data) = await _reportService.Recharge(req, keyDataModel.UserID);
+            var (failMsg, data) = await _reportService.Recharge(req, keyDataModel.UserID, keyDataModel.UserTypeID);
             if (!string.IsNullOrEmpty(failMsg)) return ResponseProcess.GetFailResponse(failMsg);
             return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(data));
         }
@@ -155,7 +155,7 @@ namespace FintechApp.Controllers
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
 
-            var (failMsg, data) = await _reportService.Prepaid(req, keyDataModel.UserID);
+            var (failMsg, data) = await _reportService.Prepaid(req, keyDataModel.UserID, keyDataModel.UserTypeID);
             if (!string.IsNullOrEmpty(failMsg)) return ResponseProcess.GetFailResponse(failMsg);
             return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(data));
         }
@@ -175,7 +175,7 @@ namespace FintechApp.Controllers
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
 
-            var (failMsg, data) = await _reportService.AEPS(req, keyDataModel.UserID);
+            var (failMsg, data) = await _reportService.AEPS(req, keyDataModel.UserID, keyDataModel.UserTypeID);
             if (!string.IsNullOrEmpty(failMsg)) return ResponseProcess.GetFailResponse(failMsg);
             return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(data));
         }
@@ -195,7 +195,7 @@ namespace FintechApp.Controllers
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
 
-            var (failMsg, data) = await _reportService.MicroATM(req, keyDataModel.UserID);
+            var (failMsg, data) = await _reportService.MicroATM(req, keyDataModel.UserID, keyDataModel.UserTypeID);
             if (!string.IsNullOrEmpty(failMsg)) return ResponseProcess.GetFailResponse(failMsg);
             return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(data));
         }
@@ -215,7 +215,7 @@ namespace FintechApp.Controllers
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
 
-            var (failMsg, data) = await _reportService.CashDeposit(req, keyDataModel.UserID);
+            var (failMsg, data) = await _reportService.CashDeposit(req, keyDataModel.UserID, keyDataModel.UserTypeID);
             if (!string.IsNullOrEmpty(failMsg)) return ResponseProcess.GetFailResponse(failMsg);
             return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(data));
         }
@@ -235,7 +235,7 @@ namespace FintechApp.Controllers
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
 
-            var (failMsg, data) = await _reportService.LeadGeneration(req, keyDataModel.UserID);
+            var (failMsg, data) = await _reportService.LeadGeneration(req, keyDataModel.UserID, keyDataModel.UserTypeID);
             if (!string.IsNullOrEmpty(failMsg)) return ResponseProcess.GetFailResponse(failMsg);
             return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(data));
         }
@@ -455,7 +455,7 @@ namespace FintechApp.Controllers
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
 
-            var (failMsg, data) = await _reportService.Income(req, keyDataModel.UserID);
+            var (failMsg, data) = await _reportService.Income(req, keyDataModel.UserID, keyDataModel.UserTypeID);
             if (!string.IsNullOrEmpty(failMsg)) return ResponseProcess.GetFailResponse(failMsg);
             return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(data));
         }
@@ -563,6 +563,35 @@ namespace FintechApp.Controllers
 
         // DMT transactions still awaiting a final status.
         [HttpPost("SelectDMTPendingTransactionWithFilter")] public Task<APIResponse> SelectDMTPendingTransactionWithFilter([FromForm] APIRequest apiRequest) => Txn(apiRequest, _reportService.SelectDMTPendingTransactionWithFilter);
+
+        // The pending queue for ANY service kind - ServiceType names it (RECHARGE / DMT / BBPS /
+        // PAYOUT / AEPS / MATM / CASHDEPOSIT), blank for all of them. The two endpoints above are
+        // kept because the mobile app and the B2B integrations call them by name.
+        [HttpPost("SelectPendingByKind")] public Task<APIResponse> SelectPendingByKind([FromForm] APIRequest apiRequest) => Txn(apiRequest, _reportService.SelectPendingByKind);
+
+        // Which pending queues this install has, and what is waiting in each.
+        [HttpPost("SelectPendingQueues")]
+        public async Task<APIResponse> SelectPendingQueues([FromForm] APIRequest apiRequest)
+        {
+            TxnReportRequest? req;
+            KeyDataModel? keyDataModel;
+            try
+            {
+                keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData));
+                // The hub is legitimately opened with no filters at all.
+                string body = _encryptDecrypt.Decrypt(apiRequest.Request ?? string.Empty);
+                req = string.IsNullOrWhiteSpace(body) ? new TxnReportRequest() : JsonConvert.DeserializeObject<TxnReportRequest>(body);
+            }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+
+            var (failMsg, data) = await _reportService.SelectPendingQueues(
+                req ?? new TxnReportRequest(), keyDataModel.UserID, keyDataModel.UserTypeID);
+            if (!string.IsNullOrEmpty(failMsg)) return ResponseProcess.GetFailResponse(failMsg);
+            return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(data));
+        }
 
         [HttpPost("SelectDMTPending")] public async Task<APIResponse> SelectDMTPending([FromForm] APIRequest apiRequest) { KeyDataModel? keyDataModel; try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); } catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); } if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest); string fail = keyDataModel.IsValidModalState(); if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return await Task.FromResult(ResponseProcess.GetFailResponse("Feature under development.")); }
 

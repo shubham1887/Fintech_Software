@@ -1,78 +1,151 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { RefreshCw, Eye } from 'lucide-react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
+
 import { subDays } from 'date-fns';
+import { apiPost } from '@/lib/apiClient';
 import { fetchList } from '@/api/list.api';
 import { getField } from '@/lib/row';
 import { dateTime, apiDate } from '@/lib/format';
-import { useClientSearch } from '@/lib/useClientSearch';
+import { useCsvExport } from '@/lib/exportAll';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Button } from '@/components/ui/Button';
+import { ReportActions, ReportFilterBar, ReportPager } from '@/components/report';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { Autocomplete } from '@/components/ui/Autocomplete';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { Skeleton } from '@/components/ui/Skeleton';
-import { TableToolbar } from '@/components/ui/TableToolbar';
-import { Modal } from '@/components/ui/Modal';
-import { exportToCsv } from '@/lib/csv';
+import { Autocomplete, type AutocompleteOption } from '@/components/ui/Autocomplete';
+import { LogTable, type LogTableColumn } from '@/components/ui/LogTable';
 import { pickIcon } from '@/components/layout/iconMap';
 import type { CustomScreenProps } from './registry';
 
 type Row = Record<string, unknown>;
 const str = (v: unknown) => String(v ?? '');
 const PAGE = 25;
+const LIST_PAGE = { IsActive: true, PageNumber: 1, PageSize: 500 };
+const USER_PAGE = { PageNumber: 1, PageSize: 1000, IsActive: true, TakeCount: 1000, SkipCount: 0 };
 
-/** Distinct, sorted, non-empty values of a field across the rows — for the filter dropdowns. */
-function distinct(rows: Row[], key: string): string[] {
-  const set = new Set<string>();
-  for (const r of rows) {
-    const v = str(getField(r, key)).trim();
-    if (v) set.add(v);
-  }
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
+interface Filters {
+  fromDate: string;
+  toDate: string;
+  providerId: string;
+  serviceId: string;
+  userId: string;
+  through: string;
+  transactionId: string;
+  search: string;
+}
+
+const defaults = (): Filters => ({
+  fromDate: apiDate(subDays(new Date(), 7)),
+  toDate: apiDate(new Date()),
+  providerId: '0',
+  serviceId: '0',
+  userId: '',
+  through: '',
+  transactionId: '',
+  search: '',
+});
+
+interface LogPage {
+  rows: Row[];
+  count: number;
+  throughOptions: string[];
+}
+
+async function fetchLogs(f: Filters, skip: number, take: number, forExport = false): Promise<LogPage> {
+  const res = await apiPost<Record<string, unknown>>('ProviderRequestResponseLog/Search', {
+    FromDate: f.fromDate,
+    ToDate: f.toDate,
+    ProviderID: Number(f.providerId || 0),
+    ServiceID: Number(f.serviceId || 0),
+    UserID: Number(f.userId || 0),
+    TransactionID: Number(f.transactionId || 0),
+    Through: f.through,
+    Search: f.search,
+    SkipCount: skip,
+    TakeCount: take,
+    IsExcelDownload: forExport,
+  });
+  if (!res.ok || !res.data) return { rows: [], count: 0, throughOptions: [] };
+  const list = getField(res.data, 'list', 'List');
+  const opts = getField(res.data, 'ThroughOptions');
+  return {
+    rows: Array.isArray(list) ? (list as Row[]) : [],
+    count: Number(getField(res.data, 'Count', 'count') ?? 0),
+    throughOptions: Array.isArray(opts) ? (opts as string[]) : [],
+  };
 }
 
 /**
- * Provider Log — provider request/response records rendered as a clean table (user, provider,
- * service, through, IP, time). Raw ids are hidden and the long Request / Response payloads are
- * moved into a details dialog opened from the row's View button. Filter by Provider, Service type
- * and date range.
+ * Provider Log — every call we made to a provider and what it replied.
+ *
+ * Two things were wrong with it. The payloads — the whole point of the screen — lived behind a View
+ * button, one dialog per row, so you could never scan or compare calls; they are now in the table
+ * itself (see `LogTable`). And the filters ran in the browser over the entire log table, which was
+ * downloaded in full on every visit: a log that grows all day made the screen slower every day, and
+ * the filters only ever narrowed the slice that had already been fetched. Filtering, searching and
+ * paging now happen server-side, so the page loads the 25 rows it shows and nothing else.
  */
 export function ProviderLogScreen({ def }: CustomScreenProps) {
+  const [draft, setDraft] = useState<Filters>(defaults);
+  const [applied, setApplied] = useState<Filters>(draft);
   const [page, setPage] = useState(0);
-  const [provider, setProvider] = useState('');
-  const [service, setService] = useState('');
-  const [fromDate, setFromDate] = useState(apiDate(subDays(new Date(), 7)));
-  const [toDate, setToDate] = useState(apiDate(new Date()));
-  const [detail, setDetail] = useState<Row | null>(null);
+  const { exporting, runExport } = useCsvExport();
 
-  const { data: rows = [], isFetching, refetch } = useQuery({
-    queryKey: ['provider-log'],
-    queryFn: () => fetchList('ProviderRequestResponseLog/GetAll', {}),
+  const upd = (patch: Partial<Filters>) => setDraft((d) => ({ ...d, ...patch }));
+
+  const { data, isFetching, refetch } = useQuery({
+    queryKey: ['provider-log', applied, page],
+    queryFn: () => fetchLogs(applied, page * PAGE, PAGE),
+    placeholderData: keepPreviousData,
+  });
+  const rows = data?.rows ?? [];
+  const total = data?.count ?? 0;
+  const throughOptions = data?.throughOptions ?? [];
+
+  const { data: providers = [] } = useQuery({
+    queryKey: ['prov-opts'], staleTime: 300_000,
+    queryFn: () => fetchList('ProviderMaster/GetAll', LIST_PAGE),
+  });
+  const { data: services = [] } = useQuery({
+    queryKey: ['svc-opts'], staleTime: 300_000,
+    queryFn: () => fetchList('Service/GetAll', LIST_PAGE),
+  });
+  const { data: users = [] } = useQuery({
+    queryKey: ['user-opts'], staleTime: 300_000,
+    queryFn: () => fetchList('Users/Select', USER_PAGE),
   });
 
-  const providers = useMemo(() => distinct(rows, 'ProviderName'), [rows]);
-  const services = useMemo(() => distinct(rows, 'ServiceName'), [rows]);
+  const serviceOpts = useMemo<AutocompleteOption[]>(() => [
+    { value: '0', label: 'All services' },
+    ...services.map((s, i) => ({ value: String(getField(s, 'ServiceID') ?? i), label: str(getField(s, 'ServiceName', 'Name')) })),
+  ], [services]);
+  const userOpts = useMemo<AutocompleteOption[]>(() => [
+    { value: '', label: 'All entities' },
+    ...users.map((u, i) => ({
+      value: String(getField(u, 'UserMasterID', 'UserID') ?? i),
+      label: str(getField(u, 'FirmName', 'PersonName', 'Name')),
+      sublabel: str(getField(u, 'MobileNumber', 'Mobile')) || undefined,
+    })),
+  ], [users]);
 
-  // Provider + Service type + date-range filtering happens client-side over the loaded log.
-  const scoped = useMemo(() => {
-    const from = new Date(fromDate + 'T00:00:00').getTime();
-    const to = new Date(toDate + 'T23:59:59').getTime();
-    return rows.filter((r) => {
-      if (provider && str(getField(r, 'ProviderName')) !== provider) return false;
-      if (service && str(getField(r, 'ServiceName')) !== service) return false;
-      const raw = getField(r, 'DateTime');
-      const t = raw ? new Date(String(raw)).getTime() : NaN;
-      return Number.isNaN(t) ? true : t >= from && t <= to;
-    });
-  }, [rows, provider, service, fromDate, toDate]);
+  const runSearch = () => { setPage(0); setApplied(draft); };
+  const reset = () => { const d = defaults(); setDraft(d); setApplied(d); setPage(0); };
 
-  const { query, setQuery, filtered } = useClientSearch(scoped);
 
-  const paged = useMemo(() => filtered.slice(page * PAGE, page * PAGE + PAGE), [filtered, page]);
-  const total = filtered.length;
-  const to = Math.min((page + 1) * PAGE, total);
+  const columns: LogTableColumn<Row>[] = [
+    { label: 'Date / Time', render: (r) => <span className="whitespace-nowrap text-slate-500">{dateTime(str(getField(r, 'DateTime')))}</span> },
+    { label: 'Provider', render: (r) => <span className="font-medium text-slate-800">{str(getField(r, 'ProviderName')) || <Dash />}</span> },
+    { label: 'Entity', render: (r) => str(getField(r, 'UserName')) || <Dash /> },
+    { label: 'Service', render: (r) => str(getField(r, 'ServiceName')) || <Dash /> },
+    { label: 'Call type', render: (r) => str(getField(r, 'Through')) || <Dash /> },
+    {
+      label: 'Txn',
+      render: (r) => {
+        const id = Number(getField(r, 'TransactionID') ?? 0);
+        return id > 0 ? <span className="tabular-nums text-slate-600">{id}</span> : <Dash />;
+      },
+    },
+    { label: 'IP', render: (r) => <span className="tabular-nums text-slate-500">{str(getField(r, 'IPAddress')) || <Dash />}</span> },
+  ];
 
   return (
     <>
@@ -81,151 +154,73 @@ export function ProviderLogScreen({ def }: CustomScreenProps) {
         subtitle={def.subtitle}
         icon={pickIcon(def.title)}
         actions={
-          <Button variant="outline" size="sm" onClick={() => refetch()} loading={isFetching}>
-            <RefreshCw className="size-4" />
-            Refresh
-          </Button>
+          <ReportActions
+            total={total}
+            loading={isFetching}
+            onRefresh={() => refetch()}
+            exportLoading={exporting}
+            // The whole filtered log, not the 25 rows on screen — the payloads are the point of it.
+            onExport={() => runExport({
+              filename: 'Provider Log',
+              onScreen: rows,
+              fetchAll: (skip, take) => fetchLogs(applied, skip, take, true),
+              batch: 500,
+            })}
+            exportDisabled={total === 0}
+          />
         }
       />
-      {/* Filters — Provider, Service type, date range */}
-      <div className="mb-4 flex flex-wrap items-end gap-2">
-        <div className="w-52">
-          <Select label="Provider" value={provider} onChange={(e) => { setProvider(e.target.value); setPage(0); }}>
-            <option value="">All providers</option>
-            {providers.map((p) => <option key={p} value={p}>{p}</option>)}
-          </Select>
-        </div>
-        <div className="w-52">
-          <Autocomplete
-            label="Service type"
-            value={service}
-            options={[
-              { value: '', label: 'All services' },
-              ...services.map((s) => ({ value: s, label: s })),
-            ]}
-            onChange={(v) => { setService(String(v)); setPage(0); }}
-          />
-        </div>
-        <div className="w-40">
-          <Input label="From" type="date" max={toDate} value={fromDate} onChange={(e) => { setFromDate(e.target.value); setPage(0); }} />
-        </div>
-        <div className="w-40">
-          <Input label="To" type="date" value={toDate} onChange={(e) => { setToDate(e.target.value); setPage(0); }} />
-        </div>
-        {(provider || service) && (
-          <Button variant="outline" size="sm" onClick={() => { setProvider(''); setService(''); setPage(0); }}>Clear</Button>
-        )}
-      </div>
 
-      <TableToolbar query={query} onQuery={(v) => { setQuery(v); setPage(0); }} count={total} onExport={() => exportToCsv(filtered, 'Provider Log')} />
+      <ReportFilterBar onSearch={runSearch} onReset={reset} loading={isFetching}>
+            <Input label="From date" type="date" max={draft.toDate} value={draft.fromDate} onChange={(e) => upd({ fromDate: e.target.value })} />
+            <Input label="To date" type="date" value={draft.toDate} onChange={(e) => upd({ toDate: e.target.value })} />
+            <Select label="Provider" value={draft.providerId} onChange={(e) => upd({ providerId: e.target.value })}>
+              <option value="0">All providers</option>
+              {providers.map((p, i) => {
+                const id = String(getField(p, 'ProviderID') ?? i);
+                return <option key={id} value={id}>{str(getField(p, 'ProviderName', 'Name')) || id}</option>;
+              })}
+            </Select>
+            <Autocomplete label="Service" options={serviceOpts} value={draft.serviceId} onChange={(v) => upd({ serviceId: String(v || '0') })} />
+            <Autocomplete label="Entity / user" options={userOpts} value={draft.userId} onChange={(v) => upd({ userId: String(v) })} />
+            <Select label="Call type" value={draft.through} onChange={(e) => upd({ through: e.target.value })}>
+              <option value="">All call types</option>
+              {throughOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+            </Select>
+            <Input
+              label="Transaction ID"
+              placeholder="Exact id"
+              inputMode="numeric"
+              value={draft.transactionId}
+              onChange={(e) => upd({ transactionId: e.target.value.replace(/\D/g, '') })}
+            />
+            <Input
+              label="Search request / response"
+              placeholder="Reference no., error text, IP…"
+              value={draft.search}
+              onChange={(e) => upd({ search: e.target.value })}
+            />
+      </ReportFilterBar>
 
-      <div className="overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card">
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <th className="w-12 px-4 py-3 text-right">#</th>
-                <th className="px-4 py-3">User</th>
-                <th className="px-4 py-3">Provider</th>
-                <th className="px-4 py-3">Service</th>
-                <th className="px-4 py-3">Through</th>
-                <th className="px-4 py-3">IP</th>
-                <th className="px-4 py-3">Date / Time</th>
-                <th className="px-4 py-3 text-right">Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isFetching ? (
-                Array.from({ length: 8 }).map((_, r) => (
-                  <tr key={r} className="border-b border-slate-100 last:border-0">
-                    {Array.from({ length: 8 }).map((__, c) => (
-                      <td key={c} className="px-4 py-3"><Skeleton className="h-4 w-full max-w-[120px]" /></td>
-                    ))}
-                  </tr>
-                ))
-              ) : paged.length === 0 ? (
-                <tr>
-                  <td colSpan={8}>
-                    <EmptyState title="No provider logs" description="Nothing matches your search, or no provider calls have been logged yet." />
-                  </td>
-                </tr>
-              ) : (
-                paged.map((r, i) => {
-                  const serial = page * PAGE + i + 1;
-                  return (
-                    <tr key={i} className="border-b border-slate-100 transition-colors last:border-0 even:bg-slate-50/40 hover:bg-brand-50/40">
-                      <td className="px-4 py-3 text-right tabular-nums text-slate-400">{serial}</td>
-                      <td className="px-4 py-3 font-medium text-slate-800">{str(getField(r, 'UserName')) || <Dash />}</td>
-                      <td className="px-4 py-3 font-medium text-slate-800">{str(getField(r, 'ProviderName')) || <Dash />}</td>
-                      <td className="px-4 py-3 text-slate-600">{str(getField(r, 'ServiceName')) || <Dash />}</td>
-                      <td className="px-4 py-3 text-slate-600">{str(getField(r, 'Through')) || <Dash />}</td>
-                      <td className="whitespace-nowrap px-4 py-3 tabular-nums text-slate-500">{str(getField(r, 'IPAddress')) || <Dash />}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-500">{dateTime(str(getField(r, 'DateTime')))}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right">
-                        <Button variant="ghost" size="sm" onClick={() => setDetail(r)}>
-                          <Eye className="size-4" /> View
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-        {!isFetching && total > 0 && (
-          <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/40 px-4 py-2.5 text-xs text-slate-500">
-            <span>{page * PAGE + 1}–{to} of {total}</span>
-            {total > PAGE && (
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>Prev</Button>
-                <Button variant="outline" size="sm" disabled={to >= total} onClick={() => setPage((p) => p + 1)}>Next</Button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      <LogTable
+        columns={columns}
+        payloads={[
+          { label: 'Request', value: (r) => str(getField(r, 'Request')) },
+          { label: 'Response', value: (r) => str(getField(r, 'Response')) },
+        ]}
+        rows={rows}
+        loading={isFetching && rows.length === 0}
+        rowKey={(r, i) => String(getField(r, 'ProviderRequestResponseLogID') ?? `${page}-${i}`)}
+        startIndex={page * PAGE + 1}
+        emptyTitle="No provider logs"
+        emptyDescription="Nothing matches these filters, or no provider calls have been logged in this period."
+      />
 
-      <Modal open={Boolean(detail)} onClose={() => setDetail(null)} title="Provider request / response" size="lg">
-        {detail && (
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-              <Meta label="User" value={str(getField(detail, 'UserName'))} />
-              <Meta label="Provider" value={str(getField(detail, 'ProviderName'))} />
-              <Meta label="Service" value={str(getField(detail, 'ServiceName'))} />
-              <Meta label="Through" value={str(getField(detail, 'Through'))} />
-              <Meta label="IP" value={str(getField(detail, 'IPAddress'))} />
-              <Meta label="Date" value={dateTime(str(getField(detail, 'DateTime')))} />
-            </div>
-            <LogBlock label="Request Log" value={str(getField(detail, 'Request')) || '—'} />
-            <LogBlock label="Response Log" value={str(getField(detail, 'Response')) || '—'} />
-          </div>
-        )}
-      </Modal>
+      {total > 0 && <ReportPager page={page} pageSize={PAGE} total={total} loading={isFetching} onPage={setPage} />}
     </>
   );
 }
 
 function Dash() {
   return <span className="text-slate-300">—</span>;
-}
-
-function Meta({ label, value }: { label: string; value: string }) {
-  if (!value) return null;
-  return (
-    <span>
-      <span className="text-slate-400">{label}:</span> <span className="font-medium text-slate-800">{value}</span>
-    </span>
-  );
-}
-
-function LogBlock({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-      <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-700">
-        {value}
-      </pre>
-    </div>
-  );
 }

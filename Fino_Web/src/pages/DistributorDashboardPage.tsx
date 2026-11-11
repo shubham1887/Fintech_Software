@@ -9,12 +9,12 @@ import {
   History,
   Send,
   Users,
-  Wallet,
   RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
 import { getDashboard } from '@/api/dashboard.api';
-import { getMyWallets } from '@/api/wallet.api';
+import { useLiveWallets } from '@/features/live/useLiveSummary';
+import { useOutstandingPosition } from '@/features/live/useOutstandingPosition';
 import { useAuth } from '@/features/auth/AuthContext';
 import { apiDate, inr, num } from '@/lib/format';
 import { roleLabel, UserTypeCode } from '@/lib/roles';
@@ -32,7 +32,6 @@ export default function DistributorDashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const roleId = user?.UserTypeID ?? 0;
-  const userId = user?.UserID ?? 0;
   const isSuper = roleId === UserTypeCode.SuperDistributor;
 
   const [dateStr, setDateStr] = useState(() => apiDate(new Date()));
@@ -43,13 +42,11 @@ export default function DistributorDashboardPage() {
     queryFn: () => getDashboard(roleId, date),
     refetchInterval: 30_000, // auto-sync with the DB without a manual reload
   });
-  const wallets = useQuery({
-    queryKey: ['my-wallets', userId],
-    queryFn: () => getMyWallets(userId),
-    enabled: userId > 0,
-    refetchInterval: 30_000,
-    retry: 1,
-  });
+  // Balances come from the shared live feed — same numbers the header shows, no second poll.
+  const wallets = useLiveWallets();
+
+  // A distributor sits in the middle: they owe upwards and are owed from below.
+  const outstanding = useOutstandingPosition(true);
 
   const d = dash.data;
   const downline = d?.Downline ?? [];
@@ -132,6 +129,28 @@ export default function DistributorDashboardPage() {
             sub={`${num(d?.TransferCount)} today`}
             loading={dash.isLoading}
           />
+          {/* Both halves of the credit position, beside the wallets rather than in a panel of
+              their own: what this distributor owes upwards, and what their own downline owes
+              them. Never netted against each other — they are different debts to different
+              people. Each shows only when there is something to show. */}
+          {outstanding.payable > 0 && (
+            <Stat
+              label="My Outstanding"
+              value={inr(outstanding.payable)}
+              sub={outstanding.payableTo ? `Payable to ${outstanding.payableTo}` : 'Payable to your upline'}
+              tone="text-warning-600"
+              loading={outstanding.loading}
+            />
+          )}
+          {outstanding.receivable > 0 && (
+            <Stat
+              label="Outstanding"
+              value={inr(outstanding.receivable)}
+              sub={`${num(outstanding.accounts)} account${outstanding.accounts === 1 ? ' owes' : 's owe'} you`}
+              tone="text-warning-600"
+              loading={outstanding.loading}
+            />
+          )}
           <Stat label={`${teamLabel}`} value={num(downline.length)} sub={`${num(activeDownline)} active`} loading={dash.isLoading} />
         </CardBody>
       </Card>
@@ -145,6 +164,7 @@ export default function DistributorDashboardPage() {
           <Stat label="Surcharge" value={inr(d?.Surcharge)} loading={dash.isLoading} />
         </CardBody>
       </Card>
+
 
       {/* Main grid */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -272,7 +292,9 @@ const QUICK_LINKS: { title: string; to: string; icon: LucideIcon }[] = [
   { title: 'Fund Request', to: '/s/Fund/Request', icon: ArrowDownToLine },
   { title: 'My Users', to: '/s/Users', icon: Users },
   { title: 'Transaction History', to: '/transactions', icon: History },
-  { title: 'Downline Report', to: '/s/DownlineReport', icon: Wallet },
+  // No Downline Report link: that report is the platform operator's whole-network view and is
+  // Admin/Support-only now, so a distributor following this tile would have hit a blocked route.
+  // Their own network, with balances, is the team table further up this same dashboard.
   { title: 'Account Ledger', to: '/s/UserLedger', icon: BookOpenText },
 ];
 

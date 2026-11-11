@@ -81,7 +81,7 @@ namespace FintechApp.Controllers
             if (!fail.EqualsIgnoreCase(StatusType.Ok))
                 return ResponseProcess.GetFailResponse(fail);
 
-            var (failureMessage, data) = await _fundService.SelectByFilter(mainRequest, keyDataModel.UserID);
+            var (failureMessage, data) = await _fundService.SelectByFilter(mainRequest, keyDataModel.UserID, keyDataModel.UserTypeID);
             if (!failureMessage.EqualsIgnoreCase(StatusType.Ok))
                 return ResponseProcess.GetFailResponse(failureMessage);
 
@@ -111,7 +111,7 @@ namespace FintechApp.Controllers
             if (!fail.EqualsIgnoreCase(StatusType.Ok))
                 return ResponseProcess.GetFailResponse(fail);
 
-            var (failureMessage, data) = await _fundService.SelectHeaderWithRequestByFilter(mainRequest, keyDataModel.UserID);
+            var (failureMessage, data) = await _fundService.SelectHeaderWithRequestByFilter(mainRequest, keyDataModel.UserID, keyDataModel.UserTypeID);
             if (!failureMessage.EqualsIgnoreCase(StatusType.Ok))
                 return ResponseProcess.GetFailResponse(failureMessage);
 

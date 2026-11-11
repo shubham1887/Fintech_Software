@@ -4,7 +4,10 @@ using FintechApp.Helpers;
 using FintechApp.Interfaces.Services;
 using FintechApp.Requests;
 using FintechApp.Requests.Login;
+using FintechApp.Requests.TwoFactor;
+using FintechApp.Requests.User;
 using FintechApp.Responses;
+using FintechApp.Responses.Login;
 using FintechApp.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -63,10 +66,81 @@ namespace FintechApp.Controllers
             {
                 var (loginResponse, tokenResponse) = await _authService.Login(loginRequest);
 
-                if (loginResponse == null || tokenResponse == null)
+                if (loginResponse == null)
                     return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidCredentials);
 
+                // Password accepted, second step outstanding. This is a SUCCESS response carrying
+                // no tokens — reporting it as invalid credentials (which is what a null token used
+                // to mean here) would tell the user their own password was wrong.
+                if (tokenResponse == null)
+                {
+                    if (!loginResponse.IsTwoFA)
+                        return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidCredentials);
+
+                    string twoFaPayload = _encryptDecrypt.Encrypt(JsonConvert.SerializeObject(new
+                    {
+                        user = loginResponse,
+                        tokens = (TokenResponse?)null
+                    }));
+                    return ResponseProcess.GetSuccessResponse(twoFaPayload, Messages.TwoFactorMessages.Required);
+                }
+
                 // Combine user info and tokens
+                var combinedResponse = new
+                {
+                    user = loginResponse,
+                    tokens = tokenResponse
+                };
+
+                string encryptedResponse = _encryptDecrypt.Encrypt(JsonConvert.SerializeObject(combinedResponse));
+                return ResponseProcess.GetSuccessResponse(encryptedResponse, Messages.Common.Message.LoginSuccess);
+            }
+            catch (Exception ex)
+            {
+                _logger.Write(ex);
+                return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured);
+            }
+        }
+
+        /// <summary>
+        /// Second step of sign-in: mobile + password + the authenticator code (or a recovery code).
+        ///
+        /// Anonymous, like <see cref="Login"/> — there is no session yet. The credentials are
+        /// re-presented rather than the server keeping a half-built login, so nothing partial
+        /// exists to be stolen or to expire.
+        /// </summary>
+        [HttpPost("login-2fa")]
+        [AllowAnonymous]
+        public async Task<APIResponse> LoginTwoFactor([FromForm] APIRequest apiRequest)
+        {
+            TwoFactorLoginRequest? request;
+
+            try
+            {
+                request = JsonConvert.DeserializeObject<TwoFactorLoginRequest>(_encryptDecrypt.Decrypt(apiRequest.Request));
+            }
+            catch (Exception ex)
+            {
+                _logger.Write(ex);
+                return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured);
+            }
+
+            if (request == null)
+                return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            if (string.IsNullOrWhiteSpace(request.Code))
+                return ResponseProcess.GetFailResponse(Messages.TwoFactorMessages.CodeRequired);
+
+            request.IPAddress = IPAddressHelper.GetClientIPAddress(HttpContext);
+
+            try
+            {
+                var (loginResponse, tokenResponse) = await _authService.LoginWithTwoFactor(request);
+
+                // One message for a wrong password and a wrong code alike. Telling them apart
+                // would turn this endpoint into a way to confirm a password without the phone.
+                if (loginResponse == null || tokenResponse == null)
+                    return ResponseProcess.GetFailResponse(Messages.TwoFactorMessages.InvalidCode);
+
                 var combinedResponse = new
                 {
                     user = loginResponse,
@@ -172,6 +246,50 @@ namespace FintechApp.Controllers
                 return ResponseProcess.GetSuccessResponse(true.ToString(), "A new temporary password has been sent to your mobile number.");
             }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
+
+        /// <summary>
+        /// Continue as the other role this mobile number holds.
+        ///
+        /// Authenticated: the person is already signed in as their primary account and is
+        /// choosing which of their own logins to work as. The service checks the target really
+        /// is one of theirs before issuing anything.
+        /// </summary>
+        [HttpPost("SwitchProfile")]
+        [JwtAuthorization]
+        public async Task<APIResponse> SwitchProfile([FromForm] APIRequest apiRequest)
+        {
+            SwitchProfileRequest? request;
+            try { request = JsonConvert.DeserializeObject<SwitchProfileRequest>(_encryptDecrypt.Decrypt(apiRequest.Request)); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+
+            // Identity from the signed token, never from the body — the body only names the
+            // destination, and the service re-checks that it belongs to this person.
+            var userId = (int?)HttpContext.Items["UserId"];
+            if (userId == null || userId <= 0)
+                return ResponseProcess.GetUnauthorizedResponse(Messages.Common.Message.InvalidSession);
+
+            try
+            {
+                var (loginResponse, tokenResponse, failure) = await _authService.SwitchProfile(
+                    userId.Value, request.UserID, "Web", IPAddressHelper.GetClientIPAddress(HttpContext));
+
+                if (loginResponse == null || tokenResponse == null)
+                    return ResponseProcess.GetFailResponse(string.IsNullOrWhiteSpace(failure) ? Messages.Common.Message.Failed : failure);
+
+                string payload = _encryptDecrypt.Encrypt(JsonConvert.SerializeObject(new
+                {
+                    user = loginResponse,
+                    tokens = tokenResponse
+                }));
+                return ResponseProcess.GetSuccessResponse(payload, Messages.Common.Message.LoginSuccess);
+            }
+            catch (Exception ex)
+            {
+                _logger.Write(ex);
+                return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured);
+            }
         }
 
         /// <summary>

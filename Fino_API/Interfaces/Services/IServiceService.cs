@@ -9,6 +9,7 @@ namespace FintechApp.Interfaces.Services
         Task<List<ServiceResponse>> GetServices(GetServiceRequest request);
         Task<string> CreateService(CreateServiceRequest request);
         Task<string> UpdateService(UpdateServiceRequest request);
+        Task<string> UpdateServiceSequence(UpdateServiceSequenceRequest request);
         Task<string> DeleteService(int serviceId);
         Task<List<ServiceDropdownResponse>> GetServiceDropdown();
         Task<List<ServiceCatalogResponse>> GetServiceCatalog(bool includeHidden, int userID = 0);

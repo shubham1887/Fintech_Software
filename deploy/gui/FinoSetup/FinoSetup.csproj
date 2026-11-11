@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    FinoSetup.exe - the graphical front end for the deployment kit.
+
+    It does not reimplement the installation: it collects the answers, then runs the same
+    Setup.ps1 that the command line uses, and shows its output. One set of logic, two faces.
+
+    Published self-contained so the customer's server needs no .NET runtime - the same reason the
+    API is published that way. A GUI that cannot start because a runtime is missing would defeat
+    the entire point of this kit.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>FinoSetup</AssemblyName>
+    <RootNamespace>FinoSetup</RootNamespace>
+
+    <!-- The installer creates services, writes to Program Files-like folders and configures the
+         firewall, so it must be elevated from the start rather than failing halfway. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- WinForms designer files are not used; the UI is built in code so it can be reviewed in a
+         diff like everything else. -->
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Version>1.0.0</Version>
+    <Product>Fino Setup</Product>
+    <Company>Fino</Company>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>none</DebugType>
+    <!-- Trimming is not supported for Windows Forms; it silently removes types the designer-less
+         UI resolves by reflection. -->
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+</Project>

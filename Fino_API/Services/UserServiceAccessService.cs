@@ -15,19 +15,22 @@ namespace FintechApp.Services
         private readonly ISettingMasterRepository _settingRepository;
         private readonly IServiceRepository _serviceRepository;
         private readonly IVerificationDocumentConfigRepository _documentConfigRepository;
+        private readonly ISystemDowntimeService _downtime;
 
         public UserServiceAccessService(
             IUserServiceMappingRepository mappingRepository,
             IUserRepository userRepository,
             ISettingMasterRepository settingRepository,
             IServiceRepository serviceRepository,
-            IVerificationDocumentConfigRepository documentConfigRepository)
+            IVerificationDocumentConfigRepository documentConfigRepository,
+            ISystemDowntimeService downtime)
         {
             _mappingRepository = mappingRepository;
             _userRepository = userRepository;
             _settingRepository = settingRepository;
             _serviceRepository = serviceRepository;
             _documentConfigRepository = documentConfigRepository;
+            _downtime = downtime;
         }
 
         public async Task<Dictionary<int, bool>?> GetGrants(int userID)
@@ -67,6 +70,9 @@ namespace FintechApp.Services
                 Grants = await GetGrants(userID),
                 KycBlocked = await IsKycBlocked(user),
                 KycExemptServiceIDs = await KycExemptServiceIDs(),
+                // Admin and support returned above, so the window never closes on the two roles
+                // that have to be able to settle and repair things while the platform is down.
+                SystemDown = await _downtime.GetState(),
             };
         }
 
@@ -123,7 +129,14 @@ namespace FintechApp.Services
 
         public async Task<string> EnsureUsable(int userID, int serviceID)
         {
-            return Describe(await GetAccess(userID, serviceID));
+            // Resolved from the context rather than from GetAccess alone, so a maintenance refusal
+            // can quote the operator's own wording ("back at 02:00, DMT still running") instead of
+            // a generic sentence. Every other outcome has nothing configurable to say.
+            var context = await GetContext(userID);
+            var access = Resolve(context, serviceID);
+            return access == ServiceAccess.SystemDown
+                ? context.SystemDown.Message
+                : Describe(access);
         }
 
         /// <summary>Where a service stands given an already-loaded grant map (null = unrestricted).</summary>
@@ -145,6 +158,11 @@ namespace FintechApp.Services
             if (access != ServiceAccess.Granted) return access;
             if (context.KycBlocked && !context.KycExemptServiceIDs.Contains(serviceID))
                 return ServiceAccess.KycLocked;
+            // Last, because it is the most temporary of the three and the least about this user:
+            // a service they were never granted should not report itself as "down for
+            // maintenance", which would imply it is coming back.
+            if (context.SystemDown.Blocks(serviceID))
+                return ServiceAccess.SystemDown;
             return ServiceAccess.Granted;
         }
 
@@ -154,6 +172,9 @@ namespace FintechApp.Services
             ServiceAccess.Locked => "This service is locked for your account. Please contact your service provider.",
             ServiceAccess.NotGranted => "This service is not enabled for your account. Please contact your service provider.",
             ServiceAccess.KycLocked => "Your KYC is not approved yet. Complete your KYC from your profile to use this service.",
+            // Fallback wording only. Callers that can reach the resolved context (EnsureUsable)
+            // use the operator's configured message instead, which names the window.
+            ServiceAccess.SystemDown => StaticModels.SystemDownPolicy.DefaultMessage,
             _ => StatusType.Ok,
         };
 
@@ -162,6 +183,7 @@ namespace FintechApp.Services
         {
             ServiceAccess.Locked => "Locked by your service provider",
             ServiceAccess.KycLocked => "KYC pending",
+            ServiceAccess.SystemDown => "Under maintenance",
             _ => string.Empty,
         };
     }

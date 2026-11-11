@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Payout-as-DMT reference client. Deliberately references nothing of the platform's own code:
+    it must prove that an outside integrator, with only the published contract, can sign and send
+    correctly. If this works, the partner's own code can.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Finocore.Integration</RootNamespace>
+    <AssemblyName>PayoutAsDmtClient</AssemblyName>
+  </PropertyGroup>
+
+</Project>

@@ -38,5 +38,16 @@ namespace FintechApp.Entities
 
         [Column(TypeName = "varchar(max)")]
         public string SimCardDetails { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Where the device said it was, in decimal degrees. Kept as text because that is what
+        /// every client sends and because a blank here has to mean "not supplied" rather than
+        /// "0,0", which is a real place in the Atlantic.
+        /// </summary>
+        [Column(TypeName = "varchar(32)")]
+        public string Latitude { get; set; } = string.Empty;
+
+        [Column(TypeName = "varchar(32)")]
+        public string Longitude { get; set; } = string.Empty;
     }
 }

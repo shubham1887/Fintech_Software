@@ -55,6 +55,8 @@ const LOCAL_KEY = 'fino.theme.local';
 const LEGACY_PRESET_KEY = 'fino.theme';
 
 let configPreset: string | undefined;
+/** Per-client colours from config.json (installer-written, derived from the client's logo). */
+let configColors: { primary?: string; navbar?: string; appbar?: string } = {};
 /** Lowercased key → value map from UISetting/GetAll (set by UISettingsProvider). */
 let serverMap: Record<string, string> = {};
 
@@ -111,6 +113,16 @@ export function setConfigPreset(key: string | undefined): void {
   reapplyTheme();
 }
 
+/** Ship-time client colours (config.json). Only valid hex values are kept. */
+export function setConfigColors(c: { primary?: string; navbar?: string; appbar?: string }): void {
+  configColors = {
+    primary: hexFrom(c.primary),
+    navbar: hexFrom(c.navbar),
+    appbar: hexFrom(c.appbar),
+  };
+  reapplyTheme();
+}
+
 export function setServerTheme(map: Record<string, string>): void {
   serverMap = map;
   reapplyTheme();
@@ -155,6 +167,10 @@ export function resolveTheme(local: LocalTheme = readLocalTheme()): ResolvedThem
   } else if (hexFrom(srv('primarycolor'))) {
     primary = hexFrom(srv('primarycolor'));
     preset = configPreset && isPresetKey(configPreset) ? configPreset : DEFAULT_THEME;
+  } else if (configColors.primary) {
+    // The client's own colour, taken off their logo at install time.
+    primary = configColors.primary;
+    preset = isPresetKey(configPreset) ? configPreset : DEFAULT_THEME;
   } else if (isPresetKey(configPreset)) {
     preset = configPreset;
   }
@@ -171,8 +187,8 @@ export function resolveTheme(local: LocalTheme = readLocalTheme()): ResolvedThem
     preset,
     primary,
     hover: localBrand ? undefined : hexFrom(srv('primaryhovercolor')),
-    navbar: local.navbar ?? skin?.navbar ?? hexFrom(srv('navbarcolor')) ?? THEME_DEFAULTS.navbar,
-    appbar: local.appbar ?? skin?.appbar ?? hexFrom(srv('appbarcolor')) ?? THEME_DEFAULTS.appbar,
+    navbar: local.navbar ?? skin?.navbar ?? hexFrom(srv('navbarcolor')) ?? configColors.navbar ?? THEME_DEFAULTS.navbar,
+    appbar: local.appbar ?? skin?.appbar ?? hexFrom(srv('appbarcolor')) ?? configColors.appbar ?? THEME_DEFAULTS.appbar,
     fore: local.fore ?? skin?.fore ?? hexFrom(srv('forecolor')) ?? THEME_DEFAULTS.fore,
     secondary: local.secondary ?? hexFrom(srv('secondarycolor')) ?? THEME_DEFAULTS.secondary,
     reportFs: local.reportFs ?? sizeFrom(srv('reportfontsize')) ?? THEME_DEFAULTS.reportFs,

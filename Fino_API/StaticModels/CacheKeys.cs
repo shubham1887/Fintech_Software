@@ -258,5 +258,9 @@
         public const string AllTDSSections = "Cache_AllTDSSections";
         public const string AllTaxRules = "Cache_AllTaxRules";
         public const string AllPartyServiceRelationships = "Cache_AllPartyServiceRelationships";
+
+        // Which menu entries this install has chosen to hide. Read once per sidebar build and
+        // dropped on every write, so an admin sees a hide take effect immediately.
+        public const string AllMenuVisibility = "Cache_AllMenuVisibility";
     }
 }

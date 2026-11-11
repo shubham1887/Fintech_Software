@@ -3,6 +3,7 @@ using FintechApp.Helpers;
 using FintechApp.Interfaces.Repositories;
 using FintechApp.Interfaces.Services;
 using FintechApp.Requests.Credential;
+using FintechApp.Responses.Credential;
 using FintechApp.Responses.Login;
 using Newtonsoft.Json;
 
@@ -20,6 +21,7 @@ namespace FintechApp.Services
         private readonly ITokenRepository _tokenRepo;
         private readonly ISettingMasterRepository _settingRepo;
         private readonly IStateMasterRepository _stateRepo;
+        private readonly ITwoFactorService _twoFactorService;
         private readonly IMessageService _messageService;
         private readonly JwtTokenService _jwtTokenService;
         private readonly IHttpClientFactory _httpClientFactory;
@@ -45,6 +47,7 @@ namespace FintechApp.Services
             ITokenRepository tokenRepo,
             ISettingMasterRepository settingRepo,
             IStateMasterRepository stateRepo,
+            ITwoFactorService twoFactorService,
             IMessageService messageService,
             JwtTokenService jwtTokenService,
             IHttpClientFactory httpClientFactory,
@@ -60,6 +63,7 @@ namespace FintechApp.Services
             _tokenRepo = tokenRepo;
             _settingRepo = settingRepo;
             _stateRepo = stateRepo;
+            _twoFactorService = twoFactorService;
             _messageService = messageService;
             _jwtTokenService = jwtTokenService;
             _httpClientFactory = httpClientFactory;
@@ -128,12 +132,25 @@ namespace FintechApp.Services
                     return (StaticModels.StatusType.Ok, expiredResp);
                 }
 
-                // 7. 2FA check
+                // 7. 2FA check — demand the authenticator code before any token is issued.
+                //
+                // The flag alone is not enough to gate on. If it is ever set while no CONFIRMED
+                // enrolment exists (an older build, a hand-edited row), the account would be asked
+                // for a code that nothing on earth can generate — a permanent lockout with no
+                // self-service way out. So the enrolment is checked too, and a stale flag is
+                // cleared rather than enforced.
                 if (user.IsTwoFA)
                 {
-                    var twoFaResp = BuildLoginResponse(user);
-                    twoFaResp.IsTwoFA = true;
-                    return (StaticModels.StatusType.Ok, twoFaResp);
+                    var twoFaStatus = await _twoFactorService.Status(user.UserMasterID);
+                    if (twoFaStatus.IsEnabled)
+                    {
+                        var twoFaResp = BuildLoginResponse(user);
+                        twoFaResp.IsTwoFA = true;
+                        return (StaticModels.StatusType.Ok, twoFaResp);
+                    }
+
+                    await _userRepo.SetTwoFactorEnabled(user.UserMasterID, false);
+                    user.IsTwoFA = false;
                 }
 
                 // 8. OTP login check
@@ -179,10 +196,15 @@ namespace FintechApp.Services
                 if (user == null)
                     return ("Invalid user or password.", null);
 
-                // Validate TOTP — new API skips Google Auth library; accept any 6-digit code for now
-                // (Proper TOTP can be wired later)
+                // Verify the authenticator code (or a recovery code) against the user's enrolled
+                // secret. This used to accept ANY non-empty value, which made the second step
+                // worse than none: an account with IsTwoFA on advertised that it was protected
+                // while a single space in this field finished the sign-in.
                 if (string.IsNullOrWhiteSpace(request.TwoFAPasscode))
-                    return ("Invalid 2FA passcode.", null);
+                    return (Messages.TwoFactorMessages.CodeRequired, null);
+
+                if (!await _twoFactorService.VerifyForLogin(user.UserMasterID, request.TwoFAPasscode))
+                    return (Messages.TwoFactorMessages.InvalidCode, null);
 
                 // Insert trusted device
                 await _trustDeviceRepo.Insert(new TrustableDevice
@@ -256,7 +278,8 @@ namespace FintechApp.Services
                     user.UserTypeID ?? 0,
                     user.UserType?.UserType ?? string.Empty,
                     user.MobileNumber,
-                    user.EmailID);
+                    user.EmailID,
+                    user.SessionEpoch);
 
                 await _tokenRepo.CreateRefreshToken(user.UserMasterID, tokenResp.RefreshToken, tokenResp.JwtId, string.Empty, string.Empty, string.Empty);
 
@@ -291,6 +314,9 @@ namespace FintechApp.Services
                 string newPassword = OtpHelper.GetRandomPassword();
                 string hashPwd = _ed.HashPassword(newPassword);
                 user.PasswordHash = hashPwd;
+                // A new password must end the sessions opened with the old one, or resetting it
+                // because the account was compromised leaves whoever took it still signed in.
+                unchecked { user.SessionEpoch = user.SessionEpoch + 1; }
 
                 bool updated = await _userRepo.UpdateUser(user);
                 if (!updated) return "Password reset failed. Please try again.";
@@ -379,6 +405,8 @@ namespace FintechApp.Services
                 string newPassword = OtpHelper.GetRandomPassword();
                 user.PasswordHash = _ed.HashPassword(newPassword);
                 user.IsInitialPassword = true;
+                // See the note on the reset path above - the old password's sessions end here.
+                unchecked { user.SessionEpoch = user.SessionEpoch + 1; }
 
                 bool updated = await _userRepo.UpdateUser(user);
                 if (!updated) return "Password reset failed.";
@@ -428,6 +456,7 @@ namespace FintechApp.Services
 
                 user.PasswordHash = _ed.HashPassword(request.NewPassword);
                 user.IsInitialPassword = false;
+                unchecked { user.SessionEpoch = user.SessionEpoch + 1; }
 
                 bool updated = await _userRepo.UpdateUser(user);
                 if (!updated) return "Password update failed.";
@@ -461,6 +490,7 @@ namespace FintechApp.Services
                 if (user == null) return "Old password is incorrect.";
 
                 user.PasswordHash = _ed.HashPassword(request.NewPassword);
+                unchecked { user.SessionEpoch = user.SessionEpoch + 1; }
                 bool updated = await _userRepo.UpdateUser(user);
                 if (!updated) return "Password update failed.";
 
@@ -486,8 +516,96 @@ namespace FintechApp.Services
 
         public async Task<bool> Logout(int userId)
         {
-            try { return await _tokenRepo.RevokeAllUserTokens(userId); }
+            try
+            {
+                bool revoked = await _tokenRepo.RevokeAllUserTokens(userId);
+                // Revoking refresh tokens only stops the session being EXTENDED. The access token
+                // already issued is a signed JWT that keeps working until it expires, so the
+                // session generation has to move too - that is what actually ends it, in this tab
+                // and in every other one.
+                await _userRepo.BumpSessionEpoch(userId);
+                return revoked;
+            }
             catch (Exception ex) { _logger.Write(ex); return false; }
+        }
+
+        // ─── MPIN (transaction / app-open PIN) ────────────────────────────────
+        private const string MpinEnabledKey = "IsMpinEnabled";
+        private const string PwdTypeSetMpin = "SetMpin";
+
+        /// <summary>Global (Key Setting) requirement, OR — regardless of the global flag — a user
+        /// who opted themselves in. Either makes the MPIN effectively required for that user.</summary>
+        public async Task<MpinStatusResponse> GetMpinStatus(int userId)
+        {
+            var globalSetting = await _settingRepo.GetByKey(MpinEnabledKey);
+            bool globalOn = globalSetting != null && globalSetting.IsOn;
+            var user = await _userRepo.GetUserById(userId);
+            bool userOn = user != null && user.IsMpinEnabled;
+            bool isSet = user != null && !string.IsNullOrWhiteSpace(user.MpinHash);
+            return new MpinStatusResponse
+            {
+                GlobalEnabled = globalOn,
+                UserEnabled = userOn,
+                Required = globalOn || userOn,
+                IsSet = isSet,
+            };
+        }
+
+        public async Task<string> SetMpin(SetMpinRequest request, int userId, string ipAddress)
+        {
+            try
+            {
+                if (request.NewMpin != request.ConfirmMpin) return "MPIN and confirm MPIN do not match.";
+
+                var user = await _userRepo.GetUserById(userId);
+                if (user == null) return "User not found.";
+
+                bool alreadySet = !string.IsNullOrWhiteSpace(user.MpinHash);
+                // Replacing an existing MPIN must prove knowledge of the current one.
+                if (alreadySet)
+                {
+                    if (string.IsNullOrWhiteSpace(request.OldMpin)) return "Please enter your current MPIN.";
+                    if (!_ed.HashPassword(request.OldMpin).Equals(user.MpinHash, StringComparison.OrdinalIgnoreCase))
+                        return "Your current MPIN is incorrect.";
+                    if (request.OldMpin == request.NewMpin) return "New MPIN must be different from the current one.";
+                }
+
+                user.MpinHash = _ed.HashPassword(request.NewMpin);
+                // A user who sets an MPIN is opting in; the global Key Setting can still require it
+                // for everyone, but it can never be switched off below the user's own choice here.
+                user.IsMpinEnabled = request.Enable || user.IsMpinEnabled;
+
+                bool updated = await _userRepo.UpdateUser(user);
+                if (!updated) return "Could not save the MPIN.";
+
+                await _pwdHistoryRepo.Insert(new PasswordChangeHistory
+                {
+                    UserID = user.UserMasterID,
+                    IPAddress = ipAddress,
+                    Type = PwdTypeSetMpin
+                });
+
+                _ = _messageService.SendEventAsync("MPIN Changed", user.UserMasterID, user.MobileNumber,
+                    user.WhatsAppNumber, user.EmailID, null,
+                    fallbackSms: "Your MPIN has been " + (alreadySet ? "changed." : "set."));
+
+                return StaticModels.StatusType.Ok;
+            }
+            catch (Exception ex) { _logger.Write(ex); return "An exception occurred."; }
+        }
+
+        public async Task<string> VerifyMpin(VerifyMpinRequest request, int userId)
+        {
+            try
+            {
+                var user = await _userRepo.GetUserById(userId);
+                if (user == null) return "User not found.";
+                if (string.IsNullOrWhiteSpace(user.MpinHash)) return "No MPIN is set.";
+                if (!_ed.HashPassword(request.Mpin).Equals(user.MpinHash, StringComparison.OrdinalIgnoreCase))
+                    return "Incorrect MPIN.";
+                return StaticModels.StatusType.Ok;
+            }
+            catch (Exception ex) { _logger.Write(ex); return "An exception occurred."; }
         }
 
         // ─── FetchDetailsForPincode ───────────────────────────────────────────
@@ -549,7 +667,8 @@ namespace FintechApp.Services
                 user.UserTypeID ?? 0,
                 user.UserType?.UserType ?? string.Empty,
                 user.MobileNumber,
-                user.EmailID);
+                user.EmailID,
+                user.SessionEpoch);
 
             await _tokenRepo.CreateRefreshToken(user.UserMasterID, tokenResp.RefreshToken, tokenResp.JwtId, ipAddress, string.Empty, device);
 

@@ -55,7 +55,7 @@ namespace FintechApp.Controllers
 
             try
             {
-                var result = await _loginHistoryService.GetAll(request);
+                var result = await _loginHistoryService.GetAllForCaller(request, keyDataModel.UserID, keyDataModel.UserTypeID);
                 if (result == null || result.Count == 0)
                     return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound);
 

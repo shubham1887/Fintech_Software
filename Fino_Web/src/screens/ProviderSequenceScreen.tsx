@@ -11,11 +11,11 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { pickIcon } from '@/components/layout/iconMap';
-import { useServices } from './providerShared';
 import {
   bulkUpdateSequence,
   fetchBulkSequenceProviders,
   fetchProviderSequence,
+  fetchRoutableServices,
   fetchViewApiProviders,
   insertProviderSequence,
   type BulkUpdateRow,
@@ -29,7 +29,15 @@ interface RowState {
   serviceId: number;
   serviceName: string;
   viewProviderId: number;
-  providers: Array<{ providerId: number; providerName: string; count: number; active: boolean }>;
+  providers: Array<{
+    providerId: number;
+    providerName: string;
+    count: number;
+    active: boolean;
+    /** The operator is mapped to this provider. Without it, ticking the box routes nothing. */
+    hasRoute: boolean;
+    hasResponseRules: boolean;
+  }>;
   dirty: boolean;
 }
 
@@ -57,17 +65,48 @@ export function ProviderSequenceScreen({ def }: CustomScreenProps) {
   const [query, setQuery] = useState('');
   const [rows, setRows] = useState<RowState[]>([]);
 
-  const servicesQ = useServices();
+  // Only the services this screen can actually route. The generic Service/GetAll list put DMT,
+  // AEPS, Payout and the payment gateway in the picker — rails that route from their own
+  // screens — so picking one produced a grid that could be filled in and never took effect.
+  const servicesQ = useQuery({
+    queryKey: ['seq', 'routable-services'],
+    queryFn: fetchRoutableServices,
+    staleTime: 60_000,
+  });
+  /**
+   * Land on Prepaid Recharge.
+   *
+   * The screen opened on "Pick a service" and an empty grid every single time, and recharge is
+   * what it is opened for on most days. Prepaid Recharge by name when the catalogue has it,
+   * otherwise the first recharge service, otherwise the first routable one — so an install that
+   * renamed or removed it still lands somewhere useful instead of back on the empty state.
+   * Only ever applied once, while nothing is chosen, so it cannot fight the operator's own pick.
+   */
+  useEffect(() => {
+    if (serviceId !== '') return;
+    const rows = servicesQ.data ?? [];
+    if (rows.length === 0) return;
+
+    const name = (r: (typeof rows)[number]) => String(getField(r, 'Name', 'ServiceName') ?? '').toLowerCase();
+    const isRecharge = (r: (typeof rows)[number]) => String(getField(r, 'Family') ?? '') === 'RECHARGE';
+    const pick =
+      rows.find((r) => isRecharge(r) && name(r).includes('prepaid'))
+      ?? rows.find(isRecharge)
+      ?? rows[0];
+
+    setServiceId(String(getField(pick, 'ServiceID') ?? ''));
+  }, [servicesQ.data, serviceId]);
+
   const gridQ = useQuery({
     queryKey: ['seq', 'OperatorSequence/Select', serviceId],
     queryFn: () => fetchProviderSequence(Number(serviceId)),
     enabled: serviceId !== '',
   });
   const bulkProvidersQ = useQuery({
-    queryKey: ['seq', 'bulk-providers'],
-    queryFn: fetchBulkSequenceProviders,
+    queryKey: ['seq', 'bulk-providers', serviceId],
+    queryFn: () => fetchBulkSequenceProviders(Number(serviceId)),
     staleTime: 60_000,
-    enabled: criteria === 'AddSequence' || criteria === 'RemoveSequence',
+    enabled: serviceId !== '' && (criteria === 'AddSequence' || criteria === 'RemoveSequence'),
   });
   const viewApiQ = useQuery({
     queryKey: ['seq', 'viewapi-providers'],
@@ -88,6 +127,8 @@ export function ProviderSequenceScreen({ def }: CustomScreenProps) {
         providerName: String(getField(p as Record<string, unknown>, 'ProviderName') ?? ''),
         count: Number(getField(p as Record<string, unknown>, 'Count') ?? 0),
         active: Boolean(getField(p as Record<string, unknown>, 'IsActive')),
+        hasRoute: Boolean(getField(p as Record<string, unknown>, 'HasRoute')),
+        hasResponseRules: Boolean(getField(p as Record<string, unknown>, 'HasResponseRules')),
       })),
       dirty: false,
     }));
@@ -203,9 +244,17 @@ export function ProviderSequenceScreen({ def }: CustomScreenProps) {
             value={serviceId}
             options={(servicesQ.data ?? []).map((s) => {
               const id = String(getField(s, 'ServiceID') ?? '');
-              return { value: id, label: String(getField(s, 'Name', 'ServiceName') ?? id) };
+              const family = String(getField(s, 'Family') ?? '');
+              const operators = Number(getField(s, 'OperatorCount') ?? 0);
+              return {
+                value: id,
+                label: String(getField(s, 'Name', 'ServiceName') ?? id),
+                // The rail and the operator count, so it is obvious which pool a service draws
+                // its providers from before the grid loads.
+                sublabel: family ? `${family} · ${operators} operator${operators === 1 ? '' : 's'}` : undefined,
+              };
             })}
-            onChange={(v) => setServiceId(String(v))}
+            onChange={(v) => { setServiceId(String(v)); resetBulk(); }}
           />
 
           <Select
@@ -397,6 +446,32 @@ export function ProviderSequenceScreen({ def }: CustomScreenProps) {
                                 {p.providerName}
                               </span>
                             </label>
+                            {/*
+                              Both warnings are CHIPS, not sentences. This cell is one of a dozen
+                              across a wide grid and is only a few characters wide, so a paragraph
+                              here wraps to one letter per line and reads as damage. The chip says
+                              which problem it is; the tooltip says what to do about it.
+                            */}
+                            {p.active && !p.hasRoute && (
+                              <span
+                                className="mt-1 inline-block rounded bg-warning-50 px-1 py-0.5 text-[10px] font-semibold leading-none text-warning-700"
+                                title="Not mapped — this operator is not on the provider's Configuration tab, so nothing routes to it."
+                              >
+                                no route
+                              </span>
+                            )}
+                            {/* A provider whose answer cannot be read is skipped at dispatch, so a
+                                tick here does nothing. Worth flagging loudly: before this was
+                                caught, such a provider at the FRONT of a sequence held every
+                                transaction behind it as pending instead of moving to the next. */}
+                            {p.active && !p.hasResponseRules && (
+                              <span
+                                className="mt-1 inline-block rounded bg-danger-50 px-1 py-0.5 text-[10px] font-semibold leading-none text-danger-700"
+                                title="No response rules — this provider's reply cannot be read, so it is skipped and the next provider in the sequence is used. Add them on the provider's Response Rules tab."
+                              >
+                                no rules
+                              </span>
+                            )}
                             <input
                               type="number"
                               value={p.count}

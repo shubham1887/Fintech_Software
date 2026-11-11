@@ -18,6 +18,7 @@ namespace FintechApp.Services
         private readonly IUserRepository _userRepo;
         private readonly IMessageService _messageService;
         private readonly IMessageSettingRepository _messageSettingRepo;
+        private readonly IDmtGatewayModeService _mode;
         private readonly Logger _logger;
 
         private const string SenderRegistrationMsgType = "SenderRegistration";
@@ -35,8 +36,10 @@ namespace FintechApp.Services
             ISettingMasterRepository settingRepo,
             IUserRepository userRepo,
             IMessageService messageService,
-            IMessageSettingRepository messageSettingRepo)
+            IMessageSettingRepository messageSettingRepo,
+            IDmtGatewayModeService mode)
         {
+            _mode = mode;
             _senderRepo = senderRepo;
             _senderOtpRepo = senderOtpRepo;
             _beneficiaryRepo = beneficiaryRepo;
@@ -166,7 +169,7 @@ namespace FintechApp.Services
                 var all = await _senderRepo.GetAll();
                 var sender = all.FirstOrDefault(s => s.Mobile == request.Mobile);
                 if (sender == null) return ("Sender not registered.", null);
-                if (!sender.IsOTPVerified) return ("Sender OTP not verified.", null);
+                if (!sender.IsOTPVerified && !await _mode.IsPayoutDmt()) return ("Sender OTP not verified.", null);
 
                 decimal senderLimit = await GetSenderLimit(request.ProviderID);
                 decimal displayLimit = await GetShowLimit();
@@ -238,15 +241,15 @@ namespace FintechApp.Services
             {
                 try
                 {
-                    string msg = (setting?.SmsMessage ?? "Your OTP for sender registration is [OTP].")
-                        .Replace("[OTP]", otp).Replace("[FirmName]", sender.Name);
+                    string msg = FillOtpTokens(setting?.SmsMessage ?? "Your OTP for sender registration is {OTP}.", otp, sender.Name);
                     if (setting == null || setting.IsSMS)
                         await _messageService.SendOtpSmsAsync(userId, sender.Mobile, msg, setting?.TemplateID ?? string.Empty, SenderRegistrationMsgType);
 
                     if (setting?.IsWhatsUp == true)
                     {
-                        string wpMsg = (string.IsNullOrWhiteSpace(setting.WhatsUpMessage) ? setting.SmsMessage : setting.WhatsUpMessage)
-                            .Replace("[OTP]", otp).Replace("[FirmName]", sender.Name);
+                        string wpMsg = FillOtpTokens(
+                            string.IsNullOrWhiteSpace(setting.WhatsUpMessage) ? setting.SmsMessage : setting.WhatsUpMessage,
+                            otp, sender.Name);
                         await _messageService.SendWhatsAppAsync(userId, sender.Mobile, sender.Mobile, wpMsg, setting.TemplateID, SenderRegistrationMsgType);
                     }
                 }
@@ -254,8 +257,28 @@ namespace FintechApp.Services
             });
         }
 
+        /// <summary>
+        /// Fill the two event tokens this template has, in either spelling.
+        ///
+        /// This row is edited on the Message Settings screen, whose placeholder chips insert
+        /// {OTP} and {FirmName} — but only the bracket spelling was ever replaced here, so an admin
+        /// who used the chips sent customers the literal text "{OTP}" and no way to register.
+        /// The remaining tokens ({AppName}, {Date}, {SupportNo}) are filled further down by
+        /// MessageService.
+        /// </summary>
+        private static string FillOtpTokens(string template, string otp, string firmName) =>
+            (template ?? string.Empty)
+                .Replace("[OTP]", otp).Replace("{OTP}", otp)
+                .Replace("[FirmName]", firmName).Replace("{FirmName}", firmName);
+
         private async Task<bool> IsSenderOTPRequired()
         {
+            // A payout rail has no remitter registration to activate: the money leaves the
+            // platform's own float against the platform's own KYC. Verifying an OTP here would
+            // gate a transfer on a record no rail will ever be asked about. This overrides the
+            // DMTOTP Key Setting below.
+            if (await _mode.IsPayoutDmt()) return false;
+
             var setting = await _settingRepo.GetByKey(DmtOtpSettingKey);
             return setting == null || !setting.Value.Equals("BeneOnly", StringComparison.OrdinalIgnoreCase);
         }

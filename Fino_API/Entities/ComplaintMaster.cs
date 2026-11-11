@@ -51,6 +51,19 @@ namespace FintechApp.Entities
         [Column(TypeName = "varchar(100)")]
         public string? ReferenceNo { get; set; }
 
+        /// <summary>
+        /// The complaint number the UPSTREAM provider gave us when this complaint was forwarded to
+        /// them (JaiJui / Payin answer <c>{"Status":"SUCCESS","ComplaintID":"34669"}</c>).
+        ///
+        /// Its own column rather than a line in the admin remark, because it is the only handle
+        /// that exists for chasing the complaint with the vendor afterwards — in free text it
+        /// cannot be searched, filtered, or shown on the row where somebody needs to read it out
+        /// over the phone. Empty means it was never forwarded, or the forward failed; the remark
+        /// then says which.
+        /// </summary>
+        [Column(TypeName = "varchar(100)")]
+        public string? ProviderComplaintID { get; set; }
+
         public virtual UserMaster? UserMaster { get; set; }
         public virtual ServiceMaster? ServiceMaster { get; set; }
         public virtual OperatorMaster? OperatorMaster { get; set; }

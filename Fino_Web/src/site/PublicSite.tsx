@@ -24,12 +24,13 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
-import { fetchPublicPages, type WebsitePageRow } from '@/api/website.api';
+import { cachedPublicPages, fetchPublicPages, type WebsitePageRow } from '@/api/website.api';
 import { parseSections, type HeroSlide, type Section } from '@/site/sections';
 import { useBrand } from '@/theme/BrandProvider';
 import { loadSession } from '@/lib/storage';
 import { Spinner } from '@/components/ui/Spinner';
 import { cn } from '@/lib/cn';
+import { BrandLockup } from '@/components/ui/BrandMark';
 
 /** Icon names the builder offers for feature items. */
 const FEATURE_ICONS: Record<string, LucideIcon> = {
@@ -73,14 +74,28 @@ function hrefFor(p: WebsitePageRow): string {
  *  the pathname: "/" → home, "/about" → about, unknown → in-site not-found. */
 export default function PublicSite() {
   const { pathname } = useLocation();
-  const { appName, tagline, logoUrl } = useBrand();
+  const { appName } = useBrand();
   const [navOpen, setNavOpen] = useState(false);
   const authed = !!loadSession();
+
+  // Paint from the last-known copy, then correct it in the background.
+  //
+  // `initialData` with `initialDataUpdatedAt: 0` is the whole trick: React Query treats the
+  // cached pages as data it already has (so the body renders on the FIRST frame, with no
+  // spinner) but as infinitely stale (so it still refetches straight away). A returning
+  // visitor therefore sees /services immediately even when the API is cold, and an edit
+  // published in the Website Builder still lands on the very next load.
+  const seed = useMemo(() => cachedPublicPages() ?? undefined, []);
 
   const { data: pages = [], isLoading } = useQuery({
     queryKey: ['public-pages'],
     queryFn: fetchPublicPages,
     staleTime: 60_000,
+    initialData: seed,
+    initialDataUpdatedAt: seed ? 0 : undefined,
+    // The visitor is reading marketing copy, not watching a balance — refetching because they
+    // tabbed back to the window costs a request and can change nothing they are looking at.
+    refetchOnWindowFocus: false,
   });
 
   const segments = pathname.split('/').filter(Boolean);
@@ -107,18 +122,9 @@ export default function PublicSite() {
     <div className="min-h-screen bg-white font-sans text-slate-800">
       {/* ---------------------------------------------------------- navbar */}
       <header className="sticky top-0 z-40 border-b border-slate-100 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
-          <Link to="/" className="flex items-center gap-2.5">
-            {logoUrl ? (
-              <img src={logoUrl} alt={appName} className="size-9 rounded-xl object-contain" />
-            ) : (
-              <span className="grid size-9 place-items-center rounded-xl bg-brand-600 font-display text-lg font-extrabold text-white">
-                {appName.slice(0, 1).toUpperCase()}
-              </span>
-            )}
-            <span className="font-display text-lg font-bold text-slate-900">
-              {appName} <span className="text-sm font-medium uppercase tracking-widest text-slate-400">{tagline}</span>
-            </span>
+        <div className="mx-auto flex h-[4.75rem] max-w-6xl items-center gap-3 px-4 sm:px-6">
+          <Link to="/" className="flex items-center">
+            <BrandLockup tone="light" size="md" />
           </Link>
 
           <nav className="ml-auto hidden items-center gap-1 md:flex">

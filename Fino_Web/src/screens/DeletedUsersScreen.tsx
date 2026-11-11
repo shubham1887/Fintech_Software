@@ -4,7 +4,7 @@ import {
   Archive, Eye, Info, RefreshCw, RotateCcw, Trash2, Users,
 } from 'lucide-react';
 import { fetchUsers, restoreUser, type UserRow } from '@/api/users.api';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvDownload } from '@/lib/exportAll';
 import { useClientSearch } from '@/lib/useClientSearch';
 import { roleLabel, UserTypeCode } from '@/lib/roles';
 import { inr, dateOnly, dateTime } from '@/lib/format';
@@ -33,6 +33,7 @@ import {
  * never the same as putting them live.
  */
 export function DeletedUsersScreen() {
+  const downloadCsv = useCsvDownload();
   const qc = useQueryClient();
   const toast = useToast();
   const { user: me } = useAuth();
@@ -114,7 +115,7 @@ export function DeletedUsersScreen() {
         query={query}
         onQuery={setQuery}
         count={visible.length}
-        onExport={() => exportToCsv(visible.map(userExportRow), 'Deleted users')}
+        onExport={() => downloadCsv(visible.map(userExportRow), 'Deleted users')}
       />
 
       <Card className="overflow-hidden">

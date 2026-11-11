@@ -18,6 +18,13 @@ namespace FintechApp.Interfaces.Services
         // admin); other services keep the legacy net-commission posting.
         Task<bool> IsRechargeService(int serviceID);
 
+        // Services whose commissions settle through the balanced chain double-entry: every downline
+        // commission is credited to the downline AND debited from the admin that funds it. Recharge
+        // and DMT. Asked by the money engine when it posts those legs and by LedgerIntegrityService
+        // when it checks that none is missing — two places that must agree on the same set, or the
+        // integrity check reports a break on a service that was never meant to have the leg.
+        Task<bool> IsChainFundedService(int serviceID);
+
         Task<HashSet<int>> GetAEPSServiceIDs();
 
         Task<HashSet<int>> GetMicroATMServiceIDs();

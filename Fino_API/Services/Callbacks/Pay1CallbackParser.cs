@@ -21,7 +21,8 @@ namespace FintechApp.Services.Callbacks
 
         public bool CanHandle(ProviderMaster provider) => Pay1ProviderResolver.IsPay1(provider.ProviderName);
 
-        public ProviderCallbackParseResult Parse(ProviderMaster provider, IDictionary<string, string> values, string rawBody)
+        public ProviderCallbackParseResult Parse(ProviderMaster provider, IDictionary<string, string> values, string rawBody,
+            IDictionary<string, string> headers)
         {
             var push = _pay1.ParseCallback(values, rawBody, Pay1ProviderResolver.CredentialsFrom(provider));
             if (!push.Verified) return ProviderCallbackParseResult.Reject(push.Message);

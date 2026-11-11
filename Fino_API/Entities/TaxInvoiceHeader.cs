@@ -139,6 +139,13 @@ namespace FintechApp.Entities
         /// as an ordinary sale and lose its other half.</summary>
         public int? ExchangePartnerLegID { get; set; }
 
+        /// <summary>Purchase side only: the provider and wallet this supplier bill funded, so the
+        /// three-way reconciliation can line up what we PAID the provider (the wallet top-up)
+        /// against what the supplier BILLED us (this document) against what they FILED (2B). Null
+        /// on a sale, and on a purchase that is not a provider wallet top-up.</summary>
+        public int? ProviderID { get; set; }
+        public int? WalletID { get; set; }
+
         [Column(TypeName = "varchar(500)")]
         public string Remark { get; set; } = string.Empty;
 

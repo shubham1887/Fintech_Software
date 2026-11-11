@@ -4,7 +4,7 @@ import { ArrowLeftRight, Scale, Search, TrendingUp } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
 import { inr, apiDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvDownload } from '@/lib/exportAll';
 import { currentFyRange } from '@/lib/gstDocs';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardBody } from '@/components/ui/Card';
@@ -47,6 +47,7 @@ interface RegisterResult {
 const money = (v: number) => inr(v);
 
 export function ExchangeRegisterScreen({ def }: CustomScreenProps) {
+  const downloadCsv = useCsvDownload();
   const fy = currentFyRange();
   const [from, setFrom] = useState(fy.from);
   const [to, setTo] = useState(fy.to);
@@ -67,7 +68,7 @@ export function ExchangeRegisterScreen({ def }: CustomScreenProps) {
   const rows = data?.Rows ?? [];
 
   const exportRows = () =>
-    exportToCsv(
+    downloadCsv(
       rows.map((r) => ({
         Partner: r.PartnerName,
         GSTIN: r.PartnerGSTIN,

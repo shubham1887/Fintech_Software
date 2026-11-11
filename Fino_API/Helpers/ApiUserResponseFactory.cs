@@ -23,7 +23,21 @@ namespace FintechApp.Helpers
             if (ec.Length > 0)
             {
                 if (ec.StartsWith("AUTH_", StringComparison.Ordinal)) return ApiUserStatusCode.Unauthorized;
+                // A bad signature / stale timestamp / replayed nonce is a credential failure, not a
+                // typo: it must read as 401-class so an integrator's retry logic never treats it as
+                // a recoverable validation slip.
+                if (ec.StartsWith("SEC_", StringComparison.Ordinal)) return ApiUserStatusCode.Unauthorized;
                 if (ec.StartsWith("VAL_", StringComparison.Ordinal)) return ApiUserStatusCode.InvalidRequest;
+                if (ec == ApiUserErrorCode.SenderNotFound || ec == ApiUserErrorCode.BeneficiaryNotFound)
+                    return ApiUserStatusCode.NotFound;
+                // Remaining DMT_* codes are business declines of a step that never became a
+                // transaction — unverified sender/beneficiary, a rejected flow step.
+                if (ec.StartsWith("DMT_", StringComparison.Ordinal)) return ApiUserStatusCode.InvalidRequest;
+                // PAYOUT_* means the platform cannot serve the request at all (no payout service
+                // configured) — our problem, not a bad parameter, so it reads as a system fault
+                // and the integrator's retry logic treats it as transient rather than re-sending
+                // a "corrected" request that would fail identically.
+                if (ec.StartsWith("PAYOUT_", StringComparison.Ordinal)) return ApiUserStatusCode.SystemError;
                 if (ec == ApiUserErrorCode.TransactionNotFound) return ApiUserStatusCode.NotFound;
                 if (ec == ApiUserErrorCode.SystemError) return ApiUserStatusCode.SystemError;
                 if (ec == ApiUserErrorCode.TransactionRejected) return ApiUserStatusCode.Failed;

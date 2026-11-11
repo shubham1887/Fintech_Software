@@ -1,4 +1,5 @@
 ﻿using FintechApp.Authorization;
+using System.Linq;
 using FintechApp.Helpers;
 using FintechApp.Interfaces.Services;
 using FintechApp.Requests;
@@ -25,6 +26,12 @@ namespace FintechApp.Controllers
             _encryptDecrypt = new EncryptDecrypt(configuration["Encryption:Key"] ?? string.Empty, configuration["Encryption:IV"] ?? string.Empty);
         }
 
+        // A payout beneficiary is a bank account money is actually sent to, saved by one retailer.
+        // Admin/support run the network; everyone else is scoped to their own rows so no merchant
+        // can list, read, edit or delete another's payout accounts. (See BeneficiaryController.)
+        private static bool SeesAll(KeyDataModel k) =>
+            k.UserTypeID == StaticModels.UserTypeCode.Admin || k.UserTypeID == StaticModels.UserTypeCode.SupportUser;
+
         [HttpPost("GetAll")] public async Task<APIResponse> GetAll([FromForm] APIRequest apiRequest)
         {
             KeyDataModel? keyDataModel;
@@ -33,7 +40,7 @@ namespace FintechApp.Controllers
             if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
-            try { var data = await _service.GetAll(); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
+            try { var data = await _service.GetAll(); if (data != null && !SeesAll(keyDataModel)) data = data.Where(x => x.UserID == keyDataModel.UserID).ToList(); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 
@@ -45,7 +52,8 @@ namespace FintechApp.Controllers
             if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
-            try { var data = await _service.GetByUserID(request.UserID); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
+            int scopeUserId = SeesAll(keyDataModel) ? request.UserID : keyDataModel.UserID;
+            try { var data = await _service.GetByUserID(scopeUserId); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 
@@ -57,7 +65,7 @@ namespace FintechApp.Controllers
             if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
-            try { var data = await _service.GetByID(request.PayoutBeneficaryID); if (data == null) return ResponseProcess.GetFailResponse(Messages.PayoutBeneficiaryMessages.NotFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
+            try { var data = await _service.GetByID(request.PayoutBeneficaryID); if (data == null || (!SeesAll(keyDataModel) && data.UserID != keyDataModel.UserID)) return ResponseProcess.GetFailResponse(Messages.PayoutBeneficiaryMessages.NotFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 
@@ -69,7 +77,7 @@ namespace FintechApp.Controllers
             if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
-            try { fail = await _service.Create(request); if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return ResponseProcess.GetSuccessResponse(Messages.PayoutBeneficiaryMessages.CreatedSuccessfully); }
+            try { if (!SeesAll(keyDataModel)) request.UserID = keyDataModel.UserID; fail = await _service.Create(request); if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return ResponseProcess.GetSuccessResponse(Messages.PayoutBeneficiaryMessages.CreatedSuccessfully); }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 
@@ -81,7 +89,7 @@ namespace FintechApp.Controllers
             if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
-            try { fail = await _service.Update(request); if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return ResponseProcess.GetSuccessResponse(Messages.PayoutBeneficiaryMessages.UpdatedSuccessfully); }
+            try { var owner = await _service.GetByID(request.PayoutBeneficaryID); if (owner == null || (!SeesAll(keyDataModel) && owner.UserID != keyDataModel.UserID)) return ResponseProcess.GetFailResponse(Messages.PayoutBeneficiaryMessages.NotFound); if (!SeesAll(keyDataModel)) request.UserID = keyDataModel.UserID; fail = await _service.Update(request); if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return ResponseProcess.GetSuccessResponse(Messages.PayoutBeneficiaryMessages.UpdatedSuccessfully); }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 
@@ -93,7 +101,7 @@ namespace FintechApp.Controllers
             if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
-            try { fail = await _service.Delete(request.PayoutBeneficaryID); if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return ResponseProcess.GetSuccessResponse(Messages.PayoutBeneficiaryMessages.DeletedSuccessfully); }
+            try { var owner = await _service.GetByID(request.PayoutBeneficaryID); if (owner == null || (!SeesAll(keyDataModel) && owner.UserID != keyDataModel.UserID)) return ResponseProcess.GetFailResponse(Messages.PayoutBeneficiaryMessages.NotFound); fail = await _service.Delete(request.PayoutBeneficaryID); if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return ResponseProcess.GetSuccessResponse(Messages.PayoutBeneficiaryMessages.DeletedSuccessfully); }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
     }

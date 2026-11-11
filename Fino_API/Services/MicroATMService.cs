@@ -1,4 +1,5 @@
 using FintechApp.Entities;
+using FintechApp.Helpers;
 using FintechApp.Interfaces.Repositories;
 using FintechApp.Interfaces.Services;
 using FintechApp.Requests.MicroATM;
@@ -13,8 +14,9 @@ namespace FintechApp.Services
         private readonly IUserRepository _userRepository;
         private readonly IMicroATMSettingRepository _microATMSettingRepository;
         private readonly ITransactionMasterRepository _transactionMasterRepository;
-        private readonly IWalletServiceMappingRepository _walletServiceMappingRepository;
+        private readonly IServiceWalletResolver _serviceWallet;
         private readonly IProviderMasterRepository _providerMasterRepository;
+        private readonly ISystemDowntimeService _downtime;
 
         private const int MATMServiceID = 5;
 
@@ -22,14 +24,16 @@ namespace FintechApp.Services
             IUserRepository userRepository,
             IMicroATMSettingRepository microATMSettingRepository,
             ITransactionMasterRepository transactionMasterRepository,
-            IWalletServiceMappingRepository walletServiceMappingRepository,
-            IProviderMasterRepository providerMasterRepository)
+            IServiceWalletResolver serviceWallet,
+            IProviderMasterRepository providerMasterRepository,
+            ISystemDowntimeService downtime)
         {
             _userRepository = userRepository;
             _microATMSettingRepository = microATMSettingRepository;
             _transactionMasterRepository = transactionMasterRepository;
-            _walletServiceMappingRepository = walletServiceMappingRepository;
+            _serviceWallet = serviceWallet;
             _providerMasterRepository = providerMasterRepository;
+            _downtime = downtime;
         }
 
         public async Task<(string failureMessage, InitiateResponse? data)> Initiate(InitiateImproveRequest request, int userID, string ipAddress)
@@ -50,6 +54,13 @@ namespace FintechApp.Services
             if (!user.IsActive)
                 return (Messages.Common.Message.AccountInactive, null);
 
+            // Scheduled maintenance. Checked by KIND because the service this transaction will be
+            // attributed to is resolved further down; the operator's decision is "Micro ATM stays
+            // up" or it does not, which is a statement about the kind.
+            string downtime = await _downtime.EnsureOpenForKind(ServiceKinds.MicroATM);
+            if (!downtime.EqualsIgnoreCase(StatusType.Ok))
+                return (downtime, null);
+
             var settings = await _microATMSettingRepository.GetAll();
             var setting = settings.FirstOrDefault(s => s.IsActive);
             if (setting == null)
@@ -61,10 +72,11 @@ namespace FintechApp.Services
             if (request.Amount > setting.MaximumAmount)
                 return ($"Maximum transaction amount is {setting.MaximumAmount}.", null);
 
-            // Get WalletID for MATM service from mapping
-            var walletMappings = await _walletServiceMappingRepository.GetAll();
-            var walletMapping = walletMappings.FirstOrDefault(w => w.ServiceID == MATMServiceID);
-            int walletID = walletMapping?.WalletID ?? 1;
+            // The wallet the admin mapped the Micro ATM service to ("Service Wallet Mapping"),
+            // found BY KIND rather than by a compiled-in id: MATMServiceID is 5, which in this
+            // install is DTH Recharge, so the old lookup read a completely different service's
+            // mapping. Falls back to the Recharge wallet, as before.
+            int walletID = await _serviceWallet.ResolveForKind(ServiceKinds.MicroATM, (int)WalletCode.Recharge);
 
             // Get ProviderID by setting name
             var provider = await _providerMasterRepository.GetByName(setting.Name);

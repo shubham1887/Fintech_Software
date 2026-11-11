@@ -150,4 +150,14 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("com.google.android.material:material:1.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // Push notifications.
+    //
+    // NOTE: the com.google.gms.google-services plugin is deliberately NOT applied, and there is
+    // no google-services.json in this repo. Firebase is initialised at run time from the
+    // client's hosted app-config.json (see push/PushManager.kt) so that one APK serves every
+    // client and turning push on for a new client needs no rebuild. Adding the plugin would
+    // undo that: it fails the build outright when the JSON is missing.
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-messaging-ktx")
 }

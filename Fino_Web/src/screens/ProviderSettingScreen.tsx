@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { ArrowLeft, Cable, IndianRupee, Route, ScrollText } from 'lucide-react';
+import { ArrowLeft, Cable, IndianRupee, PlugZap, Route, ScrollText } from 'lucide-react';
 import { getField } from '@/lib/row';
 import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -32,10 +32,20 @@ export function ProviderSettingScreen() {
   const [tab, setTab] = useState<TabKey>((params.get('tab') as TabKey) || 'request');
   const providers = useProviders();
 
-  const providerName = useMemo(() => {
-    const row = (providers.data ?? []).find((p) => String(getField(p, 'ProviderID')) === providerId);
-    return row ? String(getField(row, 'ProviderName') ?? '') : (params.get('name') ?? '');
-  }, [providers.data, providerId, params]);
+  const providerRow = useMemo(
+    () => (providers.data ?? []).find((p) => String(getField(p, 'ProviderID')) === providerId),
+    [providers.data, providerId],
+  );
+  const providerName = providerRow
+    ? String(getField(providerRow, 'ProviderName') ?? '')
+    : (params.get('name') ?? '');
+
+  // Pay1 and JaiJui are compiled integrations: the gateway calls their library, not a URL
+  // template, so the Request and Response tabs have nothing to fill in. Without saying so, the
+  // Request tab reads "No endpoints yet — add the Transaction endpoint first" on a provider
+  // that needs none, and the admin concludes it is unconfigured and stops there.
+  const isCoded = Boolean(getField(providerRow ?? {}, 'IsCodedIntegration'));
+  const codedFamily = String(getField(providerRow ?? {}, 'CodedFamily') ?? '');
 
   const active = TABS.find((t) => t.key === tab) ?? TABS[0];
 
@@ -78,6 +88,37 @@ export function ProviderSettingScreen() {
           </div>
         </div>
       </div>
+
+      {isCoded && (tab === 'request' || tab === 'response') && (
+        <div className="mb-6 flex gap-3 rounded-card border border-info-500/20 bg-info-50 p-4">
+          <PlugZap className="mt-0.5 size-5 shrink-0 text-info-600" />
+          <div className="text-sm text-info-600">
+            <p className="font-semibold text-slate-800">
+              {providerName} is a built-in integration{codedFamily ? ` for ${codedFamily}` : ''} — nothing to add here.
+            </p>
+            <p className="mt-1 text-slate-600">
+              It is called through its own library, so it has no URL templates and no response
+              rules. Three things make it live:
+            </p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-slate-600">
+              <li>Its credentials, on the provider row itself (API Providers → Edit).</li>
+              <li>
+                Its operators, on the{' '}
+                <button type="button" className="font-semibold text-brand-700 underline" onClick={() => setTab('configuration')}>
+                  Configuration
+                </button>{' '}
+                tab — one row per operator, carrying the provider&apos;s own code for it.
+              </li>
+              <li>
+                Its priority, in{' '}
+                <Link to="/s/ProvidersSequence" className="font-semibold text-brand-700 underline">
+                  Provider Routing
+                </Link>.
+              </li>
+            </ol>
+          </div>
+        </div>
+      )}
 
       {!providerId ? (
         <div className="rounded-card border border-slate-200/70 bg-white p-10 text-center text-sm text-slate-400 shadow-card">

@@ -5,7 +5,7 @@ import {
   AlertTriangle, Clock, Eye, Power, RefreshCw, ShieldCheck, UserRoundX, Users, Wallet,
 } from 'lucide-react';
 import { fetchUsers, setUserActive, type UserRow } from '@/api/users.api';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvDownload } from '@/lib/exportAll';
 import { useClientSearch } from '@/lib/useClientSearch';
 import { roleLabel, UserTypeCode } from '@/lib/roles';
 import { cn } from '@/lib/cn';
@@ -34,6 +34,7 @@ import {
  * else, so a distributor can't reactivate their own downline.
  */
 export function InactiveUsersScreen() {
+  const downloadCsv = useCsvDownload();
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -120,7 +121,7 @@ export function InactiveUsersScreen() {
         query={query}
         onQuery={setQuery}
         count={visible.length}
-        onExport={() => exportToCsv(visible.map(userExportRow), 'Inactive users')}
+        onExport={() => downloadCsv(visible.map(userExportRow), 'Inactive users')}
       />
 
       <Card className="overflow-hidden">

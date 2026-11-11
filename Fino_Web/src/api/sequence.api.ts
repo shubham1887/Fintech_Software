@@ -58,8 +58,21 @@ export function bulkUpdateSequence(rows: BulkUpdateRow[]) {
   return apiPost('OperatorSequence/BulkUpdate', rows);
 }
 
-export function fetchBulkSequenceProviders(): Promise<ListRow[]> {
-  return fetchList('OperatorSequence/SelectProviderForBulkSequence', {});
+/**
+ * Providers that can dispatch for this service's rail — the same set the grid rows show, so a
+ * bulk "Add sequence" can never offer a provider the rows below it do not have.
+ */
+export function fetchBulkSequenceProviders(serviceId: number): Promise<ListRow[]> {
+  return fetchList('OperatorSequence/SelectProviderForBulkSequence', { ServiceID: serviceId });
+}
+
+/**
+ * The services Provider Routing may actually route: the operator-based rails (recharge and
+ * BBPS) that have operators. DMT, AEPS, payment gateway, payout and verification each route
+ * from their own screen, so offering them here only produced a grid that never took effect.
+ */
+export function fetchRoutableServices(): Promise<ListRow[]> {
+  return fetchList('OperatorSequence/SelectRoutableServices', {});
 }
 
 export function fetchViewApiProviders(): Promise<ListRow[]> {

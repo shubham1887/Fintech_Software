@@ -11,6 +11,8 @@ namespace FintechApp.Requests.News
         public bool IsView { get; set; }
         public string ImagePath { get; set; } = string.Empty;
         public string HyperLink { get; set; } = string.Empty;
+        /// <summary>Hide the announcement from this moment on. Null = never expires.</summary>
+        public DateTime? ExpiresOn { get; set; }
     }
 
     public class UpdateNewsRequestValidator : AbstractValidator<UpdateNewsRequest>

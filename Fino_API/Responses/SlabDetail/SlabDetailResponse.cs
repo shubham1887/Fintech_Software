@@ -35,6 +35,13 @@ namespace FintechApp.Responses.SlabDetail
         public decimal RealClientComm { get; set; }
         public string RealClientCommType { get; set; } = string.Empty;
         public string RealClientCommissionCategory { get; set; } = string.Empty;
+
+        /// <summary>INCLUSIVE / EXCLUSIVE / NONE for this band, or DEFAULT (blank) to follow the
+        /// commission tax profile. Applies to every tier on the row.</summary>
+        public string GSTType { get; set; } = StaticModels.ChargeGstType.Default;
+
+        /// <summary>0 = take the rate from the tax engine, effective-dated.</summary>
+        public decimal GSTRatePercent { get; set; }
         public bool IsActive { get; set; }
         public DateTime DateTime { get; set; }
     }

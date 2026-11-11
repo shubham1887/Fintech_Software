@@ -36,7 +36,7 @@ namespace FintechApp.Services
 
         public async Task<string> BalanceValidationBeforeTransaction(int userID, int walletID, decimal amount, decimal commission)
         {
-            await using (await ConcurrencyControl.AcquireLockAsync(userID, walletID.ToString()))
+            await using (await ConcurrencyControl.AcquireLockAsync(userID, $"wallet:{walletID}"))
             {
                 var wallet = (await _userWalletRepo.GetByUserID(userID)).FirstOrDefault(w => w.WalletID == walletID);
                 if (wallet == null) return "Wallet not found.";
@@ -64,7 +64,7 @@ namespace FintechApp.Services
 
         public async Task<int> DebitBalance(AccountPostingRequest request)
         {
-            await using (await ConcurrencyControl.AcquireLockAsync(request.UserID, request.WalletID.ToString()))
+            await using (await ConcurrencyControl.AcquireLockAsync(request.UserID, $"wallet:{request.WalletID}"))
             {
                 return await Process(request, request.AmountWithCommission * -1, AmountCreditDebitType.Debit);
             }
@@ -72,7 +72,7 @@ namespace FintechApp.Services
 
         public async Task<int> CreditBalance(AccountPostingRequest request)
         {
-            await using (await ConcurrencyControl.AcquireLockAsync(request.UserID, request.WalletID.ToString()))
+            await using (await ConcurrencyControl.AcquireLockAsync(request.UserID, $"wallet:{request.WalletID}"))
             {
                 return await Process(request, request.AmountWithCommission, AmountCreditDebitType.Credit);
             }

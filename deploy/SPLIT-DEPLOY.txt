@@ -1,0 +1,189 @@
+===========================================================
+  FINO - UI AND API AS TWO IIS SITES
+===========================================================
+
+Use this when the server already hosts the panel and the API as two IIS sites
+on two hostnames, each with its own certificate - for example:
+
+      https://ui.client.com    ->   the panel site
+      https://api.client.com   ->   the API site
+
+If the server does NOT already have that, ignore this file: double-click
+FinoSetup.exe instead. It installs the same build as one Windows service,
+needs no IIS at all, and is far less to go wrong.
+
+There is only ONE download now. The release used to ship a second
+"-separate" zip that was the same build re-arranged; that doubled the
+download for nothing. Configure-Split.ps1 does the re-arranging on the
+server, from the app\ folder in this package.
+
+
+-----------------------------------------------------------
+WHAT IS HERE
+-----------------------------------------------------------
+
+  app\                 the build: the API (with its own .NET runtime), the
+                       database scripts, and the panel in wwwroot\panel
+  Configure-Split.ps1  copies that into the two site folders and writes BOTH
+                       configuration files, with matching keys
+  iis\ui.web.config    the panel site's IIS rules (deep links, .apk MIME type)
+  android\             the client's APK, if one was built into this release
+  Backup-Fino.ps1      database + uploads + keys backup
+  lib\                 shared code used by those scripts
+
+
+-----------------------------------------------------------
+THE SERVER NEEDS
+-----------------------------------------------------------
+
+  1. IIS, with:
+       - ASP.NET Core Hosting Bundle   (for the api site)
+       - URL Rewrite module            (for the ui site's deep links)
+     A server already running this platform has both.
+
+  2. SQL Server (any edition, Express is fine).
+
+  Nothing else: the build carries its own .NET runtime, and the panel is
+  plain static files.
+
+
+-----------------------------------------------------------
+STEPS
+-----------------------------------------------------------
+
+  1. Unzip the whole release onto the server.
+
+  2. Right-click Setup.bat -> Run as administrator, and choose
+
+         2. As two IIS sites
+
+     (or run Configure-Split.ps1 directly:
+         powershell -ExecutionPolicy Bypass -File .\Configure-Split.ps1 )
+
+     It asks for:
+       - the two site FOLDERS  (created if they do not exist yet)
+       - the two ADDRESSES     (exactly as typed in a browser, https and all)
+       - SQL Server and database name
+       - the company name and logo
+       - the first administrator's login
+
+     Then it:
+       - copies app\ into the api folder (without the panel)
+       - copies app\wwwroot\panel into the ui folder, with iis\ui.web.config
+       - writes api\appsettings.Production.json and ui\config.json
+
+     Both configuration files get the SAME AES key. That matters: if those
+     two ever disagree, nobody can log in. That is the whole reason this is
+     one script and not two hand edits.
+
+     Already copied the folders yourself? Point it at them and it will use
+     what is there:
+         .\Configure-Split.ps1 -ApiFolder "C:\inetpub\wwwroot\api.client.com" `
+                               -UiFolder  "C:\inetpub\wwwroot\ui.client.com"
+
+     Moving an EXISTING client (their database already has users):
+         .\Configure-Split.ps1 -ExistingDatabase
+     That skips creating an administrator and leaves every existing login
+     working.
+
+     It also gives the api site's application pool a login on SQL Server. With
+     Windows authentication, SQL sees the APPLICATION POOL identity - not the
+     person running this - so without that grant the site starts and then says
+     "Login failed for user 'IIS APPPOOL\...'" forever. If the pool is not
+     named after the site, pass it:
+         .\Configure-Split.ps1 -ApiAppPool "MyApiPool"
+
+  3. In IIS Manager:
+       - the api site: point it at the api folder.
+         Its Application Pool MUST be ".NET CLR Version: No Managed Code".
+         (ASP.NET Core does not run under the .NET Framework pipeline; leaving
+          it at v4.0 is a common cause of 404s and 500.30s.)
+       - the ui site: point it at the ui folder. Any application pool.
+       - start both.
+
+  4. Open the panel address. The first request after a fresh install takes
+     a few minutes: the API builds the database, and answers 503 "starting"
+     until it is done. That is normal, once.
+
+
+-----------------------------------------------------------
+WHAT THE LOGO DOES
+-----------------------------------------------------------
+
+The logo is not only shown - the portal's colours are taken from it. The
+strongest colour in the artwork becomes the brand colour (buttons, links,
+the active menu row), and the sidebar and header become dark shades of the
+same hue. The phone app is given the same three colours.
+
+So a client's portal comes out looking like their company without anyone
+being asked for a hex code. To override, edit ui\config.json:
+
+    "brandColor":  "#0949ce"     the accent
+    "navbarColor": "#0d172b"     the sidebar
+    "appbarColor": "#12213f"     the header
+
+An operator can also change all of this from Settings -> Appearance, and
+their choice wins over these.
+
+A WIDE logo (the usual kind, with the company name drawn into it) is shown
+on its own - the name is not printed next to it, because the artwork already
+says it. A SQUARE logo is shown with the company name beside it. With no
+logo at all, the name is shown as text.
+
+
+-----------------------------------------------------------
+UPDATING LATER
+-----------------------------------------------------------
+
+  Unzip the new release and run the same step 2, giving the SAME two
+  folders. The copy keeps everything that belongs to the installation:
+
+      api\appsettings.Production.json      keys, connection string, CORS
+      api\wwwroot\uploads\                 KYC documents, logos
+      ui\config.json, ui\app-config.json   brand, API address, phone app
+      ui\app\                              the published APK
+
+  The api site is taken offline for the few seconds of the copy
+  (app_offline.htm) and brought back automatically - the rest of IIS keeps
+  running. Any new database changes are applied on the first request.
+
+  Back up first, always:
+      powershell -File .\Backup-Fino.ps1 -InstallPath <the api folder>
+
+
+-----------------------------------------------------------
+IF SOMETHING GOES WRONG
+-----------------------------------------------------------
+
+Panel loads but login fails / "network error"
+    The api site is down, or the two config files disagree about the AES key.
+    Re-run Configure-Split.ps1 - it writes both together.
+
+Panel loads, API calls are blocked by the browser (CORS)
+    The panel's address is not in the API's Cors:AllowedOrigins. It is
+    written by Configure-Split.ps1; check that the address there matches the
+    address the client actually types, https and all.
+
+api site returns 500.19 or 502.5
+    The ASP.NET Core Hosting Bundle is missing, or the application pool is
+    not set to "No Managed Code".
+
+Deep links (e.g. /reports) give 404 but the home page works
+    The URL Rewrite module is missing from IIS.
+
+A downloaded .apk will not install ("corrupt")
+    The ui site is answering a missing file with index.html. Check that
+    ui\web.config is the one from iis\ui.web.config - it 404s any missing
+    path that has a file extension, which is what stops a web page being
+    saved under an .apk name.
+
+"starting" / 503 for more than ten minutes
+    Open the api site's /health in a browser - it prints the actual reason.
+    Usually one of:
+      "Login failed for user 'IIS APPPOOL\...'"
+          The application pool has no rights on the database.
+          Re-run Configure-Split.ps1, or grant it by hand.
+      "Cannot open database ... requested by the login"
+          Same thing, or the database name is wrong.
+      network-related / instance-specific error
+          SQL Server is not reachable at the name that was entered.

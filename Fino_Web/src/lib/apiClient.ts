@@ -1,6 +1,6 @@
 import axios, { type AxiosError } from 'axios';
 import { encrypt, decrypt } from './crypto';
-import { clearSession, loadSession, patchTokens } from './storage';
+import { clearSession, loadSession, patchTokens, tabIdentityDrifted } from './storage';
 import { getConfig, cfgValue } from './runtimeConfig';
 import { ApiError, STATUS, type ApiResult } from '@/types/api';
 import type { Tokens } from '@/types/auth';
@@ -13,6 +13,13 @@ import type { Tokens } from '@/types/auth';
 const BASE_URL = (cfgValue(getConfig().apiUrl) ?? import.meta.env.VITE_API_URL ?? '/api/').replace(/\/?$/, '/');
 
 export const SESSION_EXPIRED_EVENT = 'fino:session-expired';
+
+/**
+ * Someone signed in as a DIFFERENT user in another tab, so the session under this one no longer
+ * belongs to the user it is showing. AuthProvider listens and rebuilds the tab for whoever is
+ * signed in now.
+ */
+export const SESSION_SWITCHED_EVENT = 'fino:session-switched';
 
 const http = axios.create({ baseURL: BASE_URL, timeout: 120_000 });
 
@@ -73,6 +80,24 @@ export async function apiPost<T = unknown>(
   options: PostOptions = {},
 ): Promise<ApiResult<T>> {
   const { auth = true } = options;
+
+  // Refuse to act as somebody else.
+  //
+  // The session lives in localStorage, which every tab shares, so signing in as another user in
+  // one tab silently re-points this one at their token. The request would then succeed - the
+  // token and the body identity agree, they are just not the user on screen - and this tab would
+  // show one person's name and menu over another person's money.
+  //
+  // The cross-tab listener in AuthProvider rebuilds the tab when that happens, but a request
+  // already on its way out would beat it, so the check is made here too, on every call.
+  if (auth && tabIdentityDrifted()) {
+    window.dispatchEvent(new CustomEvent(SESSION_SWITCHED_EVENT));
+    throw new ApiError(
+      'Someone signed in as a different user in another tab. Reloading this one.',
+      STATUS.UNAUTHORIZED,
+      401,
+    );
+  }
 
   const form = new FormData();
   form.append('Request', encrypt(JSON.stringify(payload ?? {})));

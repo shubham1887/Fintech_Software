@@ -18,7 +18,8 @@ namespace FintechApp.Interfaces.Services
     }
 
     /// <summary>
-    /// Credential gate for every /api/v1 endpoint: userid + API token, API-user role, active
+    /// Credential gate for every /api/v1 endpoint: the account's registered MOBILE NUMBER + API
+    /// token, API-user role, active
     /// account, and the optional IP whitelist configured on the API Access page.
     ///
     /// Centralised so all endpoints authenticate identically and return identical error codes —
@@ -27,6 +28,6 @@ namespace FintechApp.Interfaces.Services
     /// </summary>
     public interface IApiUserAuthService
     {
-        Task<ApiUserAuthResult> Authenticate(string rawUserId, string token, string clientIpAddress);
+        Task<ApiUserAuthResult> Authenticate(string rawMobile, string token, string clientIpAddress);
     }
 }

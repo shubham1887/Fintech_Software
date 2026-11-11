@@ -291,6 +291,12 @@ namespace FintechApp.Services
             (await _context.AcctVouchers.AsNoTracking().Where(v => v.AcctVoucherID == id).Select(v => v.VoucherNo).FirstOrDefaultAsync()) ?? string.Empty;
 
         // ── Reads ──────────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Rows a read returns when the caller names no window. A screen shows a window; an export
+        /// asks for one window after another (TakeCount / SkipCount) until a short one comes back.
+        /// </summary>
+        private const int DefaultReadWindow = 1000;
         public async Task<List<VoucherRow>> GetVouchers(LedgerQueryRequest query)
         {
             var q = _context.AcctVouchers.AsNoTracking().Where(v => !v.IsDeleted);
@@ -298,7 +304,9 @@ namespace FintechApp.Services
             if (query.FromDate.HasValue) q = q.Where(v => v.VoucherDate >= query.FromDate.Value.Date);
             if (query.ToDate.HasValue) q = q.Where(v => v.VoucherDate < query.ToDate.Value.Date.AddDays(1));
 
-            var vouchers = await q.OrderByDescending(v => v.AcctVoucherID).Take(1000).ToListAsync();
+            int take = query.TakeCount > 0 ? query.TakeCount : DefaultReadWindow;
+            var vouchers = await q.OrderByDescending(v => v.AcctVoucherID)
+                                  .Skip(Math.Max(0, query.SkipCount)).Take(take).ToListAsync();
             var ids = vouchers.Select(v => v.AcctVoucherID).ToList();
             var lines = await _context.AcctVoucherLines.AsNoTracking()
                 .Where(l => ids.Contains(l.AcctVoucherID) && !l.IsDeleted).ToListAsync();
@@ -317,11 +325,13 @@ namespace FintechApp.Services
             return ToRow(v, lines, await AccountNameMap());
         }
 
-        public async Task<List<AcctPostingOutbox>> GetOutbox(string statusFilter)
+        public async Task<List<AcctPostingOutbox>> GetOutbox(LedgerQueryRequest query)
         {
             var q = _context.AcctPostingOutbox.AsNoTracking().Where(o => !o.IsDeleted);
-            if (!string.IsNullOrWhiteSpace(statusFilter)) q = q.Where(o => o.Status == statusFilter.Trim());
-            return await q.OrderByDescending(o => o.AcctPostingOutboxID).Take(1000).ToListAsync();
+            if (!string.IsNullOrWhiteSpace(query.Status)) q = q.Where(o => o.Status == query.Status.Trim());
+            int take = query.TakeCount > 0 ? query.TakeCount : DefaultReadWindow;
+            return await q.OrderByDescending(o => o.AcctPostingOutboxID)
+                          .Skip(Math.Max(0, query.SkipCount)).Take(take).ToListAsync();
         }
 
         private async Task<Dictionary<int, string>> AccountNameMap() =>

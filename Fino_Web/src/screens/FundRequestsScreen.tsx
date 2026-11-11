@@ -123,7 +123,13 @@ export function FundRequestsScreen({ def }: CustomScreenProps) {
     { value: '', label: 'All users' },
     ...users.map((u, i) => {
       const sub = ['FirmName', 'MobileNumber'].map((k) => String(getField(u, k) ?? '').trim()).filter(Boolean).join(' · ');
-      return { value: String(getField(u, 'UserMasterID', 'UserID') ?? i), label: String(getField(u, 'PersonName', 'FirmName', 'Name') ?? ''), sublabel: sub || undefined };
+      return {
+        value: String(getField(u, 'UserMasterID', 'UserID') ?? i),
+        label: String(getField(u, 'PersonName', 'FirmName', 'Name') ?? ''),
+        sublabel: sub || undefined,
+        // The tier, so two accounts under one person's name can be told apart.
+        badge: String(getField(u, 'UserType') ?? '').trim() || undefined,
+      };
     }),
   ], [users]);
 
@@ -173,7 +179,10 @@ export function FundRequestsScreen({ def }: CustomScreenProps) {
     });
   };
 
-  const columns = ['Action','#', 'Date', 'Sender', 'Receiver', 'Wallet', 'Mode', 'Sub mode', 'Amount', 'UTR / Receipt', 'Proof', 'Remark'];
+  // "Awaiting" names whose decision each row is. The queue shows the requests you raised AND the
+  // ones raised to you, and an admin sees the whole network's - so without this column there was
+  // no way to tell, from the page, why a given row was in front of you.
+  const columns = ['Action','#', 'Date', 'Raised by', 'Awaiting', 'Wallet', 'Mode', 'Sub mode', 'Amount', 'UTR / Receipt', 'Proof', 'Remark'];
 
   return (
     <>
@@ -279,8 +288,12 @@ export function FundRequestsScreen({ def }: CustomScreenProps) {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 tabular-nums text-slate-400">{i + 1}</td>
                       <td className="whitespace-nowrap px-4 py-3 tabular-nums text-slate-600">{ymd(getField(row, 'DOC', 'DateTime', 'Date', 'TransactionDOC'))}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-700">{String(getField(row, 'SenderName') ?? '—')}</td>
+                      {/* The raiser is the RECEIVER of the funds — they asked to be credited. */}
                       <td className="whitespace-nowrap px-4 py-3 text-slate-700">{String(getField(row, 'ReceiverName') ?? '—')}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-slate-600">
+                        {String(getField(row, 'RequestToName', 'SenderName') || '—')}
+                        {isApprover && <span className="ml-2 rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700">you</span>}
+                      </td>
                       <td className="whitespace-nowrap px-4 py-3 text-slate-600">{String(getField(row, 'WalletName') ?? '—')}</td>
                       <td className="whitespace-nowrap px-4 py-3 text-slate-600">{String(getField(row, 'ModeName') ?? '—')}</td>
                       <td className="whitespace-nowrap px-4 py-3 text-slate-600">{String(getField(row, 'SubModeName') ?? '—')}</td>
@@ -326,7 +339,12 @@ export function FundRequestsScreen({ def }: CustomScreenProps) {
             {target && (
               <div className="flex items-center justify-between gap-3">
                 <span className="text-slate-600">
-                  {String(getField(target, 'SenderName') || '—')} → {String(getField(target, 'ReceiverName') || '—')}
+                  {/* Raiser → approver, the direction the DECISION travels. Reading it the other
+                      way round (the direction the money travels) made the dialog name the wrong
+                      party as the one asking. */}
+                  {String(getField(target, 'ReceiverName') || '—')}
+                  {' → '}
+                  {String(getField(target, 'RequestToName', 'SenderName') || '—')}
                 </span>
                 <span className="font-semibold text-slate-800">{inr(Number(getField(target, 'Amount')) || 0)}</span>
               </div>

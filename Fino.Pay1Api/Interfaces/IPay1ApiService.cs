@@ -25,7 +25,9 @@ namespace Fino.Pay1Api.Interfaces
         /// <summary>Partner wallet balance at Pay1 (operation_type 2).</summary>
         Task<Pay1ApiResponse> Balance(Pay1Credentials? creds = null);
 
-        /// <summary>Transaction enquiry, up to 10 request ids per call (operation_type 3).</summary>
+        /// <summary>Transaction enquiry, up to 10 request ids per call (operation_type 3). When more
+        /// than one id is asked about, Pay1 answers with an entry per id: read the one that belongs
+        /// to a transaction with <see cref="Pay1ApiResponse.For"/>, never the top-level fields.</summary>
         Task<Pay1ApiResponse> StatusCheck(StatusCheckRequest request, Pay1Credentials? creds = null);
 
         /// <summary>Raise a complaint against a transaction (operation_type 4).</summary>

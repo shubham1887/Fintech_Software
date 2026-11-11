@@ -80,7 +80,10 @@ interface UserListWrapper {
  */
 export async function fetchUsers(filter: UserListFilter = {}): Promise<UserRow[]> {
   const res = await apiPost<UserListWrapper>('Users/Select', {
-    TakeCount: 1000,
+    // 0 = every matching row (the service skips its paging for it). The user screens filter
+    // and search in the browser over what they hold, so a cap here was not "the first 1000"
+    // but "everything past the first 1000 is invisible to the filters and missing from the export".
+    TakeCount: 0,
     SkipCount: 0,
     ...filter,
   });
@@ -94,11 +97,69 @@ export function setUserActive(targetUserID: number, isActive: boolean) {
 }
 
 /** POST Users/Delete — soft delete. Refused while the user holds a balance or has a downline. */
-export function deleteUser(targetUserID: number) {
-  return apiPost<string>('Users/Delete', { TargetUserID: targetUserID });
+/**
+ * POST Users/Delete — soft delete. `reason` is recorded against the user's change history with
+ * the operator's name, the time and the server-observed IP, so a removed account can be
+ * accounted for afterwards; the API keeps the field optional for older callers.
+ */
+export function deleteUser(targetUserID: number, reason = '') {
+  return apiPost<string>('Users/Delete', { TargetUserID: targetUserID, Reason: reason });
 }
 
 /** POST Users/Restore — undo a soft delete. The user comes back deactivated. */
 export function restoreUser(targetUserID: number) {
   return apiPost<string>('Users/Restore', { TargetUserID: targetUserID });
+}
+
+// ── One mobile number, two roles ────────────────────────────────────────────────
+//
+// A distributor who also runs a counter, a super-distributor who sells directly, an API
+// client that needs a retailer login to test against — each needed a second mobile number
+// before this, because sign-in is keyed on the number. The second login is a real account
+// (own wallet, slab, ledger and user code) that shares the number and the password.
+// See `Fino_API/StaticModels/LinkedProfilePolicy.cs` for who may set one up, and as what.
+
+export interface LinkedProfile {
+  UserID: number;
+  UserTypeID: number;
+  RoleName: string;
+  FirmName: string;
+  PersonName: string;
+  UserCode: string;
+  MobileNumber: string;
+  /** The account sign-in authenticates against — the one that owns the pair. */
+  IsPrimary: boolean;
+  /** The one this session is currently working as. */
+  IsCurrent: boolean;
+  IsActive: boolean;
+}
+
+export interface LinkedProfiles {
+  PrimaryUserID: number;
+  CurrentUserID: number;
+  Profiles: LinkedProfile[];
+  /** The caller may add a second login right now. */
+  CanSetUp: boolean;
+  AllowedRoles: Array<{ UserTypeID: number; RoleName: string }>;
+  /** Why they may not — printed as-is, so the card never reads as broken. */
+  Reason: string;
+}
+
+const NO_PROFILES: LinkedProfiles = {
+  PrimaryUserID: 0, CurrentUserID: 0, Profiles: [], CanSetUp: false, AllowedRoles: [], Reason: '',
+};
+
+/** POST Users/LinkedProfiles — the logins this person holds, and whether they may add one. */
+export async function fetchLinkedProfiles(): Promise<LinkedProfiles> {
+  const res = await apiPost<LinkedProfiles>('Users/LinkedProfiles', {});
+  if (!res.ok || !res.data) return NO_PROFILES;
+  return { ...NO_PROFILES, ...res.data };
+}
+
+/** POST Users/LinkedProfileAdd — set up the caller's own second login. */
+export function addLinkedProfile(input: { userTypeId: number; firmName?: string }) {
+  return apiPost<LinkedProfiles>('Users/LinkedProfileAdd', {
+    UserTypeID: input.userTypeId,
+    FirmName: input.firmName ?? '',
+  });
 }

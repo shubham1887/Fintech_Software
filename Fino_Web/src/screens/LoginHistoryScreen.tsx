@@ -1,17 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { subDays, startOfMonth } from 'date-fns';
-import { Download, RefreshCw, Search as SearchIcon, SlidersHorizontal, Globe, Smartphone, Cpu } from 'lucide-react';
+import { Globe, Smartphone, Cpu, MapPin } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
 import { dateTime, apiDate } from '@/lib/format';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvExport } from '@/lib/exportAll';
 import { getField } from '@/lib/row';
 import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Card, CardBody } from '@/components/ui/Card';
+import { ReportActions, ReportFilterBar } from '@/components/report';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { Button } from '@/components/ui/Button';
 import { Autocomplete, type AutocompleteOption } from '@/components/ui/Autocomplete';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -51,14 +50,18 @@ async function fetchUsers(): Promise<Row[]> {
   return [];
 }
 
-async function fetchHistory(f: Filters): Promise<Row[]> {
+/**
+ * One window of the history. The endpoint pages by PageNumber/PageSize and sends no total, so the
+ * export walks the windows until one comes back short rather than settling for the first.
+ */
+async function fetchHistory(f: Filters, skip = 0, take = PAGE_SIZE): Promise<Row[]> {
   const res = await apiPost<unknown>('LoginHistory/GetAll', {
     UserID: f.userId === '' ? 0 : f.userId,
     Through: f.through,
     FromDate: f.fromDate,
     ToDate: f.toDate,
-    PageNumber: 1,
-    PageSize: PAGE_SIZE,
+    PageNumber: Math.floor(skip / Math.max(1, take)) + 1,
+    PageSize: take,
   });
   // Empty set comes back as a business FAIL ("No record found") → clean empty state, not an error.
   if (!res.ok) return [];
@@ -89,6 +92,8 @@ export function LoginHistoryScreen({ def }: CustomScreenProps) {
   const [applied, setApplied] = useState<Filters>(draft);
   const upd = (patch: Partial<Filters>) => setDraft((d) => ({ ...d, ...patch }));
 
+  const { exporting, runExport } = useCsvExport();
+
   const { data: users = [] } = useQuery({ queryKey: ['users-select'], queryFn: fetchUsers, staleTime: 5 * 60_000 });
 
   const { data: rows = [], isFetching, refetch } = useQuery({
@@ -96,7 +101,10 @@ export function LoginHistoryScreen({ def }: CustomScreenProps) {
     queryFn: () => fetchHistory(applied),
   });
 
-  // UserID → display name map, for both the dropdown and the table.
+  // UserID → display name map. Only for the FILTER dropdown now: the table reads the name off the
+  // row, because the API resolves it (see LoginHistoryService). Joining it here meant a sign-in by
+  // anyone deactivated, deleted or past the 500-row cap on Users/Select read as "User 42", and a
+  // retailer — who cannot call Users/Select at all — saw that for every row including their own.
   const userMap = useMemo(() => {
     const m = new Map<number, { name: string; sub: string }>();
     for (const u of users) {
@@ -108,6 +116,31 @@ export function LoginHistoryScreen({ def }: CustomScreenProps) {
     }
     return m;
   }, [users]);
+
+  /** The person on a history row, from the row itself; the dropdown map is only a fallback. */
+  const rowUser = (r: Row) => {
+    const uid = Number(getField(r, 'UserID') ?? 0);
+    const fromRow = String(getField(r, 'UserName') ?? '').trim();
+    const firm = String(getField(r, 'FirmName') ?? '').trim();
+    const mobile = String(getField(r, 'MobileNumber') ?? '').trim();
+    const code = String(getField(r, 'UserCode') ?? '').trim();
+    const role = String(getField(r, 'UserType') ?? '').trim();
+    if (fromRow || firm) {
+      return {
+        name: fromRow || firm,
+        sub: [code, firm && firm !== fromRow ? firm : '', mobile, role].filter(Boolean).join(' · '),
+      };
+    }
+    const fallback = userMap.get(uid);
+    return { name: fallback?.name ?? `User ${uid}`, sub: fallback?.sub ?? '' };
+  };
+
+  /** "19.0760, 72.8777" with a map link, or a dash. */
+  const coords = (r: Row) => {
+    const lat = String(getField(r, 'Latitude') ?? '').trim();
+    const lng = String(getField(r, 'Longitude') ?? '').trim();
+    return lat && lng ? { lat, lng } : null;
+  };
 
   const userOptions = useMemo<AutocompleteOption[]>(
     () =>
@@ -121,9 +154,9 @@ export function LoginHistoryScreen({ def }: CustomScreenProps) {
     [users, userMap],
   );
 
-  const userName = (id: number) => userMap.get(id)?.name ?? `User ${id}`;
 
   const runSearch = () => setApplied(draft);
+  const resetFilters = () => { const d = defaultFilters(); setDraft(d); setApplied(d); };
   const today = apiDate(new Date());
   const setRange = (fromDate: string) => {
     const next = { ...draft, fromDate, toDate: today };
@@ -132,18 +165,27 @@ export function LoginHistoryScreen({ def }: CustomScreenProps) {
   };
   const isRange = (fromDate: string) => applied.fromDate === fromDate && applied.toDate === today;
 
-  // CSV export with the joined user name resolved.
-  const exportRows = rows.map((r) => {
-    const uid = Number(getField(r, 'UserID') ?? 0);
+  // CSV export — the same columns the table shows, in the same order. Applied per row so the
+  // export can map the rows it fetches for itself, not just the ones the table is holding.
+  const exportRow = (r: Row) => {
+    const u = rowUser(r);
     return {
-      User: userName(uid),
-      UserID: uid,
+      User: u.name,
+      UserCode: String(getField(r, 'UserCode') ?? ''),
+      FirmName: String(getField(r, 'FirmName') ?? ''),
+      MobileNumber: String(getField(r, 'MobileNumber') ?? ''),
+      Role: String(getField(r, 'UserType') ?? ''),
+      UserID: Number(getField(r, 'UserID') ?? 0),
       Through: String(getField(r, 'Through') ?? ''),
       IPAddress: String(getField(r, 'IPAddress') ?? ''),
+      Latitude: String(getField(r, 'Latitude') ?? ''),
+      Longitude: String(getField(r, 'Longitude') ?? ''),
+      Location: String(getField(r, 'Location') ?? ''),
+      Device: String(getField(r, 'SimCardDetails') ?? ''),
       Message: String(getField(r, 'LoginMessage') ?? ''),
       Date: dateTime(String(getField(r, 'Date') ?? '')),
     };
-  });
+  };
 
   return (
     <>
@@ -152,51 +194,52 @@ export function LoginHistoryScreen({ def }: CustomScreenProps) {
         subtitle={def.subtitle}
         icon={pickIcon(def.title)}
         actions={
-          <>
-            <span className="hidden text-sm text-slate-400 sm:inline">{rows.length} rows</span>
-            <Button variant="outline" size="sm" onClick={() => exportToCsv(exportRows, def.title)} disabled={rows.length === 0}>
-              <Download className="size-4" />
-              Export
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => refetch()} loading={isFetching}>
-              <RefreshCw className="size-4" />
-            </Button>
-          </>
+          <ReportActions
+            total={rows.length}
+            loading={isFetching}
+            onRefresh={() => refetch()}
+            exportLoading={exporting}
+            // Every sign-in the filters match, page after page — not the window on screen.
+            onExport={() => runExport({
+              filename: def.title,
+              onScreen: rows,
+              map: exportRow,
+              fetchAll: async (skip, take) => ({ rows: await fetchHistory(applied, skip, take), count: 0 }),
+            })}
+            exportDisabled={rows.length === 0}
+          />
         }
       />
 
-      <Card className="mb-4">
-        <CardBody>
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
-              <SlidersHorizontal className="size-4 text-brand-600" />
-              Filters
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {([
-                ['Today', apiDate(new Date())],
-                ['7 days', apiDate(subDays(new Date(), 7))],
-                ['30 days', apiDate(subDays(new Date(), 30))],
-                ['This month', apiDate(startOfMonth(new Date()))],
-              ] as const).map(([label, fromDate]) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => setRange(fromDate)}
-                  className={cn(
-                    'rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition-colors',
-                    isRange(fromDate)
-                      ? 'bg-brand-50 text-brand-700 ring-brand-500/25'
-                      : 'text-slate-500 ring-slate-200 hover:bg-slate-50',
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+      <ReportFilterBar
+        onSearch={runSearch}
+        onReset={resetFilters}
+        loading={isFetching}
+        extra={
+          <div className="flex flex-wrap gap-1.5">
+            {([
+              ['Today', apiDate(new Date())],
+              ['7 days', apiDate(subDays(new Date(), 7))],
+              ['30 days', apiDate(subDays(new Date(), 30))],
+              ['This month', apiDate(startOfMonth(new Date()))],
+            ] as const).map(([label, fromDate]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setRange(fromDate)}
+                className={cn(
+                  'rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition-colors',
+                  isRange(fromDate)
+                    ? 'bg-brand-50 text-brand-700 ring-brand-500/25'
+                    : 'text-slate-500 ring-slate-200 hover:bg-slate-50',
+                )}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-
-          <form onSubmit={(e) => { e.preventDefault(); runSearch(); }} className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        }
+      >
             <Input label="From date" type="date" max={draft.toDate} value={draft.fromDate} onChange={(e) => upd({ fromDate: e.target.value })} />
             <Input label="To date" type="date" value={draft.toDate} onChange={(e) => upd({ toDate: e.target.value })} />
             <Autocomplete
@@ -212,15 +255,7 @@ export function LoginHistoryScreen({ def }: CustomScreenProps) {
               <option value="Android">App / Android</option>
               <option value="API">API</option>
             </Select>
-            <div className="flex items-end lg:col-start-4">
-              <Button type="submit" loading={isFetching} className="w-full">
-                <SearchIcon className="size-4" />
-                Search
-              </Button>
-            </div>
-          </form>
-        </CardBody>
-      </Card>
+      </ReportFilterBar>
 
       <div className="overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card">
         <div className="overflow-x-auto">
@@ -231,6 +266,9 @@ export function LoginHistoryScreen({ def }: CustomScreenProps) {
                 <th className="px-4 py-3 text-left">User</th>
                 <th className="px-4 py-3 text-left">Channel</th>
                 <th className="px-4 py-3 text-left">IP Address</th>
+                <th className="px-4 py-3 text-left">Latitude</th>
+                <th className="px-4 py-3 text-left">Longitude</th>
+                <th className="px-4 py-3 text-left">Location</th>
                 <th className="px-4 py-3 text-left">Message</th>
                 <th className="px-4 py-3 text-left">Date &amp; Time</th>
               </tr>
@@ -239,28 +277,29 @@ export function LoginHistoryScreen({ def }: CustomScreenProps) {
               {isFetching ? (
                 Array.from({ length: 8 }).map((_, r) => (
                   <tr key={r} className="border-b border-slate-100 last:border-0">
-                    {Array.from({ length: 6 }).map((__, c) => (
+                    {Array.from({ length: 9 }).map((__, c) => (
                       <td key={c} className="px-4 py-3"><Skeleton className="h-4 w-full max-w-[120px]" /></td>
                     ))}
                   </tr>
                 ))
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={9}>
                     <EmptyState title="No login history" description="No sign-ins for this range. Widen the dates or clear the user filter." />
                   </td>
                 </tr>
               ) : (
                 rows.map((r, i) => {
-                  const uid = Number(getField(r, 'UserID') ?? 0);
-                  const info = userMap.get(uid);
+                  const info = rowUser(r);
                   const through = String(getField(r, 'Through') ?? '');
+                  const pos = coords(r);
+                  const place = String(getField(r, 'Location') ?? '').trim();
                   return (
                     <tr key={String(getField(r, 'LoginHistoryID') ?? i)} className="border-b border-slate-100 transition-colors last:border-0 hover:bg-slate-50/60">
                       <td className="px-3 py-3 tabular-nums text-slate-400">{i + 1}</td>
                       <td className="px-4 py-3">
-                        <div className="font-medium text-slate-700">{info?.name ?? `User ${uid}`}</div>
-                        {info?.sub && <div className="text-xs text-slate-400">{info.sub}</div>}
+                        <div className="font-medium text-slate-700">{info.name}</div>
+                        {info.sub && <div className="text-xs text-slate-400">{info.sub}</div>}
                       </td>
                       <td className="px-4 py-3">
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
@@ -269,6 +308,25 @@ export function LoginHistoryScreen({ def }: CustomScreenProps) {
                         </span>
                       </td>
                       <td className="px-4 py-3 font-medium tabular-nums text-slate-600">{String(getField(r, 'IPAddress') || '—')}</td>
+                      <td className="px-4 py-3 tabular-nums text-slate-600">{pos?.lat ?? '—'}</td>
+                      <td className="px-4 py-3 tabular-nums text-slate-600">{pos?.lng ?? '—'}</td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {/* A pair of coordinates in a table is not a place until somebody can open
+                            it. The link is the only thing that turns this column into an answer. */}
+                        {pos ? (
+                          <a
+                            href={`https://www.google.com/maps/search/?api=1&query=${pos.lat},${pos.lng}`}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="inline-flex items-center gap-1 font-medium text-brand-600 hover:underline"
+                          >
+                            <MapPin className="size-3.5" />
+                            {place && !place.includes(',') ? place : 'View on map'}
+                          </a>
+                        ) : (
+                          place || '—'
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-slate-600">{String(getField(r, 'LoginMessage') || '—')}</td>
                       <td className="whitespace-nowrap px-4 py-3 text-slate-600">{dateTime(String(getField(r, 'Date') ?? ''))}</td>
                     </tr>

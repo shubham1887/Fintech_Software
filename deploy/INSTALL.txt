@@ -1,0 +1,153 @@
+===========================================================
+  FINO - SETUP  /  INSTALL AUR UPDATE
+===========================================================
+
+  ONE FILE TO RUN:   FinoSetup.exe     (just double-click it)
+
+  Windows asks for permission - click Yes. A window opens and walks you
+  through it.
+
+  The same file does every job:
+     new server        -> installs everything, database included
+     already installed -> offers to update, keeping all data
+     logo / name change-> changes them live, without reinstalling
+     backup            -> takes one on demand
+
+  (Setup.bat does the same thing in a black command window, if you prefer
+   that. Right-click it -> "Run as administrator".)
+
+
+-----------------------------------------------------------
+BEFORE YOU START  /  SHURU KARNE SE PEHLE
+-----------------------------------------------------------
+
+Keep these four things ready. Setup asks for them and nothing else.
+
+  1. Company name        - as it should appear in the panel
+  2. Company logo        - PNG, JPG or SVG file
+                           (CorelDRAW .cdr / Illustrator .ai will NOT work -
+                            ask their designer to export a PNG, about
+                            512 x 512, transparent background)
+  3. Admin login         - mobile number, email, and a password
+                           (at least 8 characters; the owner changes it at
+                            first login)
+  4. Web address         - e.g. https://panel.theircompany.com
+                           Leave blank if they will use the IP address only
+
+What the server needs: Windows Server 2016 or newer, 4 GB RAM, 20 GB free.
+Nothing else. If SQL Server is missing, setup downloads and installs the free
+SQL Server Express for you (about 300 MB, needs internet).
+
+You do NOT need to install IIS, Node.js or any .NET package. You do NOT need
+to create folders, edit appsettings, edit the UI config, or load database
+tables. All of that is done for you.
+
+The logo also decides the portal's colours: the strongest colour in the
+artwork becomes the brand colour, and the sidebar and header become dark
+shades of it. The phone app gets the same colours. Nothing to choose.
+
+ALREADY USING IIS? If this server already serves the panel and the API as
+two sites (api.client.com + ui.client.com, each with its own certificate),
+run Setup.bat instead and choose "2. As two IIS sites". Same download -
+see SPLIT-DEPLOY.txt.
+
+
+-----------------------------------------------------------
+NEW SERVER  /  NAYA SERVER
+-----------------------------------------------------------
+
+  1. Copy the release folder onto the server and unzip it COMPLETELY.
+     (Do not run it from inside the .zip window - Windows only unpacks the
+      one file you open, and it will not work.)
+
+  2. Double-click  FinoSetup.exe  and click Yes when Windows asks.
+
+  3. It checks the server and shows what it found. Click "Install on this
+     server".
+
+  4. Fill in the form:
+       - company name
+       - logo  (click "Choose logo file..." and pick the PNG/JPG/SVG)
+       - the owner's mobile, email and password
+       - the web address and port
+     Then click "Install now".
+
+  5. Wait. If SQL Server has to be installed, that is 10-20 minutes.
+     Building the database is another 3-5 minutes. The window shows what it
+     is doing. Do not close it.
+
+  6. When it says "Installation complete", click "Open the panel" and log in
+     with the mobile number and password you typed.
+
+  7. Read INSTALLATION-SUMMARY.txt in C:\Fino and keep it safe.
+
+
+-----------------------------------------------------------
+UPDATING AN EXISTING SERVER  /  UPDATE KARNA
+-----------------------------------------------------------
+
+  1. Unzip the NEW release on the same server.
+  2. Double-click  FinoSetup.exe .
+  3. It shows the installed version and the new one, with buttons:
+
+       Update to this release
+       Change logo / name
+       Back up now
+       Open the panel
+
+  4. Click "Update to this release". It takes a backup first, replaces the
+     program files, and puts the old version back automatically if the new
+     one does not start.
+
+Data, settings, logo, uploaded documents and the keys are all kept. Any new
+database changes in the release are applied on the first start by itself.
+
+
+-----------------------------------------------------------
+CHANGING THE LOGO OR NAME LATER
+-----------------------------------------------------------
+
+Double-click FinoSetup.exe and click "Change logo / name".
+Takes ten seconds, nothing is reinstalled, no restart. Tell the client to
+press Ctrl+F5 once in their browser.
+
+If the client sends a .cdr (CorelDRAW) or .ai (Illustrator) file, the setup
+says so and prints exactly what to ask their designer for. You can install
+without a logo and add it afterwards.
+
+
+-----------------------------------------------------------
+IF SOMETHING GOES WRONG  /  AGAR KUCH GADBAD HO
+-----------------------------------------------------------
+
+"Could not connect to SQL Server"
+    SQL Server is stopped or the name is wrong. Open services.msc and check
+    that SQL Server is Running. Setup usually finds it by itself.
+
+"The service stopped by itself" / "database setup failed"
+    Open Event Viewer -> Windows Logs -> Application and read the newest red
+    entry. It names the exact step that failed. Send that text to support.
+
+The page does not open from another computer
+    Setup opens the firewall port, but a company firewall or the cloud
+    provider's security group may still block it. Check there.
+
+Setup says the application files are missing
+    The release was not unzipped properly. Unzip the whole folder and try
+    again.
+
+
+-----------------------------------------------------------
+IMPORTANT  /  ZAROORI
+-----------------------------------------------------------
+
+  * Put HTTPS in front before real money moves through it (an SSL
+    certificate, or Cloudflare). Plain HTTP is only fine for testing.
+
+  * A nightly backup at 2 AM is scheduled automatically, writing to
+    C:\FinoBackups. COPY THOSE FILES OFF THE SERVER regularly - a backup
+    that only exists on the same machine does not survive that machine.
+
+  * Keep INSTALLATION-SUMMARY.txt and the file
+    C:\Fino\app\appsettings.Production.json safe. They hold this
+    installation's own keys. Without them a restored database cannot be used.

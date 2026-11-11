@@ -30,6 +30,8 @@ import com.fintech.portal.bridge.NativeBridge
 import com.fintech.portal.config.AppConfig
 import com.fintech.portal.config.ConfigStore
 import com.fintech.portal.databinding.ActivityMainBinding
+import com.fintech.portal.push.PortalMessagingService
+import com.fintech.portal.push.PushManager
 import com.fintech.portal.util.JsBridgeScript
 import com.fintech.portal.util.darken
 import com.fintech.portal.util.isOnline
@@ -61,6 +63,7 @@ class MainActivity : AppCompatActivity() {
     private var lastBackPress = 0L
     private var pageFailed = false
     private var overlayHidden = false
+    private var notificationPermissionAsked = false
 
     private val config: AppConfig get() = ConfigStore.current
 
@@ -122,6 +125,17 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+
+        // A notification tap on a running app must NOT reload the start URL — that would
+        // throw away whatever the user was in the middle of. Hand the alert to the page and
+        // let the SPA route to it.
+        if (intent.hasExtra(PortalMessagingService.EXTRA_PUSH_URL) ||
+            intent.hasExtra(PortalMessagingService.EXTRA_PUSH_ID)
+        ) {
+            deliverPendingPush()
+            return
+        }
+
         loadStartUrl(intent)
     }
 
@@ -263,6 +277,12 @@ class MainActivity : AppCompatActivity() {
                     showOffline(false)
                     hideBrandOverlay()
                 }
+                // The bridge is injected with the page, so this is the first moment the
+                // console can be told anything. Hand it the push token, then the notification
+                // that opened the app (if any) — in that order, so the console has registered
+                // the device before it acts on the tap.
+                deliverPushToken()
+                deliverPendingPush()
             },
             onError = { message ->
                 pageFailed = true
@@ -371,6 +391,80 @@ class MainActivity : AppCompatActivity() {
         binding.webView.loadUrl(target)
     }
 
+    // ------------------------------------------------------------------ push
+
+    /**
+     * Ask for tray permission once, on Android 13+.
+     *
+     * Deliberately NOT on the very first frame: a permission dialog before the user has seen
+     * what the app is gets refused, and Android only offers it twice. This runs after the
+     * console has loaded and the user is signed in, which is also when the alerts start being
+     * worth receiving.
+     */
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (notificationPermissionAsked) return
+
+        val granted = ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) return
+
+        notificationPermissionAsked = true
+        requestPermission(android.Manifest.permission.POST_NOTIFICATIONS) { allowed ->
+            if (allowed) deliverPushToken()
+        }
+    }
+
+    /** Push the FCM token into the page as a `native:pushToken` event. */
+    private fun deliverPushToken() {
+        // A fresh config may have switched push on since launch.
+        PushManager.init(this, config)
+        if (!PushManager.isReady) return
+
+        requestNotificationPermissionIfNeeded()
+
+        PushManager.fetchToken { token ->
+            val payload = org.json.JSONObject()
+                .put("token", token)
+                .put("configured", true)
+                .put("platform", "android")
+                .put("device", Build.MANUFACTURER + " " + Build.MODEL)
+                .put("appVersion", BuildConfig.VERSION_NAME)
+            emitToPage("pushToken", payload)
+        }
+    }
+
+    /**
+     * If the app was opened by tapping a notification, tell the page which alert it was so it
+     * can navigate there and refresh the bell. Consumed once — the extras are stripped so a
+     * later rotation or resume does not replay the same navigation.
+     */
+    private fun deliverPendingPush() {
+        val source = intent ?: return
+        val url = source.getStringExtra(PortalMessagingService.EXTRA_PUSH_URL).orEmpty()
+        val id = source.getIntExtra(PortalMessagingService.EXTRA_PUSH_ID, 0)
+        if (url.isBlank() && id <= 0) return
+
+        source.removeExtra(PortalMessagingService.EXTRA_PUSH_URL)
+        source.removeExtra(PortalMessagingService.EXTRA_PUSH_ID)
+
+        emitToPage(
+            "push",
+            org.json.JSONObject()
+                .put("notificationId", id)
+                .put("url", url)
+                .put("foreground", false)
+        )
+        PortalMessagingService.clearAll(this)
+    }
+
+    /** Fire a `native:<event>` CustomEvent inside the WebView. */
+    private fun emitToPage(event: String, payload: org.json.JSONObject) {
+        val js = "window.dispatchEvent(new CustomEvent('native:$event',{detail:$payload}));"
+        runOnUiThread { binding.webView.evaluateJavascript(js, null) }
+    }
+
     private fun retry() {
         if (!isOnline()) {
             toast("Still no internet connection")
@@ -425,6 +519,11 @@ class MainActivity : AppCompatActivity() {
         CookieManager.getInstance().flush()
         binding.webView.clearHistory()
         binding.webView.clearCache(true)
+        // Drop the push token too. A retail counter phone is shared, and the outgoing user's
+        // alerts must not keep landing on it. (The console has already told the API to stop
+        // pushing to this token, while its session was still valid.)
+        PushManager.clearToken()
+        PortalMessagingService.clearAll(this)
         loadStartUrl(null)
     }
 

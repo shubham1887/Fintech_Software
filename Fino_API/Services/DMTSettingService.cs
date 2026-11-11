@@ -1,3 +1,4 @@
+using FintechApp.Helpers;
 using FintechApp.Entities;
 using FintechApp.Interfaces.Repositories;
 using FintechApp.Interfaces.Services;
@@ -39,8 +40,39 @@ namespace FintechApp.Services
             return entity == null ? null : MapToResponse(entity);
         }
 
+        /// <summary>
+        /// Refuses a gateway order that cannot work: an ACTIVE payout rail sequenced ahead of an
+        /// ACTIVE pure rail.
+        ///
+        /// Sequence decides which gateway serves a transfer. A pure rail can only send for a
+        /// remitter it has registered, and that registration happens on the gateway in force when
+        /// the customer is onboarded. Put payout first and no remitter is ever registered, so the
+        /// moment a transfer reaches the pure rail — a bigger ticket, a slab switch, the payout
+        /// row going down — it is refused for an unknown sender, and the retailer sees a failure
+        /// they cannot fix. Pure first, payout after, is the only order that survives both.
+        /// </summary>
+        private async Task<string> ValidateRailOrder(int editingId, bool isPayout, bool isActive, int sequence)
+        {
+            if (!isPayout || !isActive) return StatusType.Ok;
+
+            var others = (await _repository.GetAll())
+                .Where(s => s.DMTSettingID != editingId && s.IsActive && !s.IsPayoutDMT)
+                .ToList();
+
+            var blocked = others.FirstOrDefault(s => s.Sequence > sequence);
+            if (blocked == null) return StatusType.Ok;
+
+            return $"Sequence {sequence} puts this payout gateway ahead of the pure DMT gateway " +
+                   $"'{blocked.DisplayName}' (sequence {blocked.Sequence}). Pure DMT must come first — " +
+                   "a sender registered on it is what the pure rail needs later. " +
+                   $"Give this payout gateway a sequence above {blocked.Sequence}.";
+        }
+
         public async Task<string> Create(CreateDMTSettingRequest request)
         {
+            string orderFailure = await ValidateRailOrder(0, request.IsPayoutDMT, request.IsActive, request.Sequence);
+            if (!orderFailure.EqualsIgnoreCase(StatusType.Ok)) return orderFailure;
+
             var entity = new DMTSetting
             {
                 Name = request.Name,
@@ -71,6 +103,10 @@ namespace FintechApp.Services
         {
             var entity = await _repository.GetByID(request.DMTSettingID);
             if (entity == null) return Messages.DMTSettingMessages.NotFound;
+
+            string orderFailure = await ValidateRailOrder(
+                request.DMTSettingID, request.IsPayoutDMT, request.IsActive, request.Sequence);
+            if (!orderFailure.EqualsIgnoreCase(StatusType.Ok)) return orderFailure;
 
             entity.Name = request.Name;
             entity.DisplayName = request.DisplayName;

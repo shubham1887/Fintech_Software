@@ -1,0 +1,196 @@
+===========================================================
+  ANDROID APP AND NOTIFICATIONS
+===========================================================
+
+Read this if a client asks "where is the app?" or "why do
+notifications not arrive on the phone?".
+
+
+-----------------------------------------------------------
+HOW THE ANDROID APP WORKS
+-----------------------------------------------------------
+
+The app is a portal shell. It opens the client's panel and
+adds the phone parts: splash screen, back button, file
+upload/download, and push notifications.
+
+It reads  https://<portal>/app-config.json  ON EVERY LAUNCH.
+That means the brand name, colours, support numbers, push
+keys, maintenance banner and force-update can all be changed
+on the server WITHOUT building or sending a new APK.
+
+The setup writes that file for you. If a panel is ever
+re-branded, run Set-Branding.ps1 (or Configure-Split.ps1) and
+it is rewritten - that also stops the app pointing at the
+previous client's portal, which is what happens if the file
+is left as it shipped.
+
+
+-----------------------------------------------------------
+BUILDING A CLIENT'S APK
+-----------------------------------------------------------
+
+The APK is part of the release. It is built on the BUILD
+machine (the one with the JDK and the Android SDK), travels
+inside the zip, and the setup publishes it onto the portal -
+nobody copies a file onto the server by hand.
+
+  1. Register the client once (in Fino_Android):
+
+       .\tools\new-client.ps1 -Id finocore -Name "finocore" `
+           -ApplicationId "net.finocore.app" `
+           -Url "https://finocore.net" `
+           -Primary "#0949ce" -Accent "#3171f6"
+
+     Id must be lowercase letters/digits - it becomes the
+     Gradle flavour name. The two colours are the ones the
+     setup reads off the client's logo; they are printed
+     when a logo is applied, and are also in the portal's
+     config.json as brandColor / accentColor.
+
+  2. Build the release WITH the app:
+
+       .\deploy\Build-Release.ps1 -Version 2026.09.20.5 `
+           -AndroidClient finocore
+
+     That runs  gradlew assembleFinocoreRelease  and puts the
+     result in the release as  android\finocore.apk .
+
+     No JDK/SDK on the build machine? It says so and carries
+     on without the app. Built the APK somewhere else? Drop
+     it in  deploy\prebuilt-apk\finocore.apk  and build again
+     - it is picked up from there.
+
+     A release build needs a signing key (keystore.properties
+     in Fino_Android). Keep ONE keystore per client, forever:
+     Android refuses to update an app signed with a different
+     key, and the only fix is for every user to uninstall and
+     reinstall.
+
+  3. Install or re-brand as usual. The setup publishes the
+     APK into the panel site itself:
+
+       <ui folder>\app\finocore.apk
+       https://<portal>/app/finocore.apk
+
+     The download page at  https://<portal>/app/  is written
+     at the same time, with the client's logo on it. It checks
+     whether the APK is actually there: until one is published
+     the button reads "Not published yet" instead of giving
+     people a broken link.
+
+  4. Send clients to  https://<portal>/app/
+
+  A later APK on its own (no new release): copy it over
+  <ui folder>\app\<brand>.apk. The page picks it up - there
+  is nothing else to change, because the app reads its
+  settings from app-config.json at every launch.
+
+  If a downloaded APK will not install ("corrupt"), the site
+  is answering a missing file with the panel's index.html.
+  Check that the UI site's web.config is the one from
+  iis\ui.web.config - it 404s any missing path that has a
+  file extension. A web page saved under an .apk name is
+  exactly what Android calls corrupt.
+
+
+-----------------------------------------------------------
+TURNING ON PUSH NOTIFICATIONS
+-----------------------------------------------------------
+
+WITHOUT any of this, the platform still works: every alert is
+stored and appears in the bell inside the panel and inside the
+app. Push only adds the phone's notification tray - the part
+that reaches someone who does not have the app open.
+
+Push needs a Firebase project (free). TWO halves have to
+match, and both come from the same project:
+
+  SERVER half - so the API may send
+  ---------------------------------
+  Firebase Console -> Project settings -> Service accounts
+    -> "Generate new private key"  -> downloads a .json
+
+  Give that file to the setup:
+
+    Configure-Split.ps1 -FcmServiceAccountFile "C:\keys\firebase.json"
+
+  (or, for a service install, put it beside the app and add
+   to appsettings.Production.json:
+      "FCM": { "ServiceAccountFile": "C:\\Fino\\app\\firebase.json" } )
+
+  APP half - so the phone may receive
+  -----------------------------------
+  Firebase Console -> Project settings -> Your apps
+    -> Android app -> google-services.json
+
+  Copy four values out of it into app-config.json on the
+  panel site (or pass them to Configure-Split.ps1):
+
+      fcmProjectId    project_info.project_id
+      fcmAppId        client[0].client_info.mobilesdk_app_id
+      fcmApiKey       client[0].api_key[0].current_key
+      fcmSenderId     project_info.project_number
+
+  The app package name in Firebase MUST equal the
+  applicationId used when building the APK
+  (e.g. net.finocore.app), or Firebase rejects the device.
+
+  No APK rebuild is needed for either half.
+
+
+-----------------------------------------------------------
+WHY NOTIFICATIONS MIGHT NOT ARRIVE
+-----------------------------------------------------------
+
+In order, cheapest check first:
+
+  1. Has any alert actually been sent?
+     Panel -> Support -> Send Alert. The "Recently sent" list
+     on that page shows every broadcast with how many people
+     it reached. If nothing was ever sent, the bell is empty
+     because there is nothing in it, not because it is broken.
+
+     NOTE: the sender is left out of their own audience, so an
+     admin checking their own bell after sending will see
+     nothing unless "Send me a copy" was ticked. That is the
+     quickest way to confirm an alert really went out.
+
+  2. Does the bell show it, but not the phone tray?
+     Then the alert was stored and delivery was skipped:
+     push is not configured. See above.
+
+  2a. Is the panel running a build older than 2026-09-20?
+     Before that, the API refused AppNotification/RegisterDevice
+     for every role except admin, so no phone could ever hand
+     over its token and UserDevices stayed empty - push could
+     not work no matter how Firebase was configured. Update the
+     panel, then reopen the app on one handset and check that a
+     row appears in UserDevices.
+
+  3. Bell shows it, push configured, still nothing on the
+     phone?
+       - the app must have been opened at least once since
+         push was configured (that is when it registers its
+         device token);
+       - the package name in Firebase must match the APK;
+       - Android 13+ asks the user for notification
+         permission - it must have been allowed.
+
+  4. IN A DESKTOP BROWSER, notifications appear ONLY in the
+     in-app bell. Browser/desktop push is not implemented in
+     the panel - there is no service worker in the build.
+     Nothing is misconfigured; the feature is not there yet.
+     (ENTERPRISE-ROADMAP.md, "what to build next".)
+
+
+-----------------------------------------------------------
+WHAT NEVER NEEDS AN APK REBUILD
+-----------------------------------------------------------
+
+  brand name, colours, splash colour, portal URL, support
+  numbers, start page, maintenance banner, force-update
+  message, push keys, allowed hosts
+
+Everything in that list lives in app-config.json on the
+server. Change it, and the next launch picks it up.

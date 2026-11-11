@@ -1,11 +1,12 @@
-import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import type { ReactNode, ReactElement } from 'react';
+import { Children, isValidElement, useMemo, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { Building2, Fingerprint, MapPin, Network, ShieldCheck, Wallet } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { inr, dateOnly, dateTime } from '@/lib/format';
 import { roleLabel } from '@/lib/roles';
 import { Badge } from '@/components/ui/Badge';
+import { StatRow } from '@/components/report/StatRow';
 import type { UserRow } from '@/api/users.api';
 
 /**
@@ -16,34 +17,31 @@ import type { UserRow } from '@/api/users.api';
 
 // ── Small building blocks ──────────────────────────────────────────────────────
 
-/** One flat KPI — label over value, no card chrome (matches the All Users strip). */
-export function Kpi({
-  label, value, tone = 'text-slate-800', icon,
-}: { label: string; value: string; tone?: string; icon: ReactNode }) {
-  return (
-    <div className="flex items-start gap-3 px-4 py-3.5">
-      <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-slate-50 text-slate-400 ring-1 ring-inset ring-slate-200/70">
-        {icon}
-      </div>
-      <div className="min-w-0">
-        <div className="truncate text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
-        <div className={cn('mt-0.5 font-display text-lg font-bold tabular-nums', tone)}>{value}</div>
-      </div>
-    </div>
-  );
+/**
+ * The user-lifecycle screens' figures bar.
+ *
+ * `Kpi` now just describes one metric; `KpiStrip` renders them through the shared `StatRow`, so
+ * these screens carry the same compact bar as every report instead of their own taller strip with
+ * a 32px icon chip per metric. Callers are unchanged — they still write
+ * `<KpiStrip><Kpi .../><Kpi .../></KpiStrip>`.
+ */
+export function Kpi(_: { label: string; value: string; tone?: string; icon: ReactNode }) {
+  // Never rendered directly — KpiStrip reads these props off its children. Declared as a component
+  // so the call sites stay readable and type-checked.
+  return null;
 }
 
+interface KpiProps { label: string; value: string; tone?: string; icon?: ReactNode }
+
 export function KpiStrip({ children, columns = 4 }: { children: ReactNode; columns?: 4 | 5 }) {
-  return (
-    <div
-      className={cn(
-        'mb-5 grid grid-cols-2 divide-x divide-y divide-slate-200/70 overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card lg:divide-y-0',
-        columns === 5 ? 'sm:grid-cols-3 lg:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4',
-      )}
-    >
-      {children}
-    </div>
-  );
+  const items = Children.toArray(children)
+    .filter(isValidElement)
+    .map((child) => {
+      const p = (child as ReactElement<KpiProps>).props;
+      return { label: p.label, value: p.value, tone: p.tone, icon: p.icon };
+    });
+
+  return <StatRow items={items} columns={columns} />;
 }
 
 /** Role tabs shared by both screens. `counts` is keyed by UserTypeID; 0 = everyone. */

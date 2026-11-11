@@ -13,29 +13,56 @@ namespace FintechApp.Services
         private readonly ISlabMasterRepository _slabMasterRepository;
         private readonly IServiceRepository _serviceRepository;
         private readonly IOperatorRepository _operatorRepository;
+        // A band on an admin slab is the ceiling for every reseller card cut from it, so every
+        // write here has to re-check those cards. See ISlabDelegationService.RevalidateChildren.
+        private readonly ISlabDelegationService _delegation;
 
         public SlabDetailService(
             ISlabDetailRepository repository,
             ISlabMasterRepository slabMasterRepository,
             IServiceRepository serviceRepository,
-            IOperatorRepository operatorRepository)
+            IOperatorRepository operatorRepository,
+            ISlabDelegationService delegation)
         {
             _repository = repository;
             _slabMasterRepository = slabMasterRepository;
             _serviceRepository = serviceRepository;
             _operatorRepository = operatorRepository;
+            _delegation = delegation;
         }
 
+        /// <summary>Every slab's rows, ordered as <see cref="GetBySlabMasterID"/> orders one slab's.</summary>
         public async Task<List<SlabDetailResponse>> GetAll()
         {
             var all = await _repository.GetAll();
-            return all.Select(MapToResponse).ToList();
+            return all.Select(MapToResponse)
+                .OrderBy(r => r.SlabMasterID)
+                .ThenBy(r => r.ServiceName)
+                .ThenBy(r => r.OperatorName)
+                .ThenBy(r => r.FromAmount)
+                .ToList();
         }
 
+        /// <summary>
+        /// A slab's rate rows, ordered the way the bands are READ rather than the order they
+        /// happened to be typed in.
+        ///
+        /// The repository returns insertion order, so a ₹100 – ₹2,000 band entered after the
+        /// higher ones appeared underneath ₹25,001 – ₹50,000 and the ladder looked broken —
+        /// a commission editor where the ranges are out of sequence is one where the operator
+        /// cannot see a gap or an overlap at a glance, which is the whole reason to list them.
+        ///
+        /// Same ordering as the Commission Structure report (service, then operator, then the
+        /// band) so the screen that SETS the rates and the report that shows them read alike.
+        /// </summary>
         public async Task<List<SlabDetailResponse>> GetBySlabMasterID(int slabMasterId)
         {
             var list = await _repository.GetBySlabMasterID(slabMasterId);
-            return list.Select(MapToResponse).ToList();
+            return list.Select(MapToResponse)
+                .OrderBy(r => r.ServiceName)
+                .ThenBy(r => r.OperatorName)
+                .ThenBy(r => r.FromAmount)
+                .ToList();
         }
 
         public async Task<SlabDetailResponse?> GetByID(int slabDetailId)
@@ -44,7 +71,7 @@ namespace FintechApp.Services
             return entity == null ? null : MapToResponse(entity);
         }
 
-        public async Task<string> Create(CreateSlabDetailRequest request)
+        public async Task<string> Create(CreateSlabDetailRequest request, int byUserID = 0, string ipAddress = "")
         {
             var slab = await _slabMasterRepository.GetByID(request.SlabMasterID);
             if (slab == null) return Messages.SlabDetailMessages.InvalidSlabMaster;
@@ -61,10 +88,16 @@ namespace FintechApp.Services
 
             var entity = MapFromCreate(request);
             int result = await _repository.Insert(entity);
-            return result > 0 ? StatusType.Ok : Messages.Common.Message.Failed;
+            if (result <= 0) return Messages.Common.Message.Failed;
+
+            // A band the resellers' cards do not have yet. Cloned down to them at this card's own
+            // figures, because a card missing a band makes the engine walk UP to this one and pay
+            // the retailer the operator's own rate, skipping every margin in between.
+            await _delegation.RevalidateChildren(request.SlabMasterID, byUserID, ipAddress);
+            return StatusType.Ok;
         }
 
-        public async Task<string> Update(UpdateSlabDetailRequest request)
+        public async Task<string> Update(UpdateSlabDetailRequest request, int byUserID = 0, string ipAddress = "")
         {
             var entity = await _repository.GetByID(request.SlabDetailID);
             if (entity == null) return Messages.SlabDetailMessages.NotFound;
@@ -86,7 +119,15 @@ namespace FintechApp.Services
 
             ApplyUpdate(entity, request);
             int result = await _repository.Update(entity);
-            return result > 0 ? StatusType.Ok : Messages.Common.Message.Failed;
+            if (result <= 0) return Messages.Common.Message.Failed;
+
+            // Lowering a rate here lowers the ceiling for every card cut from this one, however
+            // many levels down. Any band that now hands out more than it is allowed to is marked
+            // INVALID and stops paying until its owner corrects it — which is the whole point of
+            // the check, and why it runs on the way out of a successful save rather than being
+            // left to a nightly job.
+            await _delegation.RevalidateChildren(request.SlabMasterID, byUserID, ipAddress);
+            return StatusType.Ok;
         }
 
         // Amount bands within one slab + service + operator have to be disjoint - only one row may
@@ -133,13 +174,18 @@ namespace FintechApp.Services
         private const string CategorySurcharge = "Surcharge";
         private const string CategoryCommission = "Commission";
 
-        public async Task<string> Delete(int slabDetailId)
+        public async Task<string> Delete(int slabDetailId, int byUserID = 0, string ipAddress = "")
         {
             var entity = await _repository.GetByID(slabDetailId);
             if (entity == null) return Messages.SlabDetailMessages.NotFound;
 
             int result = await _repository.Delete(slabDetailId);
-            return result > 0 ? StatusType.Ok : Messages.Common.Message.Failed;
+            if (result <= 0) return Messages.Common.Message.Failed;
+
+            // The ceiling a reseller priced against has just been removed. Their band goes INVALID
+            // rather than becoming unlimited — what they agreed to no longer exists.
+            await _delegation.RevalidateChildren(entity.SlabMasterID, byUserID, ipAddress);
+            return StatusType.Ok;
         }
 
         private static SlabDetail MapFromCreate(CreateSlabDetailRequest r) => new()
@@ -174,6 +220,8 @@ namespace FintechApp.Services
             RealClientCommType = CanonicalCommType(r.RealClientCommType),
             RealClientCommissionCategory = CanonicalCategory(r.RealClientCommissionCategory),
             IsActive = r.IsActive,
+            GSTType = ChargeGstType.Normalize(r.GSTType),
+            GSTRatePercent = r.GSTRatePercent,
             DateTime = DateTime.UtcNow,
             UpdatedateTime = DateTime.UtcNow
         };
@@ -210,6 +258,8 @@ namespace FintechApp.Services
             e.RealClientCommType = CanonicalCommType(r.RealClientCommType);
             e.RealClientCommissionCategory = CanonicalCategory(r.RealClientCommissionCategory);
             e.IsActive = r.IsActive;
+            e.GSTType = ChargeGstType.Normalize(r.GSTType);
+            e.GSTRatePercent = r.GSTRatePercent;
             e.UpdatedateTime = DateTime.UtcNow;
         }
 
@@ -249,6 +299,8 @@ namespace FintechApp.Services
             RealClientCommType = e.RealClientCommType,
             RealClientCommissionCategory = e.RealClientCommissionCategory,
             IsActive = e.IsActive,
+            GSTType = ChargeGstType.Normalize(e.GSTType),
+            GSTRatePercent = e.GSTRatePercent,
             DateTime = e.DateTime
         };
     }

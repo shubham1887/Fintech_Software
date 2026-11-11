@@ -205,6 +205,21 @@ namespace FintechApp.Entities
 
         public int SuperDistributerUserID { get; set; }
 
+        // ── Who funded each tier's commission ────────────────────────────────────────────────
+        // 0 = the platform operator (the admin ancestor), which is every row written before
+        // delegation existed and every row on an install that does not delegate.
+        //
+        // Stamped at initiation and never recomputed, because the refund path has to reverse the
+        // postings that were actually made. Reading the rate card again at refund time would read
+        // whatever it says THEN: a distributor who re-priced a retailer in between would be
+        // credited back money that was debited from someone else, which is how a balanced pair
+        // becomes an unbalanced one.
+        public int RetailerCommissionFunderID { get; set; }
+
+        public int DistributerCommissionFunderID { get; set; }
+
+        public int SuperDistributerCommissionFunderID { get; set; }
+
         [Column(TypeName = "varchar(20)")]
         public string ComplaintStatus { get; set; } = string.Empty;
 
@@ -268,5 +283,86 @@ namespace FintechApp.Entities
 
         [Column(TypeName = "decimal(18,5)")]
         public decimal Charge { get; set; }
+
+        // ── Charge / commission GST breakdown ────────────────────────────────────────────────
+        //
+        // Stamped ONCE, at the single settlement choke point, and only for a transaction that
+        // SUCCEEDED. A failed transaction is refunded in full — commissions and all — so it earns
+        // nothing and owes no tax: every column below stays 0 and ChargeGSTStampedOn stays null.
+        //
+        // The figures are SIGNED the same way every commission in this system is signed: positive
+        // = earned, negative = paid away (a surcharge, or a provider charge such as DMT). GST and
+        // base carry the sign of the charge they were split out of, so a report can sum them
+        // without knowing which rail it is looking at. Base + GST = the charge as quoted when it
+        // was INCLUSIVE; charge + GST = what is actually payable when it was EXCLUSIVE, which is
+        // why both ProviderBaseCharge and ProviderTotalCharge are kept rather than derived.
+        //
+        // Reports read these columns instead of recomputing: the rate card can be edited tomorrow,
+        // and a settled transaction must keep telling the truth about the card it was priced on.
+
+        /// <summary>FLAT or PERCENTAGE — what the matched provider band charged on.</summary>
+        [Column(TypeName = "varchar(20)")]
+        public string ProviderChargeType { get; set; } = string.Empty;
+
+        /// <summary>INCLUSIVE / EXCLUSIVE / NONE, as resolved for this transaction.</summary>
+        [Column(TypeName = "varchar(20)")]
+        public string ProviderGSTType { get; set; } = string.Empty;
+
+        [Column(TypeName = "decimal(9,4)")]
+        public decimal ProviderGSTPercent { get; set; }
+
+        /// <summary>The GST inside (INCLUSIVE) or on top of (EXCLUSIVE) the provider charge.</summary>
+        [Column(TypeName = "decimal(18,5)")]
+        public decimal ProviderGSTAmount { get; set; }
+
+        /// <summary>The provider charge without GST. Input credit is claimed on the GST above it.</summary>
+        [Column(TypeName = "decimal(18,5)")]
+        public decimal ProviderBaseCharge { get; set; }
+
+        /// <summary>What the provider leg actually settles at: base + GST.</summary>
+        [Column(TypeName = "decimal(18,5)")]
+        public decimal ProviderTotalCharge { get; set; }
+
+        /// <summary>Which layer decided the provider GST — the band, a profile, or the fallback.
+        /// Written so support can answer "why 0.90?" without re-deriving a card that has since
+        /// been edited.</summary>
+        [Column(TypeName = "varchar(200)")]
+        public string ProviderGSTSource { get; set; } = string.Empty;
+
+        /// <summary>FLAT or PERCENTAGE — what the matched slab band charged on.</summary>
+        [Column(TypeName = "varchar(20)")]
+        public string RetailerChargeType { get; set; } = string.Empty;
+
+        [Column(TypeName = "varchar(20)")]
+        public string RetailerGSTType { get; set; } = string.Empty;
+
+        [Column(TypeName = "decimal(9,4)")]
+        public decimal RetailerGSTPercent { get; set; }
+
+        /// <summary>The retailer's commission/charge without GST. RetailerGST is the tax on it.</summary>
+        [Column(TypeName = "decimal(18,5)")]
+        public decimal RetailerBaseCharge { get; set; }
+
+        /// <summary>What the retailer leg actually settles at: base + GST.</summary>
+        [Column(TypeName = "decimal(18,5)")]
+        public decimal RetailerTotalCharge { get; set; }
+
+        [Column(TypeName = "decimal(18,5)")]
+        public decimal DistributerBaseCharge { get; set; }
+
+        [Column(TypeName = "decimal(18,5)")]
+        public decimal SuperDistributerBaseCharge { get; set; }
+
+        /// <summary>Which layer decided the retailer-side GST.</summary>
+        [Column(TypeName = "varchar(200)")]
+        public string RetailerGSTSource { get; set; } = string.Empty;
+
+        /// <summary>
+        /// When the breakdown was stamped. Null = never stamped, which is the truthful state for a
+        /// pending or failed transaction and for everything settled before this shipped. It is also
+        /// the idempotency guard: a status-check sweep, a reconciliation run and a manual settle can
+        /// all land on the same transaction, and the stamp must not move once written.
+        /// </summary>
+        public DateTime? ChargeGSTStampedOn { get; set; }
     }
 }

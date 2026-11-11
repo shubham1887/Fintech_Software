@@ -66,6 +66,21 @@ namespace FintechApp.Helpers
             }
         }
 
+        /// <summary>
+        /// The request's headers, in the same case-insensitive shape as the values bag.
+        ///
+        /// Kept apart from the values on purpose: a provider that proves a push with a signed
+        /// header (Nexmint signs the payout callback into <c>Authorization</c>) must not have that
+        /// proof sitting in the same dictionary as fields the push itself supplies, where a body
+        /// field of the same name would overwrite it.
+        /// </summary>
+        public static Dictionary<string, string> Headers(HttpRequest request)
+        {
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in request.Headers) headers[pair.Key] = pair.Value.ToString();
+            return headers;
+        }
+
         /// <summary>First non-empty value among <paramref name="keys"/> — providers name the same
         /// field five different ways, so every parser reads through an alias list.</summary>
         public static string First(IDictionary<string, string> values, params string[] keys)

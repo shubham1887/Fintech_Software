@@ -31,8 +31,14 @@ namespace FintechApp.Services
 
         public async Task<string> CreateTicketMaster(CreateTicketMasterRequest request)
         {
+            // Nothing stamped these, so every ticket was written with DateTime 0001-01-01 and the
+            // queue could not show when one was raised, let alone sort or date-filter by it.
+            var now = DateTime.Now;
+
             var ticketMaster = new TicketMaster
             {
+                DateTime = now,
+                UpdatedateTime = now,
                 TicketCategoryID = request.TicketCategoryID,
                 Subject = request.Subject,
                 Body = request.Body,
@@ -99,6 +105,30 @@ namespace FintechApp.Services
             return result > 0 ? StatusType.Ok : FintechApp.Messages.Common.Message.ExceptionOccured;
         }
 
+        /// <summary>The statuses a ticket is allowed to hold. Free text here means a queue that
+        /// cannot be filtered or counted, so anything outside this list is refused.</summary>
+        public static readonly string[] Statuses = { "Open", "In Progress", "Resolved", "Closed", "Reopened" };
+
+        public async Task<string> ResolveTicketMaster(ResolveTicketMasterRequest request, int resolvedByUserId)
+        {
+            var ticketMaster = await _ticketMasterRepository.GetTicketMasterById(request.TicketMasterID);
+            if (ticketMaster == null)
+                return FintechApp.Messages.TicketMasterMessages.TicketNotFound;
+
+            string status = Statuses.FirstOrDefault(s => s.Equals(request.Status, StringComparison.OrdinalIgnoreCase)) ?? string.Empty;
+            if (status.Length == 0)
+                return FintechApp.Messages.TicketMasterMessages.InvalidStatus;
+
+            ticketMaster.Status = status;
+            ticketMaster.Resolution = request.Resolution;
+            ticketMaster.ResolutionDate = DateTime.Now;
+            ticketMaster.ResolutionByUserID = resolvedByUserId;
+            ticketMaster.UpdatedateTime = DateTime.Now;
+
+            int result = await _ticketMasterRepository.Update(ticketMaster);
+            return result > 0 ? StatusType.Ok : FintechApp.Messages.Common.Message.ExceptionOccured;
+        }
+
         public async Task<string> DeleteTicketMaster(int ticketMasterId)
         {
             var ticketMaster = await _ticketMasterRepository.GetTicketMasterById(ticketMasterId);
@@ -129,7 +159,9 @@ namespace FintechApp.Services
                 ResolutionByUserID = t.ResolutionByUserID,
                 UserTypeID = t.UserTyepID,
                 UserTypeName = t.UserTypeMaster?.UserType ?? string.Empty,
-                IsDelete = t.IsDelete
+                IsDelete = t.IsDelete,
+                DateTime = t.DateTime,
+                UpdatedateTime = t.UpdatedateTime
             };
         }
     }

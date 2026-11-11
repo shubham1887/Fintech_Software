@@ -11,6 +11,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Autocomplete } from '@/components/ui/Autocomplete';
+import { GST_TYPES, GST_TYPE_LABEL, gstPhrase, normalizeGstType } from '@/lib/chargeGst';
+import { inr } from '@/lib/format';
 
 const OPT_PAYLOAD = { IsActive: true, PageNumber: 1, PageSize: 500 };
 
@@ -73,6 +75,65 @@ function Segmented<T extends string>({
   );
 }
 
+/**
+ * One band's GST decision: whether the charges on this row already contain GST, and at what rate.
+ *
+ * It sits on the band rather than on the slab because a rate card is not uniform — "500-1000
+ * inclusive, 1001-5000 exclusive, 5001-25000 no GST" is a real card, and nothing above the band
+ * can express it. It applies to every tier on the row: the retailer's charge and whatever that row
+ * pays the uplines out of it are one commercial decision.
+ */
+function GstBlock({
+  gstType,
+  gstRate,
+  sample,
+  onChange,
+  compact = false,
+}: {
+  gstType: string;
+  gstRate: string;
+  sample: number;
+  onChange: (next: { gstType?: string; gstRate?: string }) => void;
+  compact?: boolean;
+}) {
+  const type = normalizeGstType(gstType);
+  return (
+    <div className={compact ? 'flex flex-col gap-1.5' : 'rounded-card border border-slate-200/70 bg-white p-3 shadow-card'}>
+      {!compact && <p className="mb-2 text-sm font-semibold text-slate-700">GST on this band</p>}
+      <div className="flex items-center gap-1.5">
+        <select
+          aria-label="GST treatment"
+          value={type}
+          onChange={(e) => onChange({ gstType: e.target.value })}
+          className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+        >
+          {GST_TYPES.map((t) => (
+            <option key={t} value={t}>{GST_TYPE_LABEL[t]}</option>
+          ))}
+        </select>
+        {type !== 'DEFAULT' && type !== 'NONE' && (
+          <div className="relative w-[4.75rem] shrink-0">
+            <input
+              type="number"
+              step="0.01"
+              placeholder="auto"
+              aria-label="GST percent"
+              title="Leave blank to take the rate from the tax engine for this service"
+              value={gstRate}
+              onChange={(e) => onChange({ gstRate: e.target.value })}
+              className="h-9 w-full rounded-lg border border-slate-200 px-2 pr-5 text-sm tabular-nums focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+            />
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+          </div>
+        )}
+      </div>
+      <p className={cn('text-xs text-slate-400', compact ? '' : 'mt-2')}>
+        {gstPhrase(sample, type, Number(gstRate) || 0, inr)}
+      </p>
+    </div>
+  );
+}
+
 const CAT_OPTS: { value: CatKey; label: string }[] = [
   { value: 'COM', label: 'COM' },
   { value: 'SUR', label: 'SUR' },
@@ -115,7 +176,13 @@ function RoleCommBlock({
 
 /** Builds the create/update payload shared by both flows. */
 function buildPayload(
-  base: { SlabMasterID: number; ServiceID: number; OperatorID: number; FromAmount: number; ToAmount: number },
+  base: {
+    SlabMasterID: number; ServiceID: number; OperatorID: number; FromAmount: number; ToAmount: number;
+    // This band's own GST decision. DEFAULT — what every band held before the column existed —
+    // leaves it to the Commission Tax profile, so an install whose slabs are taxed uniformly
+    // never has to touch it. A rate of 0 takes the rate from the tax engine.
+    GSTType: string; GSTRatePercent: number;
+  },
   roles: Record<RoleKey, RoleComm>,
 ) {
   const forRole = (r: RoleKey) => {
@@ -166,6 +233,12 @@ function DetailRow({
     return init;
   });
 
+  const [gstType, setGstType] = useState(() => normalizeGstType(String(getField(row, 'GSTType') ?? '')));
+  const [gstRate, setGstRate] = useState(() => {
+    const r = Number(getField(row, 'GSTRatePercent') ?? 0);
+    return r > 0 ? String(r) : '';
+  });
+
   const saveMut = useMutation({
     mutationFn: () =>
       apiPost('SlabDetail/Update', {
@@ -177,6 +250,8 @@ function DetailRow({
             OperatorID: Number(getField(row, 'OperatorID') ?? 0),
             FromAmount: Number(getField(row, 'FromAmount') ?? 0),
             ToAmount: Number(getField(row, 'ToAmount') ?? 0),
+            GSTType: normalizeGstType(gstType),
+            GSTRatePercent: Number(gstRate) || 0,
           },
           roles,
         ),
@@ -217,6 +292,24 @@ function DetailRow({
           </div>
         </td>
       ))}
+      <td className="w-[13rem] px-3 py-3 align-top">
+        <GstBlock
+          compact
+          gstType={gstType}
+          gstRate={gstRate}
+          // The retailer's own figure is the one worth showing split: a percentage row is shown
+          // against the top of its own band, which is the figure the admin recognises.
+          sample={
+            /flexi|percent|per|%/i.test(String(getField(row, 'RetailerCommType') ?? ''))
+              ? (Number(getField(row, 'ToAmount') ?? 0) * (Number(roles.Retailer.value) || 0)) / 100
+              : Number(roles.Retailer.value) || 0
+          }
+          onChange={(next) => {
+            if (next.gstType !== undefined) setGstType(normalizeGstType(next.gstType));
+            if (next.gstRate !== undefined) setGstRate(next.gstRate);
+          }}
+        />
+      </td>
       <td className="px-3 py-3 align-top">
         <div className="flex items-center gap-1">
           <Button size="sm" variant="ghost" loading={saveMut.isPending} onClick={() => saveMut.mutate()} title="Save">
@@ -250,6 +343,9 @@ export function SlabCommissionScreen() {
   const [fromAmount, setFromAmount] = useState('0');
   const [toAmount, setToAmount] = useState('');
   const [roles, setRoles] = useState<Record<RoleKey, RoleComm>>(emptyRoles);
+  // A new band decides nothing about GST until somebody says so.
+  const [gstType, setGstType] = useState('DEFAULT');
+  const [gstRate, setGstRate] = useState('');
 
   const services = useQuery({
     queryKey: ['fk', 'Service/GetAll'],
@@ -310,7 +406,11 @@ export function SlabCommissionScreen() {
   const createMut = useMutation({
     mutationFn: () =>
       apiPost('SlabDetail/Create', buildPayload(
-        { SlabMasterID: slabId, ServiceID: Number(serviceId), OperatorID: Number(operatorId), FromAmount: Number(fromAmount) || 0, ToAmount: Number(toAmount) || 0 },
+        {
+          SlabMasterID: slabId, ServiceID: Number(serviceId), OperatorID: Number(operatorId),
+          FromAmount: Number(fromAmount) || 0, ToAmount: Number(toAmount) || 0,
+          GSTType: normalizeGstType(gstType), GSTRatePercent: Number(gstRate) || 0,
+        },
         roles,
       )),
     onSuccess: (r) => {
@@ -357,6 +457,19 @@ export function SlabCommissionScreen() {
       </Link>
       <PageHeader title={`Set Commission Range — ${slabName}`} subtitle="Service / operator commission per role for this slab" />
 
+      {/*
+        The one thing that is easy to get wrong now that a reseller can price its own downline.
+        A role's column is that role's INCOME, and on a slab given to a distributor it is also the
+        whole budget that distributor has for its retailers. Splitting it here (₹10 retailer + ₹2
+        distributor) leaves the distributor only ₹2 to price with.
+      */}
+      <div className="mb-4 rounded-card border border-brand-200 bg-brand-50/60 px-4 py-3 text-sm text-slate-700">
+        Each column is what that role earns. If this slab is for a distributor or super-distributor who
+        sets their own downline rates, put their <strong>whole net commission</strong> on their own column —
+        ₹12 on Distributor rather than ₹10 Retailer + ₹2 Distributor — and they divide it from
+        “My Commission Slabs”.
+      </div>
+
       {/* ── Set Commission Range form ─────────────────────────────────────────── */}
       <div className="mb-6 rounded-card border border-slate-200/70 bg-white p-5 shadow-card">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -398,10 +511,30 @@ export function SlabCommissionScreen() {
           {ROLES.map(({ key, label }) => (
             <RoleCommBlock key={key} label={label} state={roles[key]} onChange={(next) => setRoles((p) => ({ ...p, [key]: next }))} />
           ))}
+          <GstBlock
+            gstType={gstType}
+            gstRate={gstRate}
+            sample={
+              roles.Retailer.type === 'PER'
+                ? ((Number(toAmount) || 0) * (Number(roles.Retailer.value) || 0)) / 100
+                : Number(roles.Retailer.value) || 0
+            }
+            onChange={(next) => {
+              if (next.gstType !== undefined) setGstType(normalizeGstType(next.gstType));
+              if (next.gstRate !== undefined) setGstRate(next.gstRate);
+            }}
+          />
         </div>
+        <p className="mt-2 text-xs text-slate-400">
+          GST applies to every role on this band, and only to a <span className="font-medium text-slate-500">successful</span>{' '}
+          transaction — a failed one is refunded in full, commission included, so it earns nothing and owes no tax.
+          Leave it on <span className="font-medium text-slate-500">Follow profile</span> to keep using the Commission Tax
+          setting, and leave the <span className="font-medium text-slate-500">%</span> blank to take the rate from the tax
+          engine.
+        </p>
 
         <div className="mt-4 flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => { setRoles(emptyRoles()); setOperatorId(''); setServiceId(''); setFromAmount('0'); setToAmount(''); }}>Reset</Button>
+          <Button variant="secondary" onClick={() => { setRoles(emptyRoles()); setOperatorId(''); setServiceId(''); setFromAmount('0'); setToAmount(''); setGstType('DEFAULT'); setGstRate(''); }}>Reset</Button>
           <Button loading={createMut.isPending} disabled={!!rangeError || rangeIncomplete} onClick={onSave}><Save className="size-4" />Save</Button>
         </div>
       </div>
@@ -417,14 +550,15 @@ export function SlabCommissionScreen() {
               <tr className="border-b border-slate-200 bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                 <th className="px-3 py-3">Details</th>
                 {ROLES.map(({ key, label }) => (<th key={key} className="px-3 py-3">{label}</th>))}
+                <th className="px-3 py-3" title="Whether the charges on the row already contain GST. Follow profile keeps using the Commission Tax setting.">GST</th>
                 <th className="px-3 py-3">Action</th>
               </tr>
             </thead>
             <tbody>
               {details.isFetching && rows.length === 0 ? (
-                <tr><td colSpan={ROLES.length + 2} className="px-3 py-8 text-center text-sm text-slate-400">Loading…</td></tr>
+                <tr><td colSpan={ROLES.length + 3} className="px-3 py-8 text-center text-sm text-slate-400">Loading…</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={ROLES.length + 2} className="px-3 py-8 text-center text-sm text-slate-400">{serviceId ? `No commission set for ${selectedServiceName} yet — add one using the form above.` : 'No commission set yet — add one using the form above.'}</td></tr>
+                <tr><td colSpan={ROLES.length + 3} className="px-3 py-8 text-center text-sm text-slate-400">{serviceId ? `No commission set for ${selectedServiceName} yet — add one using the form above.` : 'No commission set yet — add one using the form above.'}</td></tr>
               ) : (
                 rows.map((row, i) => <DetailRow key={String(getField(row, 'SlabDetailID') ?? i)} row={row} slabId={slabId} onSaved={refresh} />)
               )}

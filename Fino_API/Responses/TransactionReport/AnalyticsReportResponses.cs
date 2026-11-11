@@ -112,6 +112,43 @@ namespace FintechApp.Responses.TransactionReport
         public decimal DistributerCommission { get; set; }
         public decimal SuperDistributerCommission { get; set; }
         public decimal Surcharge { get; set; }
+
+        /// <summary>What the provider paid US, as their statement quotes it.</summary>
+        public decimal ProviderCommission { get; set; }
+
+        /// <summary>The same, with GST taken out where the provider's commission is quoted
+        /// inclusive of it. This is the figure that is actually income — the difference between
+        /// the two is the reason a net profit computed from the quoted number was wrong.</summary>
+        public decimal ProviderCommissionNet { get; set; }
+
+        /// <summary>The GST inside (or added to) the provider commission, per the configured
+        /// treatment for this service / provider / slab.</summary>
+        public decimal GSTOnCommission { get; set; }
+
+        /// <summary>The surcharge collected from the retailer, with GST taken out. A DMT charge of
+        /// Rs 15 is quoted to the retailer inclusive of tax, so only Rs 12.71 of it is income —
+        /// counting the whole Rs 15 as profit books the GST we owe the government as ours.</summary>
+        public decimal SurchargeNet { get; set; }
+
+        /// <summary>The GST inside the surcharge. This is output tax — we owe it — unlike the GST
+        /// inside a negative provider commission, which is input credit.</summary>
+        public decimal GSTOnSurcharge { get; set; }
+
+        /// <summary>TDS withheld on the downline commissions. Zero while TDS is switched off.</summary>
+        public decimal TDSDeducted { get; set; }
+
+        /// <summary>
+        /// What the house actually keeps: the provider commission net of GST, less everything paid
+        /// down the chain, plus the surcharge collected — also net of GST. This replaces "admin
+        /// commission" on the screen: same intent, but a figure that survives the question "is
+        /// that inclusive?" on BOTH sides, which a mix of one net and one gross number does not.
+        /// </summary>
+        public decimal NetProfit { get; set; }
+
+        /// <summary>How the commission was treated, so a surprising net profit can be traced to
+        /// the profile that produced it rather than argued about.</summary>
+        public string CommissionTaxMode { get; set; } = string.Empty;
+        public string CommissionTaxBase { get; set; } = string.Empty;
     }
 
     /// <summary>TDS row — tax deducted at source, per transaction.</summary>
@@ -265,7 +302,8 @@ namespace FintechApp.Responses.TransactionReport
     /// <summary>
     /// One commission-slab row as seen by the user the slab is assigned to (Commission Structure).
     /// Rates are returned both raw (for maths/export) and pre-formatted (StrXComm) so the report
-    /// can print "1.5 %" or "₹ 5" without knowing the commission type.
+    /// can print "+1.5 %" or "-₹ 5" without having to know how this platform spells a commission
+    /// type or a surcharge category (+ is paid to the user, - is charged to them).
     /// </summary>
     public class CommissionStructureViewModel
     {
@@ -286,12 +324,18 @@ namespace FintechApp.Responses.TransactionReport
         /// <summary>The commission the LOGGED-IN user actually earns — their own tier's rate.</summary>
         public decimal MyCommission { get; set; }
         public string MyCommissionType { get; set; } = string.Empty;
+        /// <summary>Commission or Surcharge — paid to this user, or charged to them.</summary>
+        public string MyCommissionCategory { get; set; } = string.Empty;
         public string StrMyCommission { get; set; } = string.Empty;
 
-        public decimal RetailerComm { get; set; }
-        public decimal DistributorComm { get; set; }
-        public decimal SuperDistributorComm { get; set; }
-        public decimal ClientComm { get; set; }
+        // Per-tier rates. A rate is commercial information: what an upline earns on the same
+        // transaction is exactly what a downline must not learn. Every tier the caller is not
+        // entitled to comes back null / empty rather than zero — zero is a rate ("pays nothing"),
+        // and the report would print it as one. See ReportAnalyticsService.CanSeeTier.
+        public decimal? RetailerComm { get; set; }
+        public decimal? DistributorComm { get; set; }
+        public decimal? SuperDistributorComm { get; set; }
+        public decimal? ClientComm { get; set; }
         public string StrRetailerComm { get; set; } = string.Empty;
         public string StrDistributorComm { get; set; } = string.Empty;
         public string StrSuperDistributorComm { get; set; } = string.Empty;

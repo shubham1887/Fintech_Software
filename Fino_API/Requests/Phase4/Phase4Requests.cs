@@ -64,5 +64,15 @@ namespace FintechApp.Requests.Phase4
 
         /// <summary>For the outbox read: Pending / Failed / Posted / Skipped, or blank for all.</summary>
         public string Status { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Rows to return. 0 keeps the service's own default window. An export walks the windows
+        /// with SkipCount, which it has to: the reads used to Take(1000) flat, so a busy month's
+        /// vouchers were cut off at a thousand on the screen AND in the file, with nothing said.
+        /// </summary>
+        public int TakeCount { get; set; }
+
+        /// <summary>Rows to skip — the offset of the window being asked for.</summary>
+        public int SkipCount { get; set; }
     }
 }

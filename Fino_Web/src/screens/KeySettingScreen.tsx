@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { SystemDownPanel } from './SystemDownPanel';
 
 type Row = Record<string, unknown>;
 const str = (v: unknown) => String(v ?? '');
@@ -59,6 +60,80 @@ const FEATURE_TOGGLES: ToggleDef[] = [
     key: 'IsSubscriptionEnabled',
     label: 'Service Subscription',
     description: 'On → users must subscribe to a plan to unlock its services; plans, the subscribe page and the header renewal counter appear. Off → the whole feature is hidden everywhere and no one is required to subscribe.',
+  },
+  // Fund amount bounds. Two independent rows rather than one "limits" row, because an operator
+  // almost always wants a floor OR a ceiling, not both, and a single toggle would force them to
+  // set a number they do not care about. Each applies to BOTH a fund request (raised by a
+  // downline) and a fund transfer (pushed by an upline) — the two ends of the same movement, so
+  // bounding one and not the other just moves the problem. Off, or 0, means "no bound".
+  {
+    key: 'FundMinAmount',
+    label: 'Fund — minimum amount',
+    description: 'On → a fund request or fund transfer below this amount is refused. Applies to both. Off means no lower bound.',
+    hasValue: true,
+    valueLabel: 'Minimum',
+    valuePrefix: '₹',
+  },
+  {
+    key: 'FundMaxAmount',
+    label: 'Fund — maximum amount',
+    description: 'On → a fund request or fund transfer above this amount is refused. Applies to both. Off means no upper bound. A maximum below the minimum is ignored rather than blocking every amount.',
+    hasValue: true,
+    valueLabel: 'Maximum',
+    valuePrefix: '₹',
+  },
+  // The TDS master switch. It belongs here rather than on the TDS screen for two reasons: it is
+  // a platform-wide feature switch like the others, and turning it ON starts taking real money
+  // out of real people's commissions — which should be a deliberate act performed where features
+  // are turned on, next to a description of what it does, not a toggle beside the rules.
+  {
+    key: 'IsTDSEnabled',
+    label: 'Deduct TDS from commissions',
+    description:
+      'On → TDS is withheld from every commission a user earns, per the rules on Accountant → TDS Setting, '
+      + 'and the withheld amount comes out of their wallet at settlement. Off → no rule is read and nothing is '
+      + 'deducted. Set the rules first: with this on and no rule, the commission tax profile decides instead.',
+  },
+  // Cash collection / outstanding. A feature switch rather than a number, and it belongs beside
+  // the other fund bounds: it decides whether funds can be given on credit at all.
+  //
+  // The description spells out what OFF does NOT do, because that is the part an operator will
+  // assume wrongly. Switching it off stops new credit and stops the morning reminders; it does
+  // not hide or forgive a debt already recorded, and it must not — the money is owed either way.
+  {
+    key: 'CashCollection',
+    label: 'Cash collection (credit / outstanding)',
+    description:
+      'On → a fund request or fund transfer sent with the Credit payment mode funds the wallet AND '
+      + 'records the amount as outstanding against the receiver, and everyone carrying a balance gets '
+      + 'a reminder each morning. Off → no new credit can be taken. Balances already recorded stay '
+      + 'visible and collectable either way. A user can only take credit up to the limit set per '
+      + 'account on Funds → Outstanding; a limit of zero hides the Credit mode from them entirely.',
+  },
+  // The default credit limit. An amount row rather than a plain switch, like the two Fund bounds
+  // above it — and it sits right after the cash-collection switch because it is meaningless
+  // without it.
+  //
+  // Off by default on purpose: this one number silently extends real credit to every account that
+  // has never been given a limit, so it has to be a deliberate act rather than something an
+  // upgrade turns on.
+  {
+    key: 'DefaultCreditLimit',
+    label: 'Credit — default limit',
+    description:
+      'On → any account that has never been given a credit limit of its own may take funds on '
+      + 'credit up to this amount, so the feature works without visiting every account. A limit set '
+      + 'for a specific account under Funds → Outstanding always wins — including a deliberate 0, '
+      + 'which means that account gets no credit even while this default is on. Off means no credit '
+      + 'until each account is given its own limit.',
+    hasValue: true,
+    valueLabel: 'Default limit',
+    valuePrefix: '₹',
+  },
+  {
+    key: 'IsMpinEnabled',
+    label: 'Require MPIN',
+    description: 'On → every user must set a 4–6 digit MPIN and enter it when they open the app (and on sensitive actions). Off → the MPIN is optional; a user can still turn it on for themselves from Account security.',
   },
 ];
 
@@ -231,6 +306,14 @@ export function KeySettingScreen() {
           )}
         </CardBody>
       </Card>
+
+      {/*
+        System Down is a panel of its own rather than another row in the list above, because it is
+        not a single toggle: the switch, the two clock times and the per-service exception list are
+        one decision and have to be saved as one. It sits last because turning it on stops the
+        network trading.
+      */}
+      <SystemDownPanel />
     </>
   );
 }

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
+import { txnState } from '@/lib/txnStatus';
 
 type Tone = 'neutral' | 'success' | 'danger' | 'warning' | 'info' | 'brand';
 
@@ -34,16 +35,30 @@ export function Badge({
   );
 }
 
-/** Maps a transaction/settlement status to a coloured badge. */
+const DOT_TONES: Record<Tone, string> = {
+  neutral: 'bg-slate-400',
+  success: 'bg-success-500',
+  danger: 'bg-danger-500',
+  warning: 'bg-warning-500',
+  info: 'bg-info-500',
+  brand: 'bg-brand-500',
+};
+
+/**
+ * A transaction / settlement status.
+ *
+ * The state itself is resolved by `txnState` — one vocabulary for the whole panel, so REFUNDED is
+ * never painted as a failure and no screen prints a raw enum at the user. The leading dot carries
+ * the state as well as the colour does: an operations console is scanned, and at a glance a row of
+ * pills reads as shape and position before it reads as text — which also means the status survives
+ * for anyone who cannot separate the greens from the reds.
+ */
 export function StatusBadge({ status }: { status?: string }) {
-  const s = (status ?? '').toUpperCase();
-  const tone: Tone =
-    s === 'SUCCESS' || s === 'ACCEPT' || s === 'ACCEPTED'
-      ? 'success'
-      : s === 'PENDING' || s === 'PROCESSING' || s === 'PROCESS' || s === 'INITIATED'
-        ? 'warning'
-        : s === 'FAILED' || s === 'FAILURE' || s === 'REFUND' || s === 'REFUNDED' || s === 'REVERSED' || s === 'REJECT'
-          ? 'danger'
-          : 'neutral';
-  return <Badge tone={tone}>{status || '—'}</Badge>;
+  const state = txnState(status);
+  return (
+    <Badge tone={state.tone} className="pl-2">
+      <span className={cn('size-1.5 shrink-0 rounded-full', DOT_TONES[state.tone])} aria-hidden />
+      {state.label}
+    </Badge>
+  );
 }

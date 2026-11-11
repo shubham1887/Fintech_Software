@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  This client's own mark, replacing the built-in vector for the finocore flavour only.
+
+  `ic_brand_mark` is what the loading overlay (activity_main.xml) and the Android 12+ splash both
+  draw, so overriding it here puts the app's own icon on every screen the person sees before the
+  portal has painted - which is the whole point of a branded shell.
+
+  It points at the launcher foreground rather than carrying a second copy of the artwork: that
+  file is already the mark sized for a round mask, which is exactly what the splash applies.
+-->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@mipmap/ic_launcher_foreground"
+    android:gravity="center" />

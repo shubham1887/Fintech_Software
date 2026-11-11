@@ -33,6 +33,9 @@
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.10" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.10" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <!-- Text extraction from PDF bank statements. Pure managed (no native binaries), MIT, so it
+         ships inside a self-contained publish and needs nothing installed on a client server. -->
+    <PackageReference Include="PdfPig" Version="0.1.9" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.14.0" />
     <PackageReference Include="System.Security.Cryptography.Algorithms" Version="4.3.1" />
   </ItemGroup>
@@ -41,6 +44,7 @@
     <ProjectReference Include="..\Fino.PlanApi\Fino.PlanApi.csproj" />
     <ProjectReference Include="..\Fino.JaiJuiApi\Fino.JaiJuiApi.csproj" />
     <ProjectReference Include="..\Fino.Pay1Api\Fino.Pay1Api.csproj" />
+    <ProjectReference Include="..\Fino.NexmintApi\Fino.NexmintApi.csproj" />
   </ItemGroup>
 
 

@@ -33,7 +33,7 @@ namespace FintechApp.Interfaces.Services
 
         Task<List<VoucherRow>> GetVouchers(LedgerQueryRequest query);
         Task<VoucherRow?> GetVoucher(int voucherId);
-        Task<List<AcctPostingOutbox>> GetOutbox(string statusFilter);
+        Task<List<AcctPostingOutbox>> GetOutbox(LedgerQueryRequest query);
     }
 
     /// <summary>The daily integrity checks — the point of keeping books next to the wallets.</summary>
@@ -42,6 +42,13 @@ namespace FintechApp.Interfaces.Services
         Task<TrialBalanceResult> TrialBalance(string periodKey);
         Task<IntegrityCheckResult> WalletVsControl();
         Task<IntegrityCheckResult> ProviderStockVsControl();
+
+        // Asserts that no downline was ever paid a commission the admin did not fund, and that no
+        // funding was ever reversed without having been posted. Unlike the two control checks above
+        // this one reads the operational ledger only, so it stands up even before the opening
+        // balances are journalled — it was the only check able to see the Rs 7.65 that txn #268 lost.
+        Task<IntegrityCheckResult> ChainCommissionsFunded();
+
         Task<IntegrityReport> RunAll();
     }
 }

@@ -25,6 +25,8 @@ namespace FintechApp.Services
         private readonly IRechargeProviderClient _provider;
         private readonly ISlabCommissionResolver _commissionResolver;
         private readonly IUserServiceAccessService _serviceAccess;
+        // Which wallet this service debits, per the admin's Service Wallet Mapping.
+        private readonly IServiceWalletResolver _serviceWallet;
         private readonly Logger _logger;
 
         public RechargeService(
@@ -35,8 +37,10 @@ namespace FintechApp.Services
             IUserWalletMasterRepository walletRepo,
             IRechargeProviderClient provider,
             ISlabCommissionResolver commissionResolver,
-            IUserServiceAccessService serviceAccess)
+            IUserServiceAccessService serviceAccess,
+            IServiceWalletResolver serviceWallet)
         {
+            _serviceWallet = serviceWallet;
             _serviceAccess = serviceAccess;
             _operatorService = operatorService;
             _account = account;
@@ -72,12 +76,19 @@ namespace FintechApp.Services
                 string access = await _serviceAccess.EnsureUsable(userID, serviceID);
                 if (!access.EqualsIgnoreCase(StatusType.Ok)) return (access, null);
 
-                int walletID = (int)WalletCode.Recharge;
+                // The wallet the admin mapped this service to ("Service Wallet Mapping"), falling
+                // back to Recharge — the wallet every recharge-family service used before the
+                // mapping was honoured, so an install that maps nothing behaves exactly as before.
+                int walletID = await _serviceWallet.Resolve(serviceID, (int)WalletCode.Recharge);
 
                 // 3. Resolve the slab commission/surcharge for this user + operator + amount.
                 //    RetailerComm is SIGNED: positive = commission credited to the retailer,
                 //    negative = surcharge debited on top of the amount.
                 var comm = await _commissionResolver.Resolve(userID, serviceID, request.OperatorID, request.Amount);
+                // A delegated slab band that no longer fits the card it was cut from pays nobody
+                // until its owner corrects it. Refused before any money moves, and the message is
+                // the one the owner will recognise on their own slab screen.
+                if (comm.IsBlocked) return (comm.BlockedReason, null);
                 decimal commission = comm.RetailerComm;
 
                 // Surcharge can be configured on ANY tier (retailer / distributor / super-distributor):
@@ -97,7 +108,9 @@ namespace FintechApp.Services
                 if (!balanceCheck.EqualsIgnoreCase(StatusType.Ok)) return (balanceCheck, null);
 
                 var wallet = (await _walletRepo.GetByUserID(userID)).FirstOrDefault(w => w.WalletID == walletID);
-                if (wallet == null) return ("Recharge wallet not found.", null);
+                // The wallet the service is mapped to may be one this user does not hold. Say which
+                // one, rather than naming the Recharge wallet whatever the mapping points at.
+                if (wallet == null) return (Messages.Wallet.Message.NotFound, null);
                 decimal openingBalance = wallet.Balance;
 
                 // The retailer pays the principal plus every tier's surcharge; positive commissions
@@ -130,6 +143,9 @@ namespace FintechApp.Services
                     SuperDistributerCommission = comm.SuperDistributorComm,
                     DistributerUserID = comm.DistributorUserID,
                     SuperDistributerUserID = comm.SuperDistributorUserID,
+                    RetailerCommissionFunderID = comm.RetailerFunderID,
+                    DistributerCommissionFunderID = comm.DistributorFunderID,
+                    SuperDistributerCommissionFunderID = comm.SuperDistributorFunderID,
                     NetCommission = commission,
                     Location = string.IsNullOrWhiteSpace(request.Latitude) ? string.Empty : $"{request.Latitude},{request.Longitude}",
                     DateTime = now,
@@ -204,7 +220,7 @@ namespace FintechApp.Services
                 if (!dispatch.Status.ToUpperInvariant().StartsWith("FAIL"))
                 {
                     decimal providerCommission = dispatch.ProviderCommission ?? 0m;
-                    decimal adminCommission = providerCommission - (commission + comm.DistributorComm + comm.SuperDistributorComm);
+                    decimal adminCommission = providerCommission - comm.AdminFundedCommission;
                     await _txnRepo.UpdateCommissionOutcome(txnID, providerCommission, adminCommission);
                     // Credit the admin its provider-commission income (recharge). Netted against the
                     // step-7 admin funding debits this leaves the admin its profit P-(R+D+S).

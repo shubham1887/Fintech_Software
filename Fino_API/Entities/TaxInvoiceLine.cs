@@ -81,5 +81,21 @@ namespace FintechApp.Entities
         public bool ITCEligible { get; set; }
 
         public bool ReverseCharge { get; set; }
+
+        /// <summary>
+        /// Purchase side: the "how much" a supplier's bill is written in — usually a rupee value
+        /// with paise, which is why it is not <see cref="Quantity"/> (the count of source
+        /// transactions on a sale line, summed by GSTR-1 table 12).
+        /// </summary>
+        [Column(TypeName = "decimal(18,3)")]
+        public decimal UnitQuantity { get; set; }
+
+        /// <summary>Purchase side: the rate the quantity was billed at.</summary>
+        [Column(TypeName = "decimal(18,6)")]
+        public decimal UnitRate { get; set; }
+
+        /// <summary>Purchase side: how the rate applies — PERCENT of the quantity, or per UNIT.</summary>
+        [Column(TypeName = "varchar(10)")]
+        public string RateType { get; set; } = string.Empty;
     }
 }

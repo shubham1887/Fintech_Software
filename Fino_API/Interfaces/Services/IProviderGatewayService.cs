@@ -16,6 +16,10 @@ namespace FintechApp.Interfaces.Services
         // Runs the provider's BALANCE endpoint and maps the reply through the BALANCE rules.
         Task<(string failureMessage, ProviderBalanceResponse? data)> CheckBalance(int providerID);
 
+        // Same enquiry against every active provider — what the dashboard's refresh button uses to
+        // replace the stored (and therefore stale) provider stock with live figures.
+        Task<(string failureMessage, List<ProviderBalanceResponse> data)> CheckAllBalances();
+
         // Runs the provider's BILLFETCH endpoint for an operator + consumer number and maps the
         // reply through the BILLFETCH rules (customer name, bill amount, due date …).
         Task<(string failureMessage, BillFetchResponse? data)> FetchBill(BillFetchContext context);

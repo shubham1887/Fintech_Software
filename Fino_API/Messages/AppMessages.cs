@@ -102,6 +102,9 @@ namespace FintechApp.Messages
             public const string TransferSuccess = "Transfer completed successfully.";
             public const string TransferPending = "Your transfer is being processed. The status will be updated shortly.";
             public const string TransferFailedRefunded = "The transfer could not be completed and the amount has been refunded to your wallet.";
+            // Shown while the admin's global DMT hold is on: the money has left the wallet and the
+            // transfer is queued, it just has not been sent upstream yet.
+            public const string TransferOnHold = "Your transfer has been accepted and is on hold. It will be sent to the bank once transfers resume.";
         }
     }
 
@@ -166,7 +169,15 @@ namespace FintechApp.Messages
             public const string BillFetched = "Bill details fetched successfully.";
             public const string BillFetchNotConfigured = "Bill fetch is not configured for this operator yet.";
             public const string SequenceNotSet = "Provider sequence is not set for this operator.";
+            /// <summary>
+            /// Shown when every provider in the sequence was skipped for want of response rules.
+            /// Names the provider, because the fix is on that provider's own Response Rules screen
+            /// and the operator otherwise has no way to know which of them is the problem.
+            /// </summary>
+            public const string ResponseRulesMissing =
+                "{0} has no response rules set up, so its reply cannot be read. Add them on Providers → Response Rules, or remove it from the switching sequence.";
             public const string DenominationBlocked = "This recharge amount is not allowed for the selected operator.";
+            public const string CallbackNoReference = "The provider callback carried no transaction reference.";
         }
     }
 }

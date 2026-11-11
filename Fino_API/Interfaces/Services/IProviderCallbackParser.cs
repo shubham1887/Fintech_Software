@@ -21,6 +21,10 @@ namespace FintechApp.Interfaces.Services
         /// <param name="values">Everything the request carried — query string, form fields and a
         /// parsed JSON body merged into one case-insensitive bag.</param>
         /// <param name="rawBody">The body exactly as received, for the audit log.</param>
-        ProviderCallbackParseResult Parse(ProviderMaster provider, IDictionary<string, string> values, string rawBody);
+        /// <param name="headers">The request headers, for providers that prove a push with a signed
+        /// header rather than a field in the body. Separate from <paramref name="values"/> so a body
+        /// field can never pose as one.</param>
+        ProviderCallbackParseResult Parse(ProviderMaster provider, IDictionary<string, string> values, string rawBody,
+            IDictionary<string, string> headers);
     }
 }

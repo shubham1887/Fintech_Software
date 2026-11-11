@@ -601,10 +601,26 @@ namespace FintechApp.Services
             var downline = FintechApp.Helpers.UserHierarchy.GetDownlineIds(
                 await _userRepository.GetAllUsers(), user.UserMasterID);
 
+            // What the CALLER's own tier is allowed to do here. Edit User is reachable by the
+            // distribution tier now (ApiAccessPolicy "users.update"), and the two fields below —
+            // role and upline — are the two that re-shape the commission tree. IsWithinCallerScope
+            // above proved the caller owns the user being edited; it says nothing about the role
+            // they are setting or the upline they are moving them to, so both are bounded here.
+            var editor = await _userRepository.GetUserById(currentUserID);
+            int editorRole = editor?.UserTypeID ?? 0;
+            bool editorIsAdminTier = editorRole == UserTypeCode.Admin || editorRole == UserTypeCode.SupportUser;
+
             if (request.UserTypeID.HasValue && request.UserTypeID.Value > 0 && request.UserTypeID.Value != currentRole)
             {
                 if (!AllowedParentTiers.ContainsKey(request.UserTypeID.Value))
                     return "This role cannot be assigned from the user form.";
+                // A downline editor may only set a role their tier could have created in the first
+                // place — otherwise a distributor could promote one of its retailers to
+                // super-distributor and lift it out of its own branch on the next save.
+                if (!editorIsAdminTier
+                    && (!CreatableRoles.TryGetValue(editorRole, out var settableRoles)
+                        || !settableRoles.Contains(request.UserTypeID.Value)))
+                    return "You cannot change this user to that type.";
                 if (downline.Count > 0)
                     return "Role cannot be changed while users are mapped under this user. Move them first.";
 
@@ -635,6 +651,15 @@ namespace FintechApp.Services
                 if (AllowedParentTiers.TryGetValue(targetRole, out var tiers)
                     && !tiers.Contains(newParent.UserTypeID ?? 0))
                     return "The selected upline is not a valid tier for this user's role.";
+
+                // The new upline has to stay inside the editor's own branch — the editor
+                // themselves, or someone beneath them. Re-parenting across branches is
+                // "users.transferusers", which is Admin-only and carries its own audit trail.
+                if (!editorIsAdminTier && newParentID != currentUserID
+                    && !FintechApp.Helpers.UserHierarchy
+                        .GetDownlineIds(await _userRepository.GetAllUsers(), currentUserID)
+                        .Contains(newParentID))
+                    return "The selected upline is outside your network.";
 
                 user.ParentID = newParentID;
             }
@@ -1215,6 +1240,16 @@ namespace FintechApp.Services
         public async Task<string> SendPassword(UserSendPasswordRequest request, int currentUserID)
         {
             if (request.TargetUserID <= 0) return Messages.Common.Message.InvalidRequest;
+
+            // Re-texting credentials replaces the account's password, so the caller has to own the
+            // account: themselves, or someone in their own branch. Admin / support are
+            // unrestricted. Without this the endpoint took any id at all, which only stayed
+            // harmless while deny-by-default kept the whole controller admin-only — it is granted
+            // to the distributor tier now (ApiAccessPolicy "users.sendpassword"), because
+            // "resend the password" is the first thing an upline is asked for after onboarding.
+            if (!await IsWithinCallerScope(currentUserID, request.TargetUserID))
+                return Messages.Common.Message.NoPermission;
+
             var user = await _userRepository.GetUserById(request.TargetUserID);
             if (user == null) return Messages.UserMessages.UserNotFound;
             if (string.IsNullOrWhiteSpace(user.MobileNumber)) return "User has no registered mobile number.";

@@ -114,19 +114,54 @@ namespace FintechApp.Repositories
             return result > 0;
         }
 
+        /// <summary>
+        /// Save an edited user.
+        ///
+        /// Callers get their UserMaster from the cached, AsNoTracking list, which is loaded with
+        /// its UserType and State navigations attached. Handing that whole graph to
+        /// <c>DbSet.Update</c> made EF treat the navigation as the authority on the foreign key
+        /// and quietly reset UserTypeID back to the UserTypeMaster still hanging off the entity —
+        /// which is why changing a user's role on the Edit User form saved without complaint and
+        /// changed nothing. It also marked the principal rows themselves as modified, so an
+        /// ordinary profile edit rewrote a shared master row.
+        ///
+        /// Loading the tracked row and copying the SCALARS across fixes both: CurrentValues
+        /// carries the columns (foreign keys included) and touches no navigation, and the
+        /// caller's own object is left intact for whatever it does next.
+        /// </summary>
         public async Task<bool> UpdateUser(UserMaster user)
         {
             user.UpdatedateTime = DateTime.UtcNow;
 
-            _context.UserMasters.Update(user);
-            var result = await _context.SaveChangesAsync();
+            var tracked = await _context.UserMasters.FirstOrDefaultAsync(u => u.UserMasterID == user.UserMasterID);
+            if (tracked == null) return false;
 
-            if (result > 0)
-            {
-                ClearUserCache();
-            }
+            var entry = _context.Entry(tracked);
+            // The value as the DATABASE has it, not as the in-memory object has it. Some callers
+            // hand back an entity this context is already tracking and have mutated it in place,
+            // so reading the property would just return the new hash and the comparison below
+            // would never fire.
+            string previousHash = entry.Property(u => u.PasswordHash).OriginalValue ?? string.Empty;
+            entry.CurrentValues.SetValues(user);
 
-            return result > 0;
+            // One mobile number can carry two roles, and they are one person with one password
+            // (StaticModels/LinkedProfilePolicy). Mirroring the hash here rather than at each
+            // call site means every way a password can change — self-service, forgot-password,
+            // admin reset, expiry — keeps the pair in step, and none of them has to remember to.
+            if ((tracked.PasswordHash ?? string.Empty) != previousHash)
+                await MirrorPasswordToLinkedLogins(tracked);
+
+            await _context.SaveChangesAsync();
+
+            // Callers mutate the cached instance in place before calling this, so the cache is
+            // already dirty whether or not the write landed. Dropping it either way keeps a
+            // failed save from leaving an edit that never happened visible to every request.
+            ClearUserCache();
+
+            // The row exists and the save did not throw. A save that moved no columns (the same
+            // values re-submitted) returns 0 rows affected and is still a success — reporting it
+            // as "User update failed" is what a row-count check would do here.
+            return true;
         }
 
         public async Task<bool> DeleteUser(int userId)
@@ -173,6 +208,84 @@ namespace FintechApp.Repositories
             }
 
             return result > 0;
+        }
+
+        /// <summary>
+        /// Switch the two-step-verification flag, touching nothing else on the row.
+        /// Clears the user cache so the very next sign-in reads the new value.
+        /// </summary>
+        public async Task<bool> SetTwoFactorEnabled(int userId, bool enabled)
+        {
+            var user = await _context.UserMasters.FindAsync(userId);
+            if (user == null)
+                return false;
+
+            if (user.IsTwoFA == enabled)
+                return true; // already in the wanted state — nothing to write
+
+            user.IsTwoFA = enabled;
+            user.UpdatedateTime = DateTime.UtcNow;
+
+            var result = await _context.SaveChangesAsync();
+
+            if (result > 0)
+            {
+                ClearUserCache();
+            }
+
+            return result > 0;
+        }
+
+        /// <summary>
+        /// End every live session this user has, by moving their session generation on by one.
+        ///
+        /// Access tokens are signed JWTs carrying the generation they were minted under, so this
+        /// one write invalidates all of them at once - the tab that asked to sign out, the other
+        /// tab that did not, and any copy of the token taken off the wire. Nothing else on the row
+        /// is touched, and the user cache is cleared so the very next request reads the new value
+        /// rather than a cached row that still says the old generation is current.
+        /// </summary>
+        public async Task<bool> BumpSessionEpoch(int userId)
+        {
+            var user = await _context.UserMasters.FindAsync(userId);
+            if (user == null)
+                return false;
+
+            // Unchecked: this only ever needs to DIFFER from what live tokens carry, so wrapping
+            // round after two billion sign-outs is harmless and never throws.
+            unchecked { user.SessionEpoch = user.SessionEpoch + 1; }
+            user.UpdatedateTime = DateTime.UtcNow;
+
+            var result = await _context.SaveChangesAsync();
+
+            if (result > 0)
+            {
+                ClearUserCache();
+            }
+
+            return result > 0;
+        }
+
+        /// <summary>
+        /// Copy a changed password hash onto the other login(s) of the same person. Tracked
+        /// entities, so they are written by the caller's own SaveChanges.
+        /// </summary>
+        private async Task MirrorPasswordToLinkedLogins(UserMaster changed)
+        {
+            int primaryID = changed.LinkedPrimaryUserID is int linked && linked > 0
+                ? linked
+                : changed.UserMasterID;
+
+            var siblings = await _context.UserMasters
+                .Where(u => u.UserMasterID != changed.UserMasterID
+                            && (u.UserMasterID == primaryID || u.LinkedPrimaryUserID == primaryID))
+                .ToListAsync();
+
+            foreach (var sibling in siblings)
+            {
+                sibling.PasswordHash = changed.PasswordHash;
+                sibling.UpdatedateTime = DateTime.UtcNow;
+            }
         }
 
         public void ClearUserCache()

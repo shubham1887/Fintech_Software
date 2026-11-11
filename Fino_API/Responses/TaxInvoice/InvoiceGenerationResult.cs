@@ -56,5 +56,19 @@ namespace FintechApp.Responses.TaxInvoice
         public decimal TaxTotal { get; set; }
         public decimal GrandTotal { get; set; }
         public string BillingBasis { get; set; } = string.Empty;
+
+        // What the line on the document says — carried on a preview too, so "what will be
+        // billed, how many, at what rate" can be read BEFORE a number is allocated.
+        public string PartyGSTIN { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string SACCode { get; set; } = string.Empty;
+        public string ServiceName { get; set; } = string.Empty;
+        /// <summary>CGST + SGST + IGST rate, e.g. 18.</summary>
+        public decimal GSTRatePercent { get; set; }
+        public decimal CGSTAmount { get; set; }
+        public decimal SGSTAmount { get; set; }
+        public decimal IGSTAmount { get; set; }
+        public string SupplyNature { get; set; } = string.Empty;
+        public string PlaceOfSupplyStateCode { get; set; } = string.Empty;
     }
 }

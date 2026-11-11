@@ -7,6 +7,7 @@ using FintechApp.Responses;
 using FintechApp.StaticModels;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using Newtonsoft.Json;
 
 namespace FintechApp.Controllers
@@ -22,27 +23,51 @@ namespace FintechApp.Controllers
     public class WebsitePageController : ControllerBase
     {
         private readonly IWebsitePageService _service;
+        private readonly IMemoryCache _cache;
         private readonly EncryptDecrypt _encryptDecrypt;
         private readonly Logger _logger;
 
-        public WebsitePageController(IWebsitePageService service, IConfiguration configuration)
+        public WebsitePageController(IWebsitePageService service, IMemoryCache cache, IConfiguration configuration)
         {
             _service = service;
+            _cache = cache;
             _logger = new Logger();
             _encryptDecrypt = new EncryptDecrypt(
                 configuration["Encryption:Key"] ?? string.Empty,
                 configuration["Encryption:IV"] ?? string.Empty);
         }
 
-        /// <summary>Published pages for the public website — anonymous, plain JSON.</summary>
+        /// <summary>
+        /// Published pages for the public website — anonymous, plain JSON.
+        ///
+        /// This single call gates the paint of every public page (/, /services, /about, /contact):
+        /// the SPA has nothing to render until it answers, so whatever it costs is what a first-time
+        /// visitor experiences as "the site is slow". Two things keep it off the database:
+        ///
+        ///   • a short in-process cache, because the content changes when an operator edits a page
+        ///     in the Website Builder — a handful of times a year — and is read by every visitor;
+        ///   • a public Cache-Control, so a repeat visit and any CDN in front of the API answer
+        ///     without reaching us at all.
+        ///
+        /// The window is deliberately short enough that an operator who publishes an edit sees it
+        /// on a refresh rather than wondering whether it saved. Nothing here is per-user: the
+        /// endpoint is anonymous and the payload is identical for everyone, which is exactly what
+        /// makes a shared cache safe.
+        /// </summary>
         [AllowAnonymous]
         [HttpGet("Public")]
         public async Task<APIResponse> Public()
         {
             try
             {
-                var pages = await _service.GetPublished();
-                return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(pages));
+                var pages = await _cache.GetOrCreateAsync(PublicPagesCacheKey, async entry =>
+                {
+                    entry.AbsoluteExpirationRelativeToNow = PublicPagesCacheWindow;
+                    return await _service.GetPublished();
+                });
+
+                Response.Headers.CacheControl = $"public, max-age={(int)PublicPagesCacheWindow.TotalSeconds}";
+                return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(pages ?? new()));
             }
             catch (Exception ex)
             {
@@ -50,6 +75,27 @@ namespace FintechApp.Controllers
                 return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured);
             }
         }
+
+        /// <summary>Cache key for the anonymous published-pages payload (one entry, not per-user).</summary>
+        private const string PublicPagesCacheKey = "website-pages:public";
+
+        /// <summary>
+        /// How long the published-pages payload is reused, in process and in the browser.
+        ///
+        /// Marketing copy, not a balance: two minutes of staleness is invisible to a visitor and
+        /// takes the public site off the database almost entirely. An operator publishing an edit
+        /// does not have to wait for it — <see cref="InvalidatePublicPages"/> is called from every
+        /// write below.
+        /// </summary>
+        private static readonly TimeSpan PublicPagesCacheWindow = TimeSpan.FromMinutes(2);
+
+        /// <summary>
+        /// Drops the cached payload so an edit is live on the next request.
+        ///
+        /// Without this the two-minute window would apply to the operator too, and "I saved it and
+        /// the site still shows the old text" reads as the Website Builder being broken.
+        /// </summary>
+        private void InvalidatePublicPages() => _cache.Remove(PublicPagesCacheKey);
 
         [HttpPost("GetAll")]
         public async Task<APIResponse> GetAll([FromForm] APIRequest apiRequest)
@@ -151,6 +197,7 @@ namespace FintechApp.Controllers
             try
             {
                 failureMessage = await _service.Create(request);
+                if (failureMessage.EqualsIgnoreCase(StatusType.Ok)) InvalidatePublicPages();
                 if (!failureMessage.EqualsIgnoreCase(StatusType.Ok))
                     return ResponseProcess.GetFailResponse(failureMessage);
 
@@ -189,6 +236,7 @@ namespace FintechApp.Controllers
             try
             {
                 failureMessage = await _service.Update(request);
+                if (failureMessage.EqualsIgnoreCase(StatusType.Ok)) InvalidatePublicPages();
                 if (!failureMessage.EqualsIgnoreCase(StatusType.Ok))
                     return ResponseProcess.GetFailResponse(failureMessage);
 
@@ -227,6 +275,7 @@ namespace FintechApp.Controllers
             try
             {
                 failureMessage = await _service.Delete(request.WebsitePageMasterID);
+                if (failureMessage.EqualsIgnoreCase(StatusType.Ok)) InvalidatePublicPages();
                 if (!failureMessage.EqualsIgnoreCase(StatusType.Ok))
                     return ResponseProcess.GetFailResponse(failureMessage);
 

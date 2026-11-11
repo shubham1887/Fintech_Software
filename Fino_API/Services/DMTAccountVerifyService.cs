@@ -34,6 +34,9 @@ namespace FintechApp.Services
         private readonly IOperatorRepository _operatorRepo;
         private readonly ISettingMasterRepository _settingRepo;
         private readonly IProviderRequestResponseLogRepository _logRepo;
+        // Which wallet the DMT service debits, per the admin's Service Wallet Mapping. The
+        // verification fee is charged from the same wallet as the transfer it precedes.
+        private readonly IServiceWalletResolver _serviceWallet;
         private readonly Logger _logger;
 
         public DMTAccountVerifyService(
@@ -46,8 +49,10 @@ namespace FintechApp.Services
             IUserWalletMasterRepository walletRepo,
             IOperatorRepository operatorRepo,
             ISettingMasterRepository settingRepo,
-            IProviderRequestResponseLogRepository logRepo)
+            IProviderRequestResponseLogRepository logRepo,
+            IServiceWalletResolver serviceWallet)
         {
+            _serviceWallet = serviceWallet;
             _senderRepo = senderRepo;
             _jaijui = jaijui;
             _gateway = gateway;
@@ -82,7 +87,9 @@ namespace FintechApp.Services
                 var creds = gateway.Credentials;
 
                 decimal charge = await ResolveVerifyCharge();
-                int walletID = (int)WalletCode.DMT;
+                // The wallet the admin mapped the DMT service to, falling back to the DMT wallet
+                // this charge always came out of.
+                int walletID = await _serviceWallet.Resolve(ServiceID_DMT, (int)WalletCode.DMT);
 
                 // 3. Charge the retailer wallet up-front (ledgered), so the fee is captured even when the
                 //    external call is slow/fails; a failed verification is refunded in step 6.

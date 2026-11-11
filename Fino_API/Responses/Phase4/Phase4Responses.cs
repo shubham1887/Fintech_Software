@@ -80,6 +80,15 @@ namespace FintechApp.Responses.Phase4
         public decimal Difference { get; set; }
         public bool Ok { get; set; }
         public string Detail { get; set; } = string.Empty;
+
+        /// <summary>
+        /// What the two figures are, for the screen to print beside them. The control checks compare
+        /// the ledger against an operational total, which is where the defaults come from; a check
+        /// that compares two things of another kind says so here rather than being mislabelled.
+        /// </summary>
+        public string LedgerLabel { get; set; } = "ledger";
+
+        public string OperationalLabel { get; set; } = "operational";
     }
 
     public class IntegrityReport

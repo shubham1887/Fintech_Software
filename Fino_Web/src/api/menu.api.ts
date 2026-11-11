@@ -10,7 +10,15 @@ export interface MenuNode {
   children?: MenuNode[];
 }
 
-/** Menu URLs hidden from the UI regardless of what the backend menu returns. */
+/**
+ * Menu URLs hidden from the UI regardless of what the backend menu returns.
+ *
+ * `/notifications` used to be listed here, on the reasoning that the header bell already shows
+ * the same feed. That reasoning was wrong in practice: a bell is a thing you notice, not a
+ * thing you go looking for. With no menu row, an operator who had just sent an alert had
+ * nowhere to go and check it — which is most of why App Alert was reported as "doesn't show up
+ * anywhere". Notifications now lives in the Support section like every other support surface.
+ */
 const HIDDEN_URLS = new Set(['/agentdetailreport']);
 
 function stripHidden(nodes: MenuNode[]): MenuNode[] {
@@ -66,6 +74,16 @@ function withInjected(nodes: MenuNode[]): MenuNode[] {
   // Placed inside the "Settings" section (falls back to top-level if that section is absent).
   if ((role === UserTypeCode.Admin || role === UserTypeCode.SupportUser) && !hasUrl(tree, '/VerificationDocuments')) {
     const item: MenuNode = { name: 'Verification Settings', url: '/VerificationDocuments', icon: 'kyc' };
+    const res = addUnderSection(tree, /setting/i, item);
+    tree = res.nodes;
+    if (!res.added) extra.push(item);
+  }
+  // Response Messages — rewrite a provider's own wording before a user reads it. It belongs
+  // with the other Settings (it configures what the platform says, not a day's work), and it
+  // had no menu row at all, which is most of why it was reported as "not working": the only way
+  // to reach it was to know the URL.
+  if ((role === UserTypeCode.Admin || role === UserTypeCode.SupportUser) && !hasUrl(tree, '/MessageRules')) {
+    const item: MenuNode = { name: 'Response Messages', url: '/MessageRules', icon: 'message' };
     const res = addUnderSection(tree, /setting/i, item);
     tree = res.nodes;
     if (!res.added) extra.push(item);

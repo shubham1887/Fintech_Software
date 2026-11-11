@@ -34,9 +34,24 @@ namespace FintechApp.Responses.Fund
         public DateTime TransactionDOC { get; set; }
         public int TransactionDOCInt { get; set; }
         public string DOCType { get; set; } = string.Empty;
+        /// <summary>
+        /// A reversal row's reading in words: "Request" (raised, awaiting a decision) or
+        /// "Reversal" (money actually pulled back). The Fund Reverse Report carries both kinds,
+        /// and Status alone does not separate them — an approved request and a direct reverse are
+        /// both SUCCESS — so the report needs the distinction named rather than inferred from the
+        /// raw Type / Through tokens. Empty for rows that are not reversal-shaped.
+        /// </summary>
+        public string ReverseKind { get; set; } = string.Empty;
         public decimal CashCollectionAmount { get; set; }
         public string CashCollectionRemark { get; set; } = string.Empty;
         public int RequestToID { get; set; }
+        /// <summary>
+        /// Who has to decide this request, by name. Resolved rather than stored: a row whose
+        /// RequestToID was never set is attributed to the raiser's parent (else the admin), the
+        /// same way the request flow would have routed it. Lets the queue show whose decision each
+        /// row is instead of leaving "why am I seeing this?" unanswered.
+        /// </summary>
+        public string RequestToName { get; set; } = string.Empty;
         public int RequestAcceptedUserID { get; set; }
         public DateTime DOC { get; set; }
     }

@@ -38,5 +38,11 @@ namespace FintechApp.Requests.User
         /// (Upload/Document) and only the path is sent here. Re-submitting a document type replaces
         /// the stored row so the user keeps one current document per type.</summary>
         public List<UserDocumentSubmission>? Documents { get; set; }
+
+        /// <summary>
+        /// Why the record was edited. Recorded against every field this edit actually changed, on
+        /// the user change history. Optional on the wire; the panel asks for it.
+        /// </summary>
+        public string Reason { get; set; } = string.Empty;
     }
 }

@@ -35,12 +35,21 @@ namespace FintechApp.Repositories
         }
 
         /// <summary>
-        /// Get user by mobile number - Cached list se search
+        /// The account a mobile number signs in as.
+        ///
+        /// One number can now carry two roles (see StaticModels/LinkedProfilePolicy), so this is
+        /// no longer "the row with this number" — it is the PRIMARY of the pair, which is the one
+        /// holding the credentials. Resolving it by order of insertion would work today and break
+        /// the first time rows come back in a different order.
         /// </summary>
         public async Task<UserMaster?> GetUserByMobileNumber(string mobileNumber)
         {
             var allUsers = await GetAllUsers();
-            return allUsers.FirstOrDefault(u => u.MobileNumber == mobileNumber);
+            var matches = allUsers.Where(u => u.MobileNumber == mobileNumber).ToList();
+            if (matches.Count <= 1) return matches.FirstOrDefault();
+
+            return matches.FirstOrDefault(u => !u.LinkedPrimaryUserID.HasValue || u.LinkedPrimaryUserID.Value <= 0)
+                   ?? matches.OrderBy(u => u.UserMasterID).First();
         }
 
         /// <summary>

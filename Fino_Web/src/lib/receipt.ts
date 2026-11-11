@@ -14,6 +14,25 @@ export interface ReceiptData { id: string; status: string; lines: ReceiptLine[];
  * AEPS / payout / MicroATM). Reads whatever fields the row happens to carry (first present key per
  * line wins), so one implementation serves every product. Supports print, download (PNG) and share.
  */
+/**
+ * What goes on a printed receipt.
+ *
+ * A receipt is handed to the CUSTOMER across the counter. It has to prove one thing — this amount,
+ * for this number, on this date, with this reference, and whether it worked — and nothing on it
+ * should be the retailer's own commercial position.
+ *
+ * So four lines that used to be here are gone:
+ *   * Commission and Charge — the retailer's margin and what they were charged for the
+ *     transaction. A customer who can read the margin off their own receipt will ask about it,
+ *     and on a surcharged product they will read the charge as a second fee they paid.
+ *   * Opening and Closing Balance — the retailer's float. Nobody outside the shop has any
+ *     business knowing how much money is in the till, and it appeared on every slip handed out.
+ *   * Remark — a free-text field the panel writes internal notes into ("re-pushed", "wrong 2
+ *     right done"), none of it addressed to a customer.
+ *
+ * All of it is still on the report, in the detail view and in the export, for the people the
+ * figures belong to. This list is only what gets printed.
+ */
 const LINES: Array<{ label: string; keys: string[]; money?: boolean; date?: boolean }> = [
   { label: 'Receipt No.', keys: ['TransactionMasterID', 'TransactionID', 'ReferenceNo'] },
   { label: 'Date & Time', keys: ['DOC', 'TransactionDate'], date: true },
@@ -23,13 +42,10 @@ const LINES: Array<{ label: string; keys: string[]; money?: boolean; date?: bool
   { label: 'Number / Account', keys: ['ConsumerNumber'] },
   { label: 'Beneficiary', keys: ['BeneName', 'BeneficiaryName'] },
   { label: 'Amount', keys: ['Amount'], money: true },
-  { label: 'Charge', keys: ['Charge'], money: true },
-  { label: 'Commission', keys: ['RetailerCommission', 'RetailerComm', 'NetCommission'], money: true },
-  { label: 'Opening Balance', keys: ['OpeningBalance'], money: true },
-  { label: 'Closing Balance', keys: ['ClosingBalance'], money: true },
-  { label: 'Operator Ref.', keys: ['ReferenceNo'] },
-  { label: 'Transaction Ref.', keys: ['ProviderRequestID', 'ProviderRefNo'] },
-  { label: 'Remark', keys: ['Remark', 'Description'] },
+  // The operator's own reference first — it is the number a customer quotes back when something
+  // has to be chased, and the whole reason the slip is worth keeping.
+  { label: 'Operator Ref.', keys: ['ProviderRefNo', 'ReferenceNo'] },
+  { label: 'Transaction Ref.', keys: ['ReferenceNo', 'ProviderRequestID'] },
 ];
 
 function firstPresent(row: Record<string, unknown>, keys: string[]): unknown {

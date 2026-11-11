@@ -1,5 +1,6 @@
 using FintechApp.Entities;
 using FintechApp.Helpers;
+using FintechApp.Interfaces.Providers;
 using FintechApp.Interfaces.Repositories;
 using FintechApp.Interfaces.Services;
 using FintechApp.Requests.OperatorSequence;
@@ -10,9 +11,6 @@ namespace FintechApp.Services
 {
     public class OperatorSequenceService : IOperatorSequenceService
     {
-        // Recharge-family services share one provider pool (legacy Mobile/DTH/Postpaid behaviour).
-        private static readonly string[] RechargeFamilyNames = { "MOBILE", "DTH", "POSTPAID", "POST PAID", "PREPAID" };
-
         // Endpoint kinds count as dispatch-capable ("PAY" legacy spelling, "TRANSACTION" canonical).
         private static readonly HashSet<string> PayKinds = new(StringComparer.OrdinalIgnoreCase)
             { "PAY", "RECHARGE", "TXN", "TRANSACTION", "INITIAL" };
@@ -26,6 +24,9 @@ namespace FintechApp.Services
         private readonly IServiceRepository _serviceRepo;
         private readonly IViewProviderMappingRepository _viewMappingRepo;
         private readonly IRealProviderMappingRepository _realMappingRepo;
+        private readonly IProviderConfigurationRepository _routeRepo;
+        private readonly IProviderResponseMasterRepository _ruleRepo;
+        private readonly ICodedProviderRegistry _coded;
 
         public OperatorSequenceService(
             IOperatorSequenceRepository repository,
@@ -34,8 +35,12 @@ namespace FintechApp.Services
             IProviderDetailsRepository providerDetailsRepo,
             IServiceRepository serviceRepo,
             IViewProviderMappingRepository viewMappingRepo,
-            IRealProviderMappingRepository realMappingRepo)
+            IRealProviderMappingRepository realMappingRepo,
+            IProviderConfigurationRepository routeRepo,
+            IProviderResponseMasterRepository ruleRepo,
+            ICodedProviderRegistry coded)
         {
+            _ruleRepo = ruleRepo;
             _repository = repository;
             _operatorRepo = operatorRepo;
             _providerRepo = providerRepo;
@@ -43,6 +48,8 @@ namespace FintechApp.Services
             _serviceRepo = serviceRepo;
             _viewMappingRepo = viewMappingRepo;
             _realMappingRepo = realMappingRepo;
+            _routeRepo = routeRepo;
+            _coded = coded;
         }
 
         private static OperatorSequenceResponse MapToResponse(OperatorSequence e) => new()
@@ -97,38 +104,49 @@ namespace FintechApp.Services
 
         // ── Legacy provider-sequence grid contract ───────────────────────────────────
 
-        // Service ids that share a provider pool with the given service (recharge trio),
-        // or just the service itself for everything else.
+        // The services that share a provider pool with this one — its whole rail. See
+        // ServiceFamily: a provider is contracted per rail ("BBPS", "recharge"), never per
+        // biller, so pooling by exact ServiceID left every biller service with an empty grid.
         private async Task<HashSet<int>> ResolvePoolServiceIDs(int serviceID)
         {
             var services = await _serviceRepo.GetAllServices();
-            var current = services.FirstOrDefault(s => s.ServiceID == serviceID);
-            var ids = new HashSet<int> { serviceID };
-            if (current == null) return ids;
-
-            bool isRechargeFamily = RechargeFamilyNames.Any(n => current.Name.Trim().ToUpperInvariant().Contains(n));
-            if (!isRechargeFamily) return ids;
-
-            foreach (var s in services)
-                if (RechargeFamilyNames.Any(n => s.Name.Trim().ToUpperInvariant().Contains(n)))
-                    ids.Add(s.ServiceID);
-            return ids;
+            return ServiceFamily.Pool(services, serviceID);
         }
 
-        // Active, non-real providers that have a PAY endpoint for any of the pool services.
-        private async Task<List<ProviderMaster>> SelectPayProviders(HashSet<int>? poolServiceIDs)
+        private async Task<string> ResolveFamily(int serviceID)
+        {
+            var services = await _serviceRepo.GetAllServices();
+            return ServiceFamily.Of(services.FirstOrDefault(s => s.ServiceID == serviceID));
+        }
+
+        /// <summary>
+        /// Active providers that can dispatch for this rail.
+        ///
+        /// Two ways to qualify, because there are two kinds of provider. A template gateway
+        /// declares itself with a PAY endpoint on any service of the rail. A coded integration
+        /// (Pay1, JaiJui) has no endpoint rows at all — it is dispatched through its library —
+        /// so it qualifies on the rail it was written for. Leaving the second case out is why
+        /// "Pay1 Utility BBPS" could be added, activated and credentialed, and still appear in
+        /// no routing grid anywhere.
+        /// </summary>
+        private async Task<List<ProviderMaster>> SelectPayProviders(HashSet<int>? poolServiceIDs, string family)
         {
             var providers = await _providerRepo.GetAll();
             var details = await _providerDetailsRepo.GetAll();
 
             var payProviderIDs = details
-                .Where(d => PayKinds.Contains(d.UrlType.Trim())
+                .Where(d => d.IsActive
+                            && PayKinds.Contains(d.UrlType.Trim())
                             && (poolServiceIDs == null || poolServiceIDs.Contains(d.ServiceID)))
                 .Select(d => d.ProviderID)
                 .ToHashSet();
 
             return providers
-                .Where(p => p.IsActive && !p.IsDelete && payProviderIDs.Contains(p.ProviderID))
+                .Where(p => p.IsActive && !p.IsDelete)
+                .Where(p => payProviderIDs.Contains(p.ProviderID)
+                            || (family.Length > 0
+                                ? _coded.FamilyOf(p.ProviderName).Equals(family, StringComparison.OrdinalIgnoreCase)
+                                : _coded.IsCoded(p.ProviderName)))
                 .OrderBy(p => p.ProviderID)
                 .ToList();
         }
@@ -136,7 +154,8 @@ namespace FintechApp.Services
         // Full provider grid for one operator: active sequence entries first-class, all other
         // PAY providers (excluding real-API ones) present with IsActive=false.
         private static List<SequenceProviderItemResponse> BuildProviderCells(
-            int operatorID, List<OperatorSequence> sequenceRows, List<ProviderMaster> payProviders)
+            int operatorID, List<OperatorSequence> sequenceRows, List<ProviderMaster> payProviders,
+            HashSet<(int OperatorID, int ProviderID)> routed, HashSet<int> readable)
         {
             var cells = new List<SequenceProviderItemResponse>();
             var providerById = payProviders.ToDictionary(p => p.ProviderID);
@@ -150,7 +169,9 @@ namespace FintechApp.Services
                     ProviderID = row.ProviderID,
                     ProviderName = provider.ProviderName,
                     Count = row.Count,
-                    IsActive = true
+                    IsActive = true,
+                    HasRoute = routed.Contains((operatorID, row.ProviderID)),
+                    HasResponseRules = readable.Contains(row.ProviderID)
                 });
             }
 
@@ -163,11 +184,46 @@ namespace FintechApp.Services
                     ProviderID = provider.ProviderID,
                     ProviderName = provider.ProviderName,
                     Count = 0,
-                    IsActive = false
+                    IsActive = false,
+                    HasRoute = routed.Contains((operatorID, provider.ProviderID)),
+                    HasResponseRules = readable.Contains(provider.ProviderID)
                 });
             }
 
             return cells.OrderBy(c => c.ProviderID).ToList();
+        }
+
+        /// <summary>
+        /// The services the Provider Routing picker may offer: the operator-based rails only,
+        /// and only where operators actually exist. DMT, AEPS, Micro-ATM, Payout, the payment
+        /// gateway and verification each route somewhere else, so listing them here produced a
+        /// grid that could be filled in and never took effect.
+        /// </summary>
+        public async Task<List<SequenceServiceResponse>> SelectRoutableServices()
+        {
+            var services = await _serviceRepo.GetAllServices();
+            var operatorCounts = (await _operatorRepo.GetActiveOperators())
+                .GroupBy(o => o.ServiceID)
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            return services
+                .Where(s => s.IsActive && !s.IsDelete)
+                .Where(ServiceFamily.IsOperatorRouted)
+                .Where(s => operatorCounts.ContainsKey(s.ServiceID))
+                // Descending, which is not arbitrary: it puts the RECHARGE rail above the much
+                // longer BBPS one and Prepaid Recharge at the very top of it. Recharge is what
+                // this screen is opened for most days, and it was buried under eighteen billers.
+                .OrderByDescending(s => ServiceFamily.Of(s))
+                .ThenByDescending(s => s.Name)
+                .Select(s => new SequenceServiceResponse
+                {
+                    ServiceID = s.ServiceID,
+                    Name = s.Name,
+                    ServiceName = s.Name,
+                    Family = ServiceFamily.Of(s),
+                    OperatorCount = operatorCounts[s.ServiceID]
+                })
+                .ToList();
         }
 
         public async Task<List<OperatorSequenceGridResponse>> SelectByService(int serviceID)
@@ -184,9 +240,25 @@ namespace FintechApp.Services
             string serviceName = service?.Name?.Trim() ?? string.Empty;
 
             var poolServiceIDs = await ResolvePoolServiceIDs(serviceID);
-            var payProviders = await SelectPayProviders(poolServiceIDs);
+            var payProviders = await SelectPayProviders(poolServiceIDs, ServiceFamily.Of(service));
             var sequenceRows = await _repository.GetAll();
             var viewMappings = await _viewMappingRepo.GetAll();
+
+            // Operator-to-provider routes, which is what dispatch actually walks. The sequence
+            // only ORDERS them, so a ticked provider with no route here sends nothing.
+            var routed = (await _routeRepo.GetAll())
+                .Where(r => r.IsActive && (poolServiceIDs.Contains(r.ServiceID) || r.ServiceID == 0))
+                .Select(r => (r.OperatorID, r.ProviderID))
+                .ToHashSet();
+
+            // Providers whose reply the gateway can actually interpret. One with no active
+            // TRANSACTION rule is skipped at dispatch, so ticking it here achieves nothing - the
+            // grid says so rather than letting it look configured.
+            var readable = (await _ruleRepo.GetAll())
+                .Where(r => r.IsActive && !r.IsDeleted
+                            && (r.Type ?? string.Empty).Trim().Equals("TRANSACTION", StringComparison.OrdinalIgnoreCase))
+                .Select(r => r.ProviderID)
+                .ToHashSet();
 
             foreach (var op in operators)
             {
@@ -197,7 +269,7 @@ namespace FintechApp.Services
                     OperatorID = op.OperatorID,
                     OperatorName = op.OperatorName,
                     Detail = $"{serviceName}{Environment.NewLine}{op.OperatorName}",
-                    ProviderList = BuildProviderCells(op.OperatorID, sequenceRows, payProviders),
+                    ProviderList = BuildProviderCells(op.OperatorID, sequenceRows, payProviders, routed, readable),
                     ViewProviderID = viewMappings.FirstOrDefault(v => v.OperatorID == op.OperatorID)?.ProviderID ?? 0
                 });
             }
@@ -246,9 +318,14 @@ namespace FintechApp.Services
             }
         }
 
-        public async Task<List<SequenceProviderItemResponse>> SelectProviderForBulkSequence()
+        public async Task<List<SequenceProviderItemResponse>> SelectProviderForBulkSequence(int serviceID)
         {
-            var payProviders = await SelectPayProviders(poolServiceIDs: null);
+            // Scoped to the service being edited, so the bulk chips offer exactly the providers
+            // the rows below them show. Unscoped (0) still answers with every dispatch-capable
+            // provider, for older clients that call this without a service.
+            var pool = serviceID > 0 ? await ResolvePoolServiceIDs(serviceID) : null;
+            string family = serviceID > 0 ? await ResolveFamily(serviceID) : string.Empty;
+            var payProviders = await SelectPayProviders(pool, family);
             return payProviders
                 .Select(p => new SequenceProviderItemResponse
                 {
