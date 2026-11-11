@@ -1,10 +1,14 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { FileText, Layers, Search } from 'lucide-react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { useToast } from '@/components/ui/Toast';
+import { FilePlus2, FileText, Layers, Search } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
+import { fetchList } from '@/api/list.api';
+import { getField } from '@/lib/row';
+import { Autocomplete, type AutocompleteOption } from '@/components/ui/Autocomplete';
 import { inr, apiDate, dateOnly } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvDownload } from '@/lib/exportAll';
 import { useAuth } from '@/features/auth/AuthContext';
 import {
   DIRECTIONS, DOCUMENT_TYPES, canRaiseDocument, documentTypeLabel, irnTone, statusTone, currentFyRange,
@@ -20,6 +24,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Spinner } from '@/components/ui/Spinner';
 import { StatTile, STAT_STRIP } from '@/components/ui/StatTile';
 import { pickIcon } from '@/components/layout/iconMap';
+import { GenerateInvoicesPanel } from './GenerateMonthDialog';
 import type { CustomScreenProps } from './registry';
 
 /** The header columns we read — a subset of the entity, named to match the API's PascalCase. */
@@ -123,12 +128,30 @@ const money = (v: number) => inr(v);
 const pct = (v: number) => (v ? `${v}%` : '—');
 
 export function TaxInvoicesScreen({ def }: CustomScreenProps) {
+  const downloadCsv = useCsvDownload();
   const { user } = useAuth();
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [applied, setApplied] = useState<Filters>(filters);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [generateOpen, setGenerateOpen] = useState(false);
 
   const set = (k: keyof Filters, v: string) => setFilters((s) => ({ ...s, [k]: v }));
+
+  // Every user that can be a party to a document — the same list the fund screens pick from —
+  // with the tier and the mobile number under the name so two firms of one name can be told apart.
+  const { data: parties = [], isLoading: partiesLoading } = useQuery({
+    queryKey: ['user-opts-parties'],
+    staleTime: 300_000,
+    queryFn: () => fetchList('Users/Select', { PageNumber: 1, PageSize: 2000, TakeCount: 2000, SkipCount: 0, ShowDeleted: false }),
+  });
+  const partyOptions = useMemo<AutocompleteOption[]>(
+    () => parties.map((u) => ({
+      value: String(getField(u, 'UserMasterID', 'UserID') ?? ''),
+      label: String(getField(u, 'FirmName', 'PersonName', 'Name') ?? '—'),
+      sublabel: [getField(u, 'UserType'), getField(u, 'MobileNumber', 'Mobile')].filter(Boolean).map(String).join(' · ') || undefined,
+    })),
+    [parties],
+  );
 
   const list = useQuery({
     queryKey: ['tax-invoices', applied],
@@ -162,7 +185,7 @@ export function TaxInvoicesScreen({ def }: CustomScreenProps) {
   const runFilter = () => setApplied({ ...filters });
 
   const exportRows = () =>
-    exportToCsv(
+    downloadCsv(
       rows.map((r) => ({
         Document: r.DocumentNo,
         Date: dateOnly(r.DocumentDate),
@@ -186,7 +209,21 @@ export function TaxInvoicesScreen({ def }: CustomScreenProps) {
         title={def.title}
         subtitle="Every GST document — sale and purchase, with the transactions behind each figure"
         icon={pickIcon(def.title)}
+        actions={
+          // Only Admin: issuing allocates invoice numbers that go into GSTR-1 and can be
+          // withdrawn only by credit note. The server refuses it for every other role.
+          canRaiseDocument(user?.UserTypeID) ? (
+            <Button onClick={() => setGenerateOpen((o) => !o)} variant={generateOpen ? 'secondary' : 'primary'}>
+              <FilePlus2 className="size-4" />
+              {generateOpen ? 'Close generator' : 'Generate sale invoices'}
+            </Button>
+          ) : undefined
+        }
       />
+
+      {generateOpen && (
+        <GenerateInvoicesPanel onClose={() => setGenerateOpen(false)} onIssued={() => list.refetch()} />
+      )}
 
       {/* ── Filters ─────────────────────────────────────────────────────────────── */}
       <Card>
@@ -203,12 +240,14 @@ export function TaxInvoicesScreen({ def }: CustomScreenProps) {
               <option key={d.value} value={d.value}>{d.label}</option>
             ))}
           </Select>
-          <Input
-            label="Party user ID"
-            type="number"
-            placeholder="All parties"
+          {/* A user picker, not a numeric id box: nobody knows a party by its UserMasterID. */}
+          <Autocomplete
+            label="Party"
+            placeholder="All parties — type a name or number"
+            options={partyOptions}
             value={filters.partyUserId}
-            onChange={(e) => set('partyUserId', e.target.value)}
+            loading={partiesLoading}
+            onChange={(v) => set('partyUserId', String(v ?? ''))}
           />
           <div className="flex items-end gap-2">
             <Button onClick={runFilter} loading={list.isFetching} className="flex-1">
@@ -249,7 +288,7 @@ export function TaxInvoicesScreen({ def }: CustomScreenProps) {
           <CardBody>
             <EmptyState
               title="No documents in this period"
-              description="Nothing has been issued for the filters above. Generating documents is done from the generators, not here."
+              description="Nothing has been issued for the filters above. Use Generate sale invoices at the top to raise a month's invoices."
             />
           </CardBody>
         ) : (
@@ -319,7 +358,11 @@ export function TaxInvoicesScreen({ def }: CustomScreenProps) {
         ) : detail.isError ? (
           <EmptyState title="Could not load" description={(detail.error as Error).message} />
         ) : detail.data ? (
-          <DocumentView detail={detail.data} canRaise={canRaiseDocument(user?.UserTypeID)} />
+          <DocumentView
+            detail={detail.data}
+            canRaise={canRaiseDocument(user?.UserTypeID)}
+            onChanged={() => { detail.refetch(); list.refetch(); }}
+          />
         ) : null}
       </Modal>
     </div>
@@ -328,10 +371,31 @@ export function TaxInvoicesScreen({ def }: CustomScreenProps) {
 
 /** One document, in full: header, lines, the annexure that answers "which transactions", IRN and
  *  any credit notes against it. */
-function DocumentView({ detail, canRaise }: { detail: DocumentDetail; canRaise: boolean }) {
+function DocumentView({ detail, canRaise, onChanged }: { detail: DocumentDetail; canRaise: boolean; onChanged?: () => void }) {
+  const toast = useToast();
   const h = detail.Header;
   const tax = (h.CGSTTotal || 0) + (h.SGSTTotal || 0) + (h.IGSTTotal || 0) + (h.CessTotal || 0);
   const intrastate = h.SupplyNature.toUpperCase() === 'INTRASTATE';
+
+  // Cancelling withdraws the document and hands its number back to the series when it was the
+  // last one issued; the record stays as DEL-<number>. Admin only (the API enforces it too), and
+  // only while no IRN or credit note stands against it — the server says which.
+  const hasIrn = Boolean(detail.EInvoice && String((detail.EInvoice as unknown as Record<string, unknown>).IRN ?? '').length > 0);
+  const canCancel = canRaise && h.Direction !== 'PURCHASE' && h.Status !== 'Cancelled'
+    && h.DocumentType !== 'CreditNote' && !hasIrn && detail.CreditNotes.length === 0;
+  const cancel = useMutation({
+    mutationFn: (reason: string) => apiPost<{ Message: string }>('TaxInvoice/Cancel', { TaxInvoiceHeaderID: h.TaxInvoiceHeaderID, Reason: reason }),
+    onSuccess: (res) => {
+      if (!res.ok) { toast.error(res.message || 'The document could not be cancelled.'); return; }
+      toast.success(res.data?.Message || 'Document cancelled.');
+      onChanged?.();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const askCancel = () => {
+    const reason = window.prompt(`Cancel ${h.DocumentNo}? Give the reason — it is kept on the record.`);
+    if (reason && reason.trim()) cancel.mutate(reason.trim());
+  };
 
   return (
     <div className="space-y-5">
@@ -351,9 +415,16 @@ function DocumentView({ detail, canRaise }: { detail: DocumentDetail; canRaise: 
             {documentTypeLabel(h.DocumentType)} · {h.Direction === 'PURCHASE' ? 'Purchase' : 'Sale'} · {dateOnly(h.DocumentDate)}
           </p>
         </div>
-        <div className="text-right">
-          <p className="text-xs uppercase tracking-wide text-slate-400">Grand total</p>
-          <p className="text-xl font-semibold tabular-nums text-slate-900">{money(h.GrandTotal)}</p>
+        <div className="flex items-start gap-3">
+          {canCancel && (
+            <Button variant="outline" size="sm" className="text-danger-600 hover:bg-danger-50" loading={cancel.isPending} onClick={askCancel}>
+              Cancel document
+            </Button>
+          )}
+          <div className="text-right">
+            <p className="text-xs uppercase tracking-wide text-slate-400">Grand total</p>
+            <p className="text-xl font-semibold tabular-nums text-slate-900">{money(h.GrandTotal)}</p>
+          </div>
         </div>
       </div>
 

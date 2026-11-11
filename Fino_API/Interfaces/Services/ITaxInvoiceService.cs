@@ -61,5 +61,13 @@ namespace FintechApp.Interfaces.Services
         /// <summary>One document with its lines and its annexure — what the detail screen shows,
         /// and the only honest answer to "which transactions make up this figure".</summary>
         Task<object?> GetDocument(int taxInvoiceHeaderID);
+
+        /// <summary>
+        /// Withdraw an issued sale document that has no IRN and no credit note: it is marked
+        /// Cancelled, its number is kept on record as "DEL-&lt;number&gt;", its sources are released
+        /// for re-invoicing, and when it was the last number its series issued, that number is
+        /// handed back so the next document takes it instead of leaving a gap.
+        /// </summary>
+        Task<(bool Ok, string Message)> CancelDocument(CancelDocumentRequest request);
     }
 }

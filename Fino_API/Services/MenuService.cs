@@ -29,13 +29,49 @@ namespace FintechApp.Services
         private readonly IServiceRepository _serviceRepo;
         private readonly IWalletServiceMappingRepository _walletServiceRepo;
         private readonly IUserServiceAccessService _serviceAccess;
+        private readonly IMenuVisibilityService _visibility;
 
         public MenuService(IServiceRepository serviceRepo, IWalletServiceMappingRepository walletServiceRepo,
-            IUserServiceAccessService serviceAccess)
+            IUserServiceAccessService serviceAccess, IMenuVisibilityService visibility)
         {
             _serviceRepo = serviceRepo;
             _walletServiceRepo = walletServiceRepo;
             _serviceAccess = serviceAccess;
+            _visibility = visibility;
+        }
+
+        /// <summary>
+        /// The key a visibility decision is recorded against: a leaf's URL, or
+        /// <c>group:&lt;name&gt;</c> for a group, which has no URL of its own.
+        /// </summary>
+        public static string KeyFor(string? url, string name) =>
+            string.IsNullOrWhiteSpace(url)
+                ? $"group:{(name ?? string.Empty).Trim().ToLowerInvariant()}"
+                : url.Trim().ToLowerInvariant();
+
+        /// <summary>One entry of the shipped menu definition, flattened.</summary>
+        public readonly record struct CatalogEntry(
+            string Key, string Name, string Group, string? Url, bool IsGroup, int[]? Roles);
+
+        /// <summary>
+        /// The whole shipped definition as a flat list — what the Menu Visibility screen is built
+        /// from. It reports what the PRODUCT has, not what any one role sees, because that is the
+        /// list an admin is choosing from; the per-role reality is applied when the menu is built.
+        /// </summary>
+        public static List<CatalogEntry> Catalog()
+        {
+            var list = new List<CatalogEntry>();
+            foreach (var node in Definition) Walk(node, string.Empty, list);
+            return list;
+
+            static void Walk(Node node, string group, List<CatalogEntry> into)
+            {
+                bool isGroup = node.Children is { Length: > 0 };
+                into.Add(new CatalogEntry(
+                    KeyFor(node.Url, node.Name), node.Name, group, node.Url, isGroup, node.Roles));
+                if (!isGroup) return;
+                foreach (var child in node.Children!) Walk(child, node.Name, into);
+            }
         }
 
         public async Task<List<MenuItem>> GetMenu(int userTypeId, int userId = 0)
@@ -79,18 +115,42 @@ namespace FintechApp.Services
                         .ToList();
             }
 
+            // What this install has chosen to hide. Read once per menu build rather than per node:
+            // the sidebar is requested on every page load by every signed-in user.
+            var hidden = await HiddenKeys(userTypeId);
+
             var result = new List<MenuItem>();
             foreach (var node in Definition)
             {
-                var item = Filter(node, userTypeId, serviceGated, services);
+                var item = Filter(node, userTypeId, serviceGated, services, hidden);
                 if (item != null) result.Add(item);
             }
             return result;
         }
 
-        private static MenuItem? Filter(Node node, int userTypeId, bool serviceGated, List<ServiceMaster> services)
+        /// <summary>
+        /// The keys this role must not be shown. Built by asking the visibility service about the
+        /// entries the role could otherwise see — a hide decision is presentation, so it is
+        /// applied after the role and service gates, never instead of them.
+        /// </summary>
+        private async Task<HashSet<string>> HiddenKeys(int userTypeId)
+        {
+            var hidden = new HashSet<string>();
+            foreach (var entry in Catalog())
+            {
+                if (!await _visibility.IsVisible(entry.Key, userTypeId)) hidden.Add(entry.Key);
+            }
+            return hidden;
+        }
+
+        private static MenuItem? Filter(Node node, int userTypeId, bool serviceGated,
+            List<ServiceMaster> services, HashSet<string> hidden)
         {
             bool allowed = node.Roles == null || node.Roles.Contains(userTypeId);
+
+            // The admin switched this entry off for this install. Applied to groups and leaves
+            // alike: hiding "Reports" hides what is inside it, which is what an admin means.
+            if (hidden.Contains(KeyFor(node.Url, node.Name))) return null;
 
             if (node.Children is { Length: > 0 })
             {
@@ -100,7 +160,7 @@ namespace FintechApp.Services
                 var kids = new List<MenuItem>();
                 foreach (var child in node.Children)
                 {
-                    var c = Filter(child, userTypeId, serviceGated, services);
+                    var c = Filter(child, userTypeId, serviceGated, services, hidden);
                     if (c != null) kids.Add(c);
                 }
                 if (kids.Count == 0) return null; // no visible children → hide group
@@ -128,12 +188,12 @@ namespace FintechApp.Services
             new Node { Roles = [1, 6], Name = "Transaction Search", Url = "/Search", Icon = "Search" },
             new Node { Roles = [4, 5], Name = "Transaction Search", Url = "/RetailerSearch", Icon = "Search" },
 
-            new Node { Roles = [1, 6], Name = "Pending Queue", Icon = "Pets", Children = new[]
-            {
-                new Node { Name = "Recharge", Url = "/Pending" },
-                new Node { Name = "DMT", Url = "/PendingDmt" },
-                new Node { Name = "Reconciliation", Url = "/PendingRecon" },
-            }},
+            // ONE row, not a group. The hub lists every queue this install actually has - recharge,
+            // DMT, bill payment, payout, AEPS and whatever is added next - and opens each one in
+            // the same workbench, so the three extra child rows (Recharge / DMT / Reconciliation)
+            // were the same screens reached a second way. Recharge and DMT keep their own
+            // capabilities (provider switching, the transfer hold) inside the hub.
+            new Node { Roles = [1, 6], Name = "Pending Queue", Url = "/PendingQueues", Icon = "Pets" },
 
             // ── Support & Alerts ────────────────────────────────────────────────────────────
             //
@@ -168,11 +228,20 @@ namespace FintechApp.Services
                 new Node { Roles = [1], Name = "Ticket Categories", Url = "/TicketCategory" },
             }},
 
-            new Node { Roles = [1, 2, 3, 4, 5, 7, 10, 11], Name = "Funds", Icon = "MoneyIcon", Children = new[]
+            new Node { Roles = [1, 2, 3, 4, 5, 6, 7, 10, 11], Name = "Funds", Icon = "MoneyIcon", Children = new[]
             {
                 new Node { Roles = [1], Name = "Virtual Balance", Url = "/VirtualBalance" },
                 new Node { Roles = [1], Name = "Payment Modes", Url = "/ModeMaster" },
                 new Node { Roles = [1, 2, 3, 4, 10, 11], Name = "Fund Requests", Url = "/Fund" },
+                // Outstanding sits here, next to Fund Requests, because it is the other half of the
+                // same act: a fund request approved on Credit funds a wallet AND records a debt.
+                //
+                // Every role that can owe money or be owed it, the retailer included - they need to
+                // see what they owe and the statement behind it, which is the difference between a
+                // credit facility and an argument at the counter. What each of them actually SEES
+                // is scoped server-side: admin and support get the network, everyone else their own
+                // downline and their own balance.
+                new Node { Roles = [1, 2, 3, 4, 6, 10, 11], Name = "Outstanding", Url = "/Outstanding" },
                 new Node { Roles = [1, 2, 3, 10, 11], Name = "Fund Transfer", Url = "/Fund/Transfer" },
                 new Node { Roles = [1, 2, 3], Name = "Fund Reversal", Url = "/FundReverse" },
                 // Reverse requests raised by the distributor tier, waiting on the operator to
@@ -193,27 +262,73 @@ namespace FintechApp.Services
                 new Node { Roles = [1, 2, 3, 5, 7, 10, 11], Name = "AEPS to Wallet", Url = "/WalletTransfer" },
             }},
 
-            new Node { Roles = [1, 9], Name = "Administration", Icon = "MoneyIcon", Children = new[]
+            // ── Accountant ──────────────────────────────────────────────────────────────────
+            //
+            // What the accounting desk works in — and only that. This section had grown to
+            // twenty-five rows: every table the GST work had ever needed got a screen, and every
+            // screen got a menu row. The people using it are not accountants by training; they
+            // know that GST has to be filed and want to be walked through it. So the month now
+            // lives on ONE page (GST Returns) — sales, purchases, the 2B file, the credit and the
+            // tax to pay — and the screens that were only ever a step of that (E-Invoice Queue,
+            // Credit-Note Window, GST Collection, GSTR-2B Reconciliation, ITC Register) are off
+            // the menu. So are the double-entry screens (Chart of Accounts, Ledger Vouchers, Trial
+            // Balance), Commission Tax and the Tax Rule Simulator: nobody on this desk reads
+            // them. Their routes still exist for anyone holding a link, and the jobs behind them
+            // still run; they are simply no longer something a person has to walk past.
+            //
+            // Both roles get this section. The accountant reads everything in it; the writes that
+            // change what the law sees (issuing a document, claiming a credit, returning withheld
+            // TDS to a wallet) are pinned to Admin in ApiAccessPolicy and hidden on the screens.
+            // A row here with no matching grant in that policy renders and then fails silently,
+            // which is the one failure mode this menu has produced before.
+            new Node { Roles = [1, 9], Name = "Accountant", Icon = "AssessmentIcon", Children = new[]
             {
-                // Role 9 (Accountant) gets the books: invoices, accounting summary, platform
-                // ledger, provider daybook, provider sales and the purchase report. It does NOT
-                // get Status Correction or Manual Settlement — those change a transaction's
-                // outcome, which stays with the admin. ApiAccessPolicy grants the matching
-                // controllers to the Accounting / TxnAndAccounting sets; without that the rows
-                // would render and every call behind them would fail silently.
+                // What we billed and what we were billed.
                 new Node { Roles = [1, 9], Name = "Invoices", Url = "/Invoice" },
+                new Node { Roles = [1, 9], Name = "GST Documents", Url = "/TaxInvoices" },
+                new Node { Roles = [1, 9], Name = "Exchange Register", Url = "/ExchangeRegister" },
+                new Node { Roles = [1, 9], Name = "Purchase Invoice", Url = "/PurchaseRegister" },
+                new Node { Roles = [1, 9], Name = "Purchase Report", Url = "/PurchaseReport" },
+
+                // The month: sales, purchases, the 2B file, the credit and the tax to pay.
+                new Node { Roles = [1, 9], Name = "GST Returns", Url = "/GstReturns" },
+                new Node { Roles = [1, 9], Name = "Bank Reconciliation", Url = "/BankRecon" },
+                // The configuration behind it: the banks (pulled from Payment Modes), how each
+                // one writes its statement, what a line means, and deposits claimed twice.
+                new Node { Roles = [1, 9], Name = "Bank Setup", Url = "/BankSetup" },
+
+                // What the provider side looks like, which is where most of the margin is decided.
+                new Node { Roles = [1, 9], Name = "Provider Daybook", Url = "/ProviderDayBook" },
+                new Node { Roles = [1, 9], Name = "Provider Sales", Url = "/ProviderSale" },
+
+                // The state each party is billed in — it decides CGST + SGST against IGST.
+                new Node { Roles = [1, 9], Name = "Place of Supply", Url = "/PartyPlaceOfSupply" },
+
+                // TDS: the rules, and the month. Both roles set the rules — the desk is the one
+                // that knows what the rate should be — and only Admin can hand withheld money back.
+                new Node { Roles = [1, 9], Name = "TDS Setting", Url = "/TdsSetting" },
+                new Node { Roles = [1, 9], Name = "TDS Report", Url = "/TdsMonthly" },
+            }},
+
+            // ── Administration ─────────────────────────────────────────────────────────────
+            // The operator's own desk: the company's books at a glance, the logs, and the two
+            // actions that change a transaction's outcome.
+            new Node { Roles = [1], Name = "Administration", Icon = "MoneyIcon", Children = new[]
+            {
+                // Which of the product's screens this install puts on the sidebar. First in the
+                // group because it is the answer to "why is there a report here we never use" —
+                // and because an admin looking for it is looking for a menu setting, not a log.
+                new Node { Roles = [1], Name = "Menu Visibility", Url = "/MenuVisibility" },
+                // The company's own money: wallet-wise opening / closing, sale, purchase and
+                // commission, and the running-balance statement behind it. These are the owner's
+                // figures rather than a GST step, so they sit with the owner.
+                new Node { Roles = [1], Name = "Accounting Summary", Url = "/AdminAccounting" },
+                new Node { Roles = [1], Name = "Platform Ledger", Url = "/AdminLedger" },
                 new Node { Roles = [1], Name = "SMS Log", Url = "/SmsReport" },
                 new Node { Roles = [1], Name = "Provider Logs", Url = "/ProviderLog" },
                 new Node { Roles = [1], Name = "API Partner Logs", Url = "/ApiUserLog" },
-                new Node { Roles = [1, 9], Name = "Accounting Summary", Url = "/AdminAccounting" },
-                new Node { Roles = [1, 9], Name = "Platform Ledger", Url = "/AdminLedger" },
-                // Read-only: it resolves and explains, it writes nothing. The accountant needs it
-                // most — it is the only way to see what a tax rule actually does before a month
-                // of invoices has been raised on it.
-                new Node { Roles = [1, 9], Name = "Tax Rule Simulator", Url = "/TaxSimulator" },
-                new Node { Roles = [1, 9], Name = "Provider Daybook", Url = "/ProviderDayBook" },
-                new Node { Roles = [1, 9], Name = "Provider Sales", Url = "/ProviderSale" },
-                new Node { Roles = [1, 9], Name = "Purchase Report", Url = "/PurchaseReport" },
+                // These two change a transaction's OUTCOME, so they stay with the admin: the
+                // accountant reads the books, it does not decide whether a transfer succeeded.
                 new Node { Roles = [1], Name = "Status Correction", Url = "/ChangeStatus" },
                 new Node { Roles = [1], Name = "Manual Settlement", Url = "/ManualSuccessFailReport" },
                 new Node { Roles = [1], Name = "User Onboarding Report", Url = "/UserOnboardedReport" },
@@ -251,10 +366,31 @@ namespace FintechApp.Services
                 // network, and what was pulled back up. Carries both the raised requests and the
                 // completed reversals, told apart by the Kind column.
                 new Node { Roles = [1, 2, 3], Name = "Fund Reversal Report", Url = "/FundReverseReport" },
-                new Node { Roles = [1, 2, 3, 4, 5, 7, 9, 10, 11], Name = "Wallet Transfer Report", Url = "/MoveFundsReport" },
+                // The credit position of the network, read rather than worked: what is owed, how
+                // old each part of it is, and who is past their limit. The operational screen
+                // (set a limit, record a collection) stays under Fund Management; this is the one
+                // a reader comes to Reports looking for, and the one that exports. The accountant
+                // is included because an unrecovered receivable is their figure too.
+                //
+                // Deliberately NOT the retailer or API-user tier. The report is a downline view
+                // and those roles have no downline, so it could only ever come back empty for
+                // them — and the endpoint refuses them outright (ApiAccessPolicy), which would
+                // make this a menu row that opens an error. Their own side of the ledger is on
+                // the Outstanding screen and on the header bar, where they already read it.
+                new Node { Roles = [1, 2, 3, 6, 9, 10, 11], Name = "Outstanding Report", Url = "/OutstandingReport" },
+                // "Wallet Transfer Report" is deliberately not listed any more: it and Settlement
+                // Report above are the same report of the same rows (Fund/SelectWalletTransferReport
+                // — AEPS earnings moved out of the AEPS wallet), and two menu rows for one report
+                // is how a reader ends up believing there are two different figures. Settlement
+                // Report is the name the business uses for it. The screen itself still exists at
+                // /MoveFundsReport for anyone holding the link.
                 // Tickets and Complaints moved to the Support section above — see the note there.
                 // A support desk listed among 30 financial reports is a support desk nobody finds.
                 new Node { Roles = [1, 2, 3, 4, 5, 7, 11], Name = "Account Statement", Url = "/AccountStatement" },
+                // The sale invoices raised on this account. The admin and the accountant read
+                // every party's under Accountant; a retailer, distributor or super-distributor
+                // reads their own here - Invoice/Select scopes a non-admin caller to themselves.
+                new Node { Roles = [2, 3, 4, 5, 7], Name = "My Invoices", Url = "/Invoice" },
                 // Admin is included so they can look up the slab (and margin) assigned to any
                 // downline user from the report's Entity picker.
                 new Node { Roles = [1, 2, 3, 4, 5, 7], Name = "Commission Structure", Url = "/CommissionStructure" },
@@ -262,10 +398,26 @@ namespace FintechApp.Services
                 new Node { Roles = [1], Name = "Sales by Operator", Url = "/OperatorSale" },
                 new Node { Roles = [1, 2, 3, 4, 5], Name = "Sales by User", Url = "/UserwiseSale" },
                 new Node { Roles = [1], Name = "User Accounting", Url = "/UserwiseAccounting" },
-                new Node { Roles = [1, 2, 3, 4, 5, 7], Name = "Ledger", Url = "/UserLedger" },
-                new Node { Roles = [1, 2, 3, 4, 5, 7], Name = "Daybook", Url = "/Daybook/Report" },
-                new Node { Roles = [1, 2, 3, 4, 5, 7], Name = "Income Report", Url = "/Income" },
-                new Node { Roles = [1, 2, 3, 4, 5], Name = "TDS Report", Url = "/TDS" },
+                // "Ledger" is deliberately not listed any more either. Account Statement above
+                // reads the same postings with more of them resolved — the wallet each movement
+                // was in, the counterparty, the charge, the commission and the running balance —
+                // so the Ledger row was the same data with fewer columns under a second name. The
+                // screen still exists at /UserLedger for anyone holding the link; the PLATFORM's
+                // own ledger is a different report and stays on the Administration menu.
+                // The accountant (9) belongs on all three of these and was on none of them. The
+                // daybook is the operator-wise day's earnings, the income report is the margin and
+                // the TDS report is what was withheld — between them they are most of what the
+                // role exists to read, and it had access to neither the figures nor the screens.
+                // Profit & Loss sits with the daybook, the income report and TDS: the four screens
+                // the accounting desk exists to read. Admin and the accountant only - every column
+                // on it is a margin or a tax, and a distributor reading the house's margin on the
+                // services they resell is a commercial problem, not a permissions nicety.
+                new Node { Roles = [1, 6, 9], Name = "Profit & Loss", Url = "/ProfitLoss" },
+                new Node { Roles = [1, 2, 3, 4, 5, 7, 9], Name = "Daybook", Url = "/Daybook/Report" },
+                new Node { Roles = [1, 2, 3, 4, 5, 7, 9], Name = "Income Report", Url = "/Income" },
+                // The old per-transaction TDS report is off this menu: the month's TDS lives on
+                // the Accountant section (TDS Report → /TdsMonthly), and two rows of the same
+                // name with different figures is how a reader stops trusting both.
                 new Node { Roles = [1, 2, 3, 4, 5], Name = "Past Settlements", Url = "/PastSuccessFailReport" },
                 new Node { Roles = [1, 2, 3, 4, 5, 6, 7, 8], Name = "Login History", Url = "/LoginHistory" },
                 // Why a balance is frozen, and by whom. Visible to the user whose money it is as
@@ -313,10 +465,18 @@ namespace FintechApp.Services
                 new Node { Roles = [1, 6], Name = "User Audit Trail", Url = "/Users/ChangeHistory" },
             }},
 
-            new Node { Roles = [1, 6], Name = "Commission Slabs", Icon = "LocalAtmIcon", Children = new[]
+            // The group is visible to the distribution tier now, because a super-distributor and a
+            // distributor cut their own rate cards here. The two admin screens inside it stay
+            // admin-only: "Manage Slabs" writes the card that caps the whole ecosystem, and
+            // "Assign Slab" hands any card to any user. A reseller works from "My Commission
+            // Slabs", which shows them their own ceiling, their own cards and only their own
+            // network to assign to.
+            new Node { Roles = [1, 2, 3, 6], Name = "Commission Slabs", Icon = "LocalAtmIcon", Children = new[]
             {
                 new Node { Roles = [1, 6], Name = "Manage Slabs", Url = "/Slabs" },
                 new Node { Roles = [1, 6], Name = "Assign Slab", Url = "/Slabs/Assign" },
+                new Node { Roles = [1, 2, 3, 6], Name = "My Commission Slabs", Url = "/Slabs/Delegation" },
+                new Node { Roles = [1, 2, 3, 6], Name = "Commission Audit Trail", Url = "/Slabs/Audit" },
             }},
 
             new Node { Roles = [1], Name = "Operators", Icon = "DockIcon", Children = new[]
@@ -340,8 +500,9 @@ namespace FintechApp.Services
                 new Node { Roles = [1], Name = "Denomination Mapping", Url = "/DenominationMapping" },
                 new Node { Roles = [1], Name = "DMT Range Routing", Url = "/RangeWiseSequence" },
                 new Node { Roles = [1], Name = "Circle-wise Routing", Url = "/CircleAPIAdd" },
-                new Node { Roles = [1], Name = "Reconciliation Settings", Url = "/ReconciliationSettings" },
-                new Node { Roles = [1], Name = "Reconciliation Upload", Url = "/ReconciliationUpload" },
+                // Reconciliation Settings / Upload are gone: provider reconciliation is done from
+                // the Provider Sales and Bank Reconciliation screens, and the two legacy rows only
+                // ever opened an empty list and a form nothing read.
                 new Node { Roles = [1], Name = "Provider Purchase", Url = "/AddPurchase" },
             }},
 
@@ -358,14 +519,16 @@ namespace FintechApp.Services
                 // at all, which is most of why it was reported as not working — the only way to
                 // reach the screen was to type the URL.
                 new Node { Roles = [1], Name = "Response Messages", Url = "/MessageRules" },
-                new Node { Roles = [1], Name = "Banner Sliders", Url = "/Slider" },
-                new Node { Roles = [1], Name = "Service Banners", Url = "/ServiceWiseSlider" },
+                // Banner Sliders, Service Banners, Menu Configuration, Bulk Messages and Bank
+                // Accounts are off the menu: the banners are edited on Website Pages, the menu
+                // from Menu Visibility, bulk messaging from Broadcast Alert, and a user's bank
+                // account from their own profile. Each of these was a read-only dump of a table
+                // with a second, working screen elsewhere.
+                // Support Access and Virtual Accounts stay until the support user type lands
+                // (next sprint); they are listed so the operator can see them exist.
                 new Node { Roles = [1], Name = "Support Access", Url = "/SupportAccess" },
-                new Node { Roles = [1, 2, 3], Name = "Bank Accounts", Url = "/AddBank" },
                 new Node { Roles = [1], Name = "DMT Bank Settings", Url = "/DMTBankSetting" },
                 new Node { Roles = [1], Name = "Virtual Accounts", Url = "/VirtualAccountSetting" },
-                new Node { Roles = [1], Name = "Menu Configuration", Url = "/MenuAdd" },
-                new Node { Roles = [1], Name = "Bulk Messages", Url = "/BulkMessageIndex" },
             }},
 
             new Node { Roles = [1], Name = "Service Configuration", Icon = "Build", Children = new[]

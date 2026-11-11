@@ -1,5 +1,6 @@
 using FintechApp.Data;
 using FintechApp.Entities;
+using FintechApp.Helpers;
 using FintechApp.Interfaces.Repositories;
 using FintechApp.Interfaces.Services;
 using FintechApp.Requests.TaxEngine;
@@ -25,22 +26,62 @@ namespace FintechApp.Services
         private readonly ITaxDocumentNumberService _numbers;
         private readonly ITaxConfigurationRepository _config;
 
+        private readonly IPartyStateResolver _partyStates;
+
         public TaxInvoiceService(ApplicationDbContext context, ITaxEngineService engine,
-                                 ITaxDocumentNumberService numbers, ITaxConfigurationRepository config)
+                                 ITaxDocumentNumberService numbers, ITaxConfigurationRepository config,
+                                 IPartyStateResolver partyStates)
         {
             _context = context;
             _engine = engine;
             _numbers = numbers;
             _config = config;
+            _partyStates = partyStates;
         }
 
         // ── Wallet top-ups ──────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// The install's standing answer to "how should we invoice top-ups", from the Key Setting.
+        ///
+        /// A settings read that fails returns AUTO — the shipped behaviour — rather than throwing:
+        /// a month should not go uninvoiced because a settings row could not be read, and AUTO is
+        /// exactly what the system did before anybody was asked.
+        /// </summary>
+        private async Task<string> ResolveConsolidationSetting()
+        {
+            try
+            {
+                var row = await _context.SettingMasters.AsNoTracking()
+                    .FirstOrDefaultAsync(s => s.Key == InvoiceConsolidation.SettingKey && !s.IsDeleted);
+                return row == null ? InvoiceConsolidation.Auto : InvoiceConsolidation.Normalise(row.Value);
+            }
+            catch
+            {
+                return InvoiceConsolidation.Auto;
+            }
+        }
+
+        /// <summary>
+        /// One successful credit into a party's wallet. A named shape rather than an anonymous
+        /// one because the batches below are built in a switch, and a switch cannot produce an
+        /// anonymous type from more than one arm.
+        /// </summary>
+        private sealed record TopUpRow(
+            int FundTransactionID, int ReceiverID, int WalletID, decimal Amount, DateTime DateTime, string Status);
 
         public async Task<InvoiceGenerationResult> GenerateWalletTopUpInvoices(InvoiceGenerationRequest request)
         {
             var result = NewResult(request);
             DateTime periodStart = request.PeriodFrom.Date;  // not "from": that is a C# query keyword
             DateTime periodEnd = request.PeriodTo.Date.AddDays(1);
+
+            // How many documents a party's top-ups become. Resolved once, here, so every party in
+            // the run is grouped the same way: an explicit choice on the request wins, otherwise
+            // the install's standing answer, otherwise the shipped per-registration rule.
+            string requestedConsolidation = InvoiceConsolidation.Normalise(request.Consolidation);
+            if (string.IsNullOrWhiteSpace(request.Consolidation))
+                requestedConsolidation = await ResolveConsolidationSetting();
 
             var grossWallets = await ResolveGrossBasisWallets(request.PeriodTo, result.Warnings);
             if (grossWallets.Count == 0)
@@ -59,7 +100,7 @@ namespace FintechApp.Services
                                    && grossWallets.Contains(f.WalletID)
                                    && u.UserTypeID != UserTypeCode.Admin
                                    && (request.OnlyPartyUserID == 0 || f.ReceiverID == request.OnlyPartyUserID)
-                                select new { f.FundTransactionID, f.ReceiverID, f.WalletID, f.Amount, f.DateTime, f.Status })
+                                select new TopUpRow(f.FundTransactionID, f.ReceiverID, f.WalletID, f.Amount, f.DateTime, f.Status))
                                .ToListAsync();
 
             topUps = topUps.Where(t => string.Equals(t.Status, StatusType.Success, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -107,15 +148,43 @@ namespace FintechApp.Services
                     continue;
                 }
 
-                // Registered: one document per top-up, because a registered buyer needs an invoice
-                // it can match line by line against its own purchase register.
-                // Unregistered: one document per day, which is what GST allows for B2C and what
-                // stops a busy counter producing forty documents a day.
-                bool consolidate = party.RegistrationStatus != PartyRegistrationStatus.Registered;
+                // How many documents this party's top-ups become. AUTO is the shipped rule:
+                // registered buyers get one per top-up (they match it line by line against their
+                // own purchase register), unregistered get one per day (what GST contemplates for
+                // B2C, and what stops a busy counter producing forty documents a day).
+                string grouping = InvoiceConsolidation.Normalise(requestedConsolidation);
+                if (grouping == InvoiceConsolidation.Auto)
+                    grouping = party.RegistrationStatus == PartyRegistrationStatus.Registered
+                        ? InvoiceConsolidation.Transaction
+                        : InvoiceConsolidation.Daily;
 
-                var batches = consolidate
-                    ? partyGroup.GroupBy(t => t.DateTime.Date).Select(g => (Date: g.Key, Items: g.ToList())).ToList()
-                    : partyGroup.Select(t => (Date: t.DateTime.Date, Items: new[] { t }.ToList())).ToList();
+                // A month rolled into one document for a REGISTERED buyer is defensible only as a
+                // continuous supply (s.31(5)). That may well be the right reading for a wallet a
+                // distributor funds all month, but it is a position the business is taking rather
+                // than arithmetic, so it is stated on the run instead of passing silently.
+                if (grouping == InvoiceConsolidation.Monthly
+                    && party.RegistrationStatus == PartyRegistrationStatus.Registered)
+                    result.Warnings.Add(
+                        $"{party.Name} (user {party.UserID}) is REGISTERED and is being invoiced once for the whole "
+                      + "period. That is a continuous-supply treatment (s.31(5)); if their wallet top-ups are "
+                      + "discrete supplies, they need an invoice each and this party should be set to per-transaction.");
+
+                bool consolidate = grouping != InvoiceConsolidation.Transaction;
+
+                var batches = grouping switch
+                {
+                    // One document for the whole period, dated its last day — the month-end
+                    // invoice most people mean by "monthly billing".
+                    InvoiceConsolidation.Monthly =>
+                        new List<(DateTime Date, List<TopUpRow> Items)>
+                        {
+                            (request.PeriodTo.Date, partyGroup.ToList()),
+                        },
+                    InvoiceConsolidation.Daily =>
+                        partyGroup.GroupBy(t => t.DateTime.Date)
+                                  .Select(g => (Date: g.Key, Items: g.ToList())).ToList(),
+                    _ => partyGroup.Select(t => (Date: t.DateTime.Date, Items: new List<TopUpRow> { t })).ToList(),
+                };
 
                 foreach (var batch in batches)
                 {
@@ -150,7 +219,17 @@ namespace FintechApp.Services
 
                     await WriteDocument(request, result, party, tax, serviceId, batch.Date, consolidate,
                         documentType: DocumentTypeFor(tax),
-                        description: consolidate ? $"Wallet top-ups, {batch.Date:dd-MMM-yyyy}" : "Wallet top-up",
+                        // The line has to say what period it covers, because that is the whole
+                        // difference between the three groupings on the face of the document.
+                        description: grouping switch
+                        {
+                            InvoiceConsolidation.Monthly =>
+                                $"Wallet top-ups, {request.PeriodFrom:dd-MMM-yyyy} to {request.PeriodTo:dd-MMM-yyyy}"
+                                + $" ({batch.Items.Count} top-up{(batch.Items.Count == 1 ? "" : "s")})",
+                            InvoiceConsolidation.Daily =>
+                                $"Wallet top-ups, {batch.Date:dd-MMM-yyyy}",
+                            _ => "Wallet top-up",
+                        },
                         sources: batch.Items.Select(i => (TxnId: 0, FundId: i.FundTransactionID, i.DateTime,
                                                           Reference: string.Empty, Gross: i.Amount)).ToList());
                 }
@@ -327,11 +406,25 @@ namespace FintechApp.Services
             return rows.GroupBy(r => r.WalletID).ToDictionary(g => g.Key, g => g.Min(x => x.ServiceID));
         }
 
+        /// <summary>
+        /// Which of these sources is already carried by a live document.
+        ///
+        /// "Live" is expressed by the annexure line NOT being soft-deleted, and that is the same
+        /// thing the database says: both unique indexes on this table are filtered
+        /// <c>WHERE … AND IsDeleted = 0</c>, so one source can have exactly one live line and any
+        /// number of withdrawn ones. Releasing a source is therefore soft-deleting its line, which
+        /// is what <see cref="ReleaseAnnexureLines"/> does when a document is cancelled.
+        ///
+        /// Worth stating because the obvious alternative — asking whether the HEADER is cancelled
+        /// — looks equivalent and is not: it would let the generator try to re-invoice a source
+        /// the unique index still holds, and the insert would fail at the end of the run.
+        /// </summary>
         private async Task<HashSet<int>> InvoicedFundTransactionIds(List<int> ids) =>
             (await _context.TaxInvoiceAnnexureLines.AsNoTracking()
                 .Where(a => !a.IsDeleted && a.FundTransactionID > 0 && ids.Contains(a.FundTransactionID))
                 .Select(a => a.FundTransactionID).ToListAsync()).ToHashSet();
 
+        /// <inheritdoc cref="InvoicedFundTransactionIds"/>
         private async Task<HashSet<int>> InvoicedTransactionIds(List<int> ids) =>
             (await _context.TaxInvoiceAnnexureLines.AsNoTracking()
                 .Where(a => !a.IsDeleted && a.TransactionMasterID > 0 && ids.Contains(a.TransactionMasterID))
@@ -372,13 +465,7 @@ namespace FintechApp.Services
                 // registered on the strength of a string nobody verified.
                 : (gstin.Length == 15 ? PartyRegistrationStatus.Registered : PartyRegistrationStatus.Unregistered);
 
-            string state = !string.IsNullOrWhiteSpace(profile?.PlaceOfSupplyStateCode)
-                ? profile!.PlaceOfSupplyStateCode.Trim()
-                : !string.IsNullOrWhiteSpace(user.BusinessGSTStateCode)
-                    ? user.BusinessGSTStateCode.Trim()
-                    // The first two digits of a GSTIN ARE its state code, so derive it rather than
-                    // leaving the tax head to a default.
-                    : gstin.Length == 15 ? gstin.Substring(0, 2) : string.Empty;
+            string state = await _partyStates.Resolve(userId, profile, gstin, user.BusinessGSTStateCode);
 
             return new PartyInfo
             {
@@ -387,7 +474,13 @@ namespace FintechApp.Services
                 Name = !string.IsNullOrWhiteSpace(user.FirmName) ? user.FirmName : (user.PersonName ?? string.Empty),
                 GSTIN = gstin,
                 RegistrationStatus = status,
-                StateCode = state.PadLeft(2, '0'),
+                // NOT PadLeft'd. An empty state used to become the string "00", which looks like a
+                // real code, is never equal to the supplier's, and therefore sent every supply to
+                // IGST instead of CGST + SGST — and is rejected outright by the portal. Empty has
+                // to stay empty so the engine's own "no place of supply" path can warn and fall
+                // back to intra-state. PartyStateResolver pads a SHORT code ("7" → "07"); it never
+                // invents one.
+                StateCode = state,
             };
         }
 
@@ -504,6 +597,85 @@ namespace FintechApp.Services
             };
         }
 
+        // ── Cancel ──────────────────────────────────────────────────────────────────────
+
+        /// <inheritdoc />
+        public async Task<(bool Ok, string Message)> CancelDocument(CancelDocumentRequest request)
+        {
+            if (request.TaxInvoiceHeaderID <= 0) return (false, "A document is required.");
+            string reason = (request.Reason ?? string.Empty).Trim();
+            if (reason.Length == 0) return (false, "Say why the document is being cancelled; it is kept on record.");
+
+            var header = await _context.TaxInvoiceHeaders
+                .FirstOrDefaultAsync(h => h.TaxInvoiceHeaderID == request.TaxInvoiceHeaderID && !h.IsDeleted);
+            if (header == null) return (false, "That document does not exist.");
+            if (header.Direction != TaxDirection.Sale) return (false, "Only a sale document can be cancelled here; a purchase bill is corrected on Purchase Invoice.");
+            if (header.Status == TaxDocumentStatus.Cancelled) return (false, "This document is already cancelled.");
+            if (header.DocumentType == TaxDocumentType.CreditNote) return (false, "A credit note cannot be cancelled; raise a debit note instead.");
+
+            // Once the portal has registered the invoice (IRN) it exists in the government's
+            // books; the only lawful reversal is a credit note.
+            bool registered = await _context.EInvoiceLogs.AsNoTracking()
+                .AnyAsync(e => e.TaxInvoiceHeaderID == header.TaxInvoiceHeaderID && !e.IsDeleted && e.IRN != string.Empty && e.IRN != null);
+            if (registered) return (false, "This invoice already has an IRN from the portal, so it cannot be cancelled — issue a credit note against it.");
+            bool credited = await _context.TaxInvoiceHeaders.AsNoTracking()
+                .AnyAsync(h => !h.IsDeleted && h.OriginalInvoiceHeaderID == header.TaxInvoiceHeaderID && h.Status != TaxDocumentStatus.Cancelled);
+            if (credited) return (false, "A credit note already stands against this document; it cannot also be cancelled.");
+
+            string originalNo = header.DocumentNo;
+            bool numberReleased = false;
+
+            await using var tx = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                await DocumentCancellation.Cancel(_context, new[] { header }, $"Cancelled: {reason} (was {originalNo})");
+
+                // The number stays on record under a DEL- prefix — GSTR-1 table 13 still counts it
+                // as issued-and-cancelled (Gstr1Service strips the prefix) — and the plain number
+                // is freed from the unique index. When it was the LAST number the series issued,
+                // the counter is handed it back, so the next document reuses it rather than
+                // leaving a hole in the sequence.
+                header.DocumentNo = $"DEL-{originalNo}";
+
+                int slash = originalNo.LastIndexOf('/');
+                if (slash > 0 && int.TryParse(originalNo[(slash + 1)..], out int n) && n > 0)
+                {
+                    string fy = _numbers.FinancialYearOf(header.DocumentDate);
+                    var series = header.TaxDocumentSeriesID.HasValue
+                        ? await _context.TaxDocumentSeries.FirstOrDefaultAsync(s => s.TaxDocumentSeriesID == header.TaxDocumentSeriesID.Value && !s.IsDeleted)
+                        : await _context.TaxDocumentSeries.FirstOrDefaultAsync(s => !s.IsDeleted && s.IsActive
+                            && s.SeriesCode == TaxDocumentSeriesCode.For(header.DocumentType)
+                            && s.CompanyGSTIN == header.CompanyGSTIN && s.FinancialYear == fy);
+                    if (series != null && series.CurrentNumber == n)
+                    {
+                        bool laterExists = await _context.TaxInvoiceHeaders.AsNoTracking()
+                            .AnyAsync(h => !h.IsDeleted && h.TaxInvoiceHeaderID != header.TaxInvoiceHeaderID
+                                        && h.CompanyGSTIN == header.CompanyGSTIN && h.DocumentType == header.DocumentType
+                                        && h.DocumentNo == originalNo);
+                        if (!laterExists)
+                        {
+                            series.CurrentNumber = n - 1;
+                            series.UpdatedateTime = DateTime.UtcNow;
+                            numberReleased = true;
+                        }
+                    }
+                }
+
+                await _context.SaveChangesAsync();
+                await tx.CommitAsync();
+            }
+            catch (Exception ex)
+            {
+                await tx.RollbackAsync();
+                new Logger().Write(ex);
+                return (false, "The document could not be cancelled. Nothing was changed.");
+            }
+
+            return (true, numberReleased
+                ? $"{originalNo} cancelled and kept on record as DEL-{originalNo}. The number {originalNo} will be used by the next document issued."
+                : $"{originalNo} cancelled and kept on record as DEL-{originalNo}. Later numbers already exist, so this one stays as a cancelled entry in the series.");
+        }
+
         // ── Self-invoice (reverse charge) ───────────────────────────────────────────────
 
         public async Task<(GeneratedDocument? Document, string FailureMessage)> IssueSelfInvoice(
@@ -602,6 +774,15 @@ namespace FintechApp.Services
                 TaxTotal = tax.TotalTax,
                 GrandTotal = tax.InvoiceValue,
                 BillingBasis = tax.BillingBasis,
+                PartyGSTIN = party.GSTIN,
+                Description = description,
+                SACCode = tax.SACCode,
+                GSTRatePercent = tax.CGSTRate + tax.SGSTRate + tax.IGSTRate,
+                CGSTAmount = tax.CGSTAmount,
+                SGSTAmount = tax.SGSTAmount,
+                IGSTAmount = tax.IGSTAmount,
+                SupplyNature = tax.SupplyNature,
+                PlaceOfSupplyStateCode = tax.PlaceOfSupplyStateCode,
             };
 
             if (!string.IsNullOrWhiteSpace(tax.Warning)) result.Warnings.Add($"Party {party.UserID}: {tax.Warning}");

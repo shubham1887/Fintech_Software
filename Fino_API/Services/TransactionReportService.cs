@@ -1,4 +1,5 @@
 using FintechApp.Entities;
+using FintechApp.Helpers;
 using FintechApp.Interfaces.Repositories;
 using FintechApp.Interfaces.Services;
 using FintechApp.Requests.TransactionReport;
@@ -92,7 +93,11 @@ namespace FintechApp.Services
             // network-wide this passes 0 (everyone) and userId is unused, so widening the shared
             // helper would have changed every other report in this service for no reason.
             bool networkWide = ReportScope.IsNetworkWide(currentUserTypeID);
-            var txns = await _txnRepo.GetAll(networkWide ? 0 : userId, string.Empty, string.Empty, from, to, 1, int.MaxValue);
+            // Network-wide means the caller MAY see everyone, not that they must: the screen's
+            // Entity picker is there to narrow to one, and passing 0 unconditionally made it do
+            // nothing. A scoped caller is still pinned to their own rows by ScopeUser.
+            int scopeUser = networkWide ? (request.UserID > 0 ? request.UserID : 0) : userId;
+            var txns = await _txnRepo.GetAll(scopeUser, string.Empty, string.Empty, from, to, 1, int.MaxValue);
             if (request.ProviderID > 0) txns = txns.Where(t => t.ProviderID == request.ProviderID).ToList();
 
             var providerNames = (await _providerRepo.GetAll())
@@ -113,7 +118,12 @@ namespace FintechApp.Services
             }
 
             int id = 0;
-            var rows = txns.GroupBy(t => t.ProviderID).Select(g =>
+            // A transaction that never reached a provider (ProviderID 0: refused before dispatch,
+            // or still pending on a route that has not answered) is not a provider's sale. Grouped
+            // in, it produced a row named "0" with a Purchase of nothing and a Sale of whatever
+            // happened to be stuck that day — the "pending" line this report was reported for.
+            var rows = txns.Where(t => t.ProviderID > 0 && providerNames.ContainsKey(t.ProviderID))
+                .GroupBy(t => t.ProviderID).Select(g =>
             {
                 var success = g.Where(x => x.Status == StatusSuccess).ToList();
                 var failed = g.Where(x => x.Status == StatusFailed).ToList();
@@ -144,7 +154,10 @@ namespace FintechApp.Services
                     OpeningBalance = opening,
                     ClosingBalance = closing,
                     Difference = difference,
-                    Profit = success.Sum(x => x.AdminProfit),
+                    // AdminCommission is the operator's NET on every settled transaction on both
+                    // rails; AdminProfit is only stamped by the recharge pipeline, so summing it
+                    // alone read 0 for every DMT provider.
+                    Profit = success.Sum(x => x.AdminProfit != 0m ? x.AdminProfit : x.AdminCommission),
                 };
             }).OrderBy(x => x.ProvderName).ToList();
 
@@ -322,6 +335,10 @@ namespace FintechApp.Services
                 .OrderByDescending(x => x.UpdatedateTime)
                 .ToList();
 
+            // The screen's selection-criteria box, which it has always shown and this report has
+            // always ignored. Applied before the count below, so the total matches the rows.
+            filtered = await ApplyCriteria(filtered, request);
+
             var wrapper = new TxnReportWrapper { Count = filtered.Count };
             var paged = request.EffectiveTake > 0
                 ? filtered.Skip(request.EffectiveSkip).Take(request.EffectiveTake).ToList()
@@ -425,7 +442,8 @@ namespace FintechApp.Services
             int targetUser = ScopeUser(request.UserID, currentUserID, currentUserTypeID);
             var (count, list) = await _txnRepo.GetFiltered(
                 targetUser, request.Status, null, request.ServiceID, request.OperatorID,
-                from, to, request.EffectiveSkip, request.EffectiveTake);
+                from, to, request.EffectiveSkip, request.ReadTake,
+                await BuildTextFilter(request));
             var wrapper = new TxnReportWrapper { Count = count, list = list.Select(MapToResponse).ToList() };
             await Enrich(wrapper.list);
             return (string.Empty, wrapper);
@@ -491,14 +509,86 @@ namespace FintechApp.Services
         }
 
         // ── Income ────────────────────────────────────────────────────
-        public async Task<(string fail, List<IncomeSummaryViewModel> data)> Income(TxnReportRequest request, int currentUserID)
+        // Commission earned per service for the period. Three things were wrong with it, and all
+        // three were visible on the screen:
+        //
+        //  * It answered with field names the Income Report does not read (ServiceType holding a
+        //    raw id, RetailerCommission rather than RCommission), so every column rendered empty.
+        //  * It scoped to the CALLER only, ignoring the Entity picker - and since the admin has no
+        //    transactions of their own, the admin's income report was empty by construction.
+        //  * It ignored the Service dropdown beside it.
+        //
+        // Two more were found later, and both made the figure itself wrong rather than missing:
+        //
+        //  * It read only the caller's OWN transactions. A distributor earns on its RETAILERS'
+        //    transactions and makes almost none of its own, so "Income Report" showed a
+        //    distributor roughly nothing — the one tier whose entire income this report exists to
+        //    state. The rows are the caller's whole NETWORK now (self + downline), which is what
+        //    every other analytics report in this codebase already does (ReportAnalyticsService.
+        //    ResolveScope).
+        //
+        //  * TotalIncome added up all four tiers: retailer + distributor + super distributor +
+        //    admin. That is the commission the WHOLE CHAIN earned on those transactions, not the
+        //    caller's income — a retailer's income report counted their distributor's cut, their
+        //    super distributor's cut and the operator's margin as their own earnings, and printed
+        //    the lot as "Total Income". It is now the caller's own tier, net of their own TDS,
+        //    which is the number that actually reached their wallet. The tiers a caller may not
+        //    see are zeroed in the response as well, because hiding a column in the browser does
+        //    not take the figure out of the JSON.
+        public async Task<(string fail, AnalyticsWrapper<IncomeSummaryViewModel> data)> Income(
+            TxnReportRequest request, int currentUserID, int currentUserTypeID)
         {
+            var wrapper = new AnalyticsWrapper<IncomeSummaryViewModel>();
             var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
-            if (fail != string.Empty) return (fail, new List<IncomeSummaryViewModel>());
+            if (fail != string.Empty) return (fail, wrapper);
 
-            var list = await _txnRepo.GetAll(currentUserID, StatusSuccess, string.Empty, from, to, 1, int.MaxValue);
+            // Admin, support and the accounting desk read anyone's income, or the whole network
+            // with UserID 0. Everyone else reads their own branch.
+            bool isAdmin = ReportScope.IsNetworkWide(currentUserTypeID);
 
-            var result = list.GroupBy(x => x.ServiceID)
+            // Which users' transactions count towards this report. null = every user.
+            HashSet<int>? scope = null;
+            if (isAdmin)
+            {
+                if (request.UserID > 0)
+                {
+                    // An admin asking about one entity means that entity's own income, so the
+                    // branch beneath it counts too — a distributor's income IS their retailers'
+                    // transactions.
+                    scope = UserHierarchy.GetDownlineIds(await _userRepo.GetAllUsers(), request.UserID);
+                    scope.Add(request.UserID);
+                }
+            }
+            else
+            {
+                scope = UserHierarchy.GetDownlineIds(await _userRepo.GetAllUsers(), currentUserID);
+                scope.Add(currentUserID);
+                // An Entity picker set to someone in their own branch narrows it further; one set
+                // to anybody else is ignored rather than honoured.
+                if (request.UserID > 0 && scope.Contains(request.UserID))
+                {
+                    var narrowed = UserHierarchy.GetDownlineIds(await _userRepo.GetAllUsers(), request.UserID);
+                    narrowed.Add(request.UserID);
+                    scope = narrowed;
+                }
+            }
+
+            // A single-user scope is pushed into the query; a branch is filtered after, because the
+            // transaction query takes one user id and not a set.
+            int queryUserId = scope is { Count: 1 } ? scope.First() : 0;
+            var list = await _txnRepo.GetAll(queryUserId, StatusSuccess, string.Empty, from, to, 1, int.MaxValue);
+            if (scope != null && queryUserId == 0)
+                list = list.Where(x => scope.Contains(x.UserID)).ToList();
+            if (request.ServiceID > 0)
+                list = list.Where(x => x.ServiceID == request.ServiceID).ToList();
+            if (request.OperatorID > 0)
+                list = list.Where(x => x.OperatorID == request.OperatorID).ToList();
+            if (list.Count == 0) return (string.Empty, wrapper);
+
+            var serviceNames = (await _serviceRepo.GetAllServices())
+                .GroupBy(s => s.ServiceID).ToDictionary(g => g.Key, g => g.First().Name);
+
+            var rows = list.GroupBy(x => x.ServiceID)
                 .Select(g =>
                 {
                     decimal retailerComm = g.Sum(x => x.RetailerCommission);
@@ -507,23 +597,75 @@ namespace FintechApp.Services
                     decimal adminComm = g.Sum(x => x.AdminCommission);
                     decimal retailerTds = g.Sum(x => x.RetailerTDS);
                     decimal distributerTds = g.Sum(x => x.DistributerTDS);
+                    decimal superDistTds = g.Sum(x => x.SuperDistributerTDS);
+
+                    // The caller's OWN income: the tier they are paid at, net of the TDS withheld
+                    // from it. Admin's income is its own margin on the chain.
+                    decimal ownIncome = currentUserTypeID switch
+                    {
+                        UserTypeCode.SuperDistributor => superDistComm - superDistTds,
+                        UserTypeCode.Distributor => distributerComm - distributerTds,
+                        UserTypeCode.Retailer or UserTypeCode.ApiUser or UserTypeCode.Client
+                            => retailerComm - retailerTds,
+                        _ => adminComm, // admin / support / accountant read the operator's margin
+                    };
+
                     return new IncomeSummaryViewModel
                     {
-                        ServiceType = g.Key.ToString(), // Needs ServiceMaster join for actual name
-                        RetailerCommission = retailerComm,
-                        DistributerCommission = distributerComm,
-                        SuperDistributerCommission = superDistComm,
-                        AdminCommission = adminComm,
-                        RetailerTDS = retailerTds,
-                        DistributerTDS = distributerTds,
-                        TotalIncome = retailerComm + distributerComm + superDistComm + adminComm - retailerTds - distributerTds,
-                        Count = g.Count()
+                        ServiceID = g.Key,
+                        ServiceName = serviceNames.TryGetValue(g.Key, out var n) ? n : $"Service {g.Key}",
+                        SuccessAmt = g.Sum(x => x.Amount),
+                        SuccessCount = g.Count(),
+                        // Tiers the caller may not read are zeroed rather than sent and hidden.
+                        RCommission = CanReadTier(currentUserTypeID, UserTypeCode.Retailer) ? retailerComm : 0m,
+                        DCommission = CanReadTier(currentUserTypeID, UserTypeCode.Distributor) ? distributerComm : 0m,
+                        SCommission = CanReadTier(currentUserTypeID, UserTypeCode.SuperDistributor) ? superDistComm : 0m,
+                        AdminCommission = isAdmin ? adminComm : 0m,
+                        RetailerTDS = CanReadTier(currentUserTypeID, UserTypeCode.Retailer) ? retailerTds : 0m,
+                        DistributerTDS = CanReadTier(currentUserTypeID, UserTypeCode.Distributor) ? distributerTds : 0m,
+                        NetProfit = isAdmin ? g.Sum(x => x.AdminProfit) : 0m,
+                        TotalIncome = ownIncome,
+                        Count = g.Count(),
                     };
                 })
                 .OrderByDescending(x => x.TotalIncome)
                 .ToList();
 
-            return (string.Empty, result);
+            for (int i = 0; i < rows.Count; i++) rows[i].ID = i + 1;
+
+            wrapper.Count = rows.Count;
+            wrapper.HeaderSummary = new Dictionary<string, object>
+            {
+                ["Success Amount"] = rows.Sum(r => r.SuccessAmt),
+                ["Success Count"] = rows.Sum(r => r.SuccessCount),
+                // "My income" rather than "Total Income": it is the caller's own tier, net of
+                // their own TDS, and the previous wording invited it to be read as the chain's.
+                ["My Income"] = rows.Sum(r => r.TotalIncome),
+                ["Net Profit"] = rows.Sum(r => r.NetProfit),
+            };
+            wrapper.list = request.IsExcelDownload || request.EffectiveTake <= 0
+                ? rows
+                : rows.Skip(request.EffectiveSkip).Take(request.EffectiveTake).ToList();
+            return (string.Empty, wrapper);
+        }
+
+        /// <summary>
+        /// May a caller of this user-type read what a given tier earns?
+        ///
+        /// Same rule as ReportAnalyticsService.CanSeeTier, stated here because the income report
+        /// lives in this service: everyone sees their own tier, an upline sees the tiers it pays
+        /// out to, nobody ever sees a tier above them. A retailer who learns the distributor's cut
+        /// can work the operator's whole commission structure out from one screen.
+        /// </summary>
+        private static bool CanReadTier(int callerTypeId, int tierTypeId)
+        {
+            if (ReportScope.IsNetworkWide(callerTypeId) || callerTypeId == tierTypeId) return true;
+            return callerTypeId switch
+            {
+                UserTypeCode.SuperDistributor => tierTypeId is UserTypeCode.Distributor or UserTypeCode.Retailer,
+                UserTypeCode.Distributor => tierTypeId == UserTypeCode.Retailer,
+                _ => false,
+            };
         }
 
         // ── AmountWiseInsightsSelect ──────────────────────────────────
@@ -600,6 +742,121 @@ namespace FintechApp.Services
             return FilterReport(request, currentUserID, currentUserTypeID, ServiceKinds.Recharge);
         }
 
+        /// <summary>
+        /// The pending queue for ANY service kind, named by <c>request.ServiceType</c> - a
+        /// ServiceKinds constant (RECHARGE / DMT / BBPS / PAYOUT / AEPS / MATM / CASHDEPOSIT).
+        ///
+        /// Recharge and DMT had an endpoint each and every other service had none, so bill
+        /// payments and electricity stuck in PENDING were invisible: the only screen that listed
+        /// them was the ordinary report, which has no status-check or settle action on it. Adding
+        /// the next service used to mean another endpoint, another screen and another menu row;
+        /// now it means a ServiceMaster row, which the admin creates themselves.
+        ///
+        /// A blank or unrecognised kind means "every service", which is the all-queues view - and
+        /// the safe reading of a kind this build has not heard of, since an empty queue would say
+        /// the work is done when nobody has looked.
+        /// </summary>
+        public Task<(string fail, TxnReportWrapper data)> SelectPendingByKind(TxnReportRequest request, int currentUserID, int currentUserTypeID)
+        {
+            request.Status = StatusPending;
+
+            string kind = (request.ServiceType ?? string.Empty).Trim();
+            bool known = kind.Length > 0 && ServiceKinds.All
+                .Any(k => k != ServiceKinds.None && k.EqualsIgnoreCase(kind));
+
+            return known
+                ? FilterReport(request, currentUserID, currentUserTypeID, kind.ToUpperInvariant())
+                : PagedReport(request, currentUserID, currentUserTypeID);
+        }
+
+        /// <summary>
+        /// One row per service kind that has something configured behind it, with how many
+        /// transactions are waiting and how long the oldest has been waiting.
+        ///
+        /// This is what makes the queues dynamic rather than a fixed pair: the screen asks which
+        /// queues exist instead of being written to know. A kind with no service configured is
+        /// left out entirely - an empty "Electricity" queue on an install that does not sell
+        /// electricity is noise - but a kind that IS configured is listed even at zero, because
+        /// "nothing is stuck" is the answer the operator came for.
+        /// </summary>
+        public async Task<(string fail, PendingQueueSummary data)> SelectPendingQueues(TxnReportRequest request, int currentUserID, int currentUserTypeID)
+        {
+            var summary = new PendingQueueSummary();
+            var (fail, from, to) = ParseDates(request.FromDate, request.ToDate);
+            if (fail != string.Empty) return (fail, summary);
+
+            bool isAdmin = currentUserTypeID == UserTypeCode.Admin || currentUserTypeID == UserTypeCode.SupportUser;
+            int userId = isAdmin ? request.UserID : currentUserID;
+
+            var services = (await _serviceRepo.GetAllServices()).Where(s => !s.IsDelete).ToList();
+
+            // One scan of the window for every queue, rather than a query per kind. The status
+            // filter is pushed into the repository so a quiet day costs almost nothing.
+            var pending = await _txnRepo.GetAll(userId, StatusPending, string.Empty, from, to, 1, int.MaxValue);
+            var byService = pending.GroupBy(t => t.ServiceID)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            DateTime now = DateTime.Now;
+
+            foreach (string kind in ServiceKinds.All)
+            {
+                if (kind == ServiceKinds.None) continue;
+
+                var kindServices = services.Where(s => ServiceKinds.Matches(s, kind)).ToList();
+                if (kindServices.Count == 0) continue;           // not sold here
+                if (!kindServices.Any(s => s.IsActive)) continue; // sold once, switched off since
+
+                var rows = kindServices
+                    .SelectMany(s => byService.TryGetValue(s.ServiceID, out var list) ? list : new List<TransactionMaster>())
+                    .ToList();
+
+                DateTime? oldest = rows.Count == 0 ? null : rows.Min(t => t.DateTime);
+
+                summary.Queues.Add(new PendingQueueItem
+                {
+                    Kind = kind,
+                    Label = QueueLabel(kind, kindServices),
+                    PendingCount = rows.Count,
+                    PendingAmount = rows.Sum(t => t.Amount),
+                    OldestPendingOn = oldest,
+                    OldestPendingHours = oldest == null ? 0 : Math.Round((now - oldest.Value).TotalHours, 1),
+                    ServiceIDs = kindServices.Select(s => s.ServiceID).ToList(),
+                });
+            }
+
+            // Busiest queue first: the operator works the one with the most stuck in it.
+            summary.Queues = summary.Queues
+                .OrderByDescending(q => q.PendingCount)
+                .ThenBy(q => q.Label)
+                .ToList();
+            summary.TotalPending = summary.Queues.Sum(q => q.PendingCount);
+            summary.TotalAmount = summary.Queues.Sum(q => q.PendingAmount);
+            return (string.Empty, summary);
+        }
+
+        /// <summary>
+        /// What to call a queue on screen. A kind backed by exactly one service is named after
+        /// that service, because that is the word the operator uses for it ("Electricity Bill",
+        /// not "BBPS"). More than one, and the kind's own name is the only honest label.
+        /// </summary>
+        private static string QueueLabel(string kind, List<ServiceMaster> kindServices)
+        {
+            if (kindServices.Count == 1 && !string.IsNullOrWhiteSpace(kindServices[0].Name))
+                return kindServices[0].Name;
+
+            return kind switch
+            {
+                ServiceKinds.Recharge => "Recharge",
+                ServiceKinds.DMT => "Money Transfer",
+                ServiceKinds.BBPS => "Bill Payment",
+                ServiceKinds.Payout => "Payout",
+                ServiceKinds.AEPS => "AEPS",
+                ServiceKinds.MicroATM => "Micro ATM",
+                ServiceKinds.CashDeposit => "Cash Deposit",
+                _ => kind,
+            };
+        }
+
         public Task<(string fail, TxnReportWrapper data)> SelectForDMTFilter(TxnReportRequest request, int currentUserID, int currentUserTypeID)
             => FilterReport(request, currentUserID, currentUserTypeID, ServiceKinds.DMT);
 
@@ -630,10 +887,17 @@ namespace FintechApp.Services
                     (t.ProviderRequestID ?? string.Empty).Contains(term, StringComparison.OrdinalIgnoreCase) ||
                     t.TransactionMasterID.ToString() == term)
                 .OrderByDescending(t => t.DateTime)
-                .Take(request.EffectiveTake > 0 ? request.EffectiveTake : 200)
                 .ToList();
 
-            var wrapper = new TxnReportWrapper { Count = matched.Count, list = matched.Select(MapToResponse).ToList() };
+            // Count BEFORE paging, then cut the page the caller asked for.
+            //
+            // This used to Take() the page size without skipping and report the page's own length
+            // as the total, which broke paging twice over: every page returned the same first rows,
+            // and the total said "20 of 20" so Next was disabled and nobody could see it happen.
+            int take = request.EffectiveTake > 0 ? request.EffectiveTake : 200;
+            var page = matched.Skip(request.EffectiveSkip).Take(take).ToList();
+
+            var wrapper = new TxnReportWrapper { Count = matched.Count, list = page.Select(MapToResponse).ToList() };
             await Enrich(wrapper.list);
             return (string.Empty, wrapper);
         }
@@ -652,7 +916,8 @@ namespace FintechApp.Services
 
             var (count, list) = await _txnRepo.GetFiltered(
                 userId, request.Status, null, request.ServiceID, request.OperatorID,
-                from, to, request.EffectiveSkip, request.EffectiveTake);
+                from, to, request.EffectiveSkip, request.ReadTake,
+                await BuildTextFilter(request));
 
             var wrapper = new TxnReportWrapper { Count = count, list = list.Select(MapToResponse).ToList() };
             await Enrich(wrapper.list);
@@ -672,13 +937,166 @@ namespace FintechApp.Services
             if (serviceIds.Count == 0)
                 return (string.Empty, new TxnReportWrapper()); // no service of this kind configured yet
 
+            var text = await BuildTextFilter(request);
+
             var (count, list) = await _txnRepo.GetFiltered(
                 userId, request.Status, serviceIds, request.ServiceID, request.OperatorID,
-                from, to, request.EffectiveSkip, request.EffectiveTake);
+                from, to, request.EffectiveSkip, request.ReadTake, text);
 
             var wrapper = new TxnReportWrapper { Count = count, list = list.Select(MapToResponse).ToList() };
             await Enrich(wrapper.list);
+
+            // The figures strip. Every one of these reports opened on a bare table: the first
+            // question anyone asks of a day's recharges is "how much went through, how much
+            // failed, how much is still hanging and what did I earn", and the answer was adding up
+            // whichever twenty rows happened to be on screen. Aggregated over the whole filter in
+            // SQL, so it is the period's figure rather than the page's.
+            var totals = await _txnRepo.GetFilteredTotals(
+                userId, serviceIds, request.ServiceID, request.OperatorID, from, to, text);
+            wrapper.HeaderSummary = SummaryOf(totals);
+
             return (string.Empty, wrapper);
+        }
+
+        /// <summary>
+        /// The filter reports' shared figures strip, in the order it is read: what worked, what did
+        /// not, what is still waiting, and the margin on it. The keys ARE the labels — the UI
+        /// prints them as given — so the wording lives next to the figures it describes instead of
+        /// being re-derived from a column name in the browser.
+        /// </summary>
+        private static Dictionary<string, object> SummaryOf(TxnFilterTotals t) => new()
+        {
+            ["Success Amount"] = t.SuccessAmount,
+            ["Success Count"] = t.SuccessCount,
+            ["Failed Amount"] = t.FailedAmount,
+            ["Failed Count"] = t.FailedCount,
+            ["Pending Amount"] = t.PendingAmount,
+            ["Pending Count"] = t.PendingCount,
+            ["Commission"] = t.Commission,
+            ["Total Count"] = t.TotalCount,
+        };
+
+        /// <summary>
+        /// Turn the report screen's text filters - selection criteria, free text and complaint
+        /// state - into something the transaction query can apply.
+        ///
+        /// Two of them cannot be answered by the transaction table alone, so they are resolved to
+        /// id sets here: "Entity Mobile" is a UserMaster column, and the complaint state lives in
+        /// ComplaintMaster. Both resolve to an EMPTY list when nothing matches, which the query
+        /// reads as "no rows" - the correct answer for a filter that matched nothing, and the
+        /// opposite of what a null (no filter at all) would mean.
+        ///
+        /// Every one of these filters is on screen on at least one report and was being dropped:
+        /// Criteria/CriteriaText were never read by this service, and Complaint was not even a
+        /// field on the request. Three visible controls that did nothing is most of what "the
+        /// filters do not work" meant.
+        /// </summary>
+        private async Task<TxnTextFilter> BuildTextFilter(TxnReportRequest request)
+        {
+            string criteria = (request.Criteria ?? string.Empty).Trim();
+            string criteriaText = (request.CriteriaText ?? string.Empty).Trim();
+
+            List<int>? userIds = null;
+            if (criteriaText.Length > 0 && criteria.EqualsIgnoreCase("UserMobile"))
+            {
+                userIds = (await _userRepo.GetAllUsers())
+                    .Where(u => (u.MobileNumber ?? string.Empty).Contains(criteriaText))
+                    .Select(u => u.UserMasterID)
+                    .ToList();
+                // Consumed here, so the query does not then try to match a non-existent column.
+                criteria = string.Empty;
+                criteriaText = string.Empty;
+            }
+
+            List<int>? txnIds = null;
+            if (IsRealComplaintFilter(request.Complaint))
+            {
+                string wanted = request.Complaint.Trim();
+                txnIds = (await _complaintRepo.GetAll())
+                    .Where(c => !c.IsDeleted
+                                && (c.ComplaintStatus ?? string.Empty).Equals(wanted, StringComparison.OrdinalIgnoreCase))
+                    .Select(c => c.TransactionMasterID)
+                    .Distinct()
+                    .ToList();
+            }
+
+            return new TxnTextFilter
+            {
+                Criteria = criteria,
+                CriteriaText = criteriaText,
+                Search = request.Search ?? string.Empty,
+                UserIDs = userIds,
+                TransactionIDs = txnIds,
+            };
+        }
+
+        /// <summary>
+        /// "ALL" is what a dropdown sends for "no filter"; matching it literally against a status
+        /// column returns nothing, which reads as an empty report rather than an unfiltered one.
+        /// </summary>
+        private static bool IsRealComplaintFilter(string? value)
+        {
+            string v = (value ?? string.Empty).Trim();
+            return v.Length > 0 && !v.EqualsIgnoreCase("ALL");
+        }
+
+        /// <summary>
+        /// Apply the selection criteria, free text and complaint filters to a list already in
+        /// memory - for the reports that cannot push them into the query because they start from
+        /// another table (the manual-settlement audit) rather than from the transactions.
+        ///
+        /// Same vocabulary as <see cref="BuildTextFilter"/> so a reader gets the same answer from
+        /// the same box on every report; the only difference is where the work happens.
+        /// </summary>
+        private async Task<List<TransactionMaster>> ApplyCriteria(List<TransactionMaster> rows, TxnReportRequest request)
+        {
+            var text = await BuildTextFilter(request);
+            if (text.IsEmpty || rows.Count == 0) return rows;
+
+            IEnumerable<TransactionMaster> q = rows;
+
+            if (text.UserIDs != null)
+            {
+                var ids = text.UserIDs.ToHashSet();
+                q = q.Where(x => ids.Contains(x.UserID));
+            }
+
+            if (text.TransactionIDs != null)
+            {
+                var txnIds = text.TransactionIDs.ToHashSet();
+                q = q.Where(x => txnIds.Contains(x.TransactionMasterID));
+            }
+
+            string criteriaText = text.CriteriaText.Trim();
+            if (criteriaText.Length > 0)
+            {
+                switch (text.Criteria.Trim().ToLowerInvariant())
+                {
+                    case "transactionid":
+                        q = q.Where(x => x.TransactionMasterID.ToString() == criteriaText
+                                      || (x.ReferenceNo ?? string.Empty).Contains(criteriaText, StringComparison.OrdinalIgnoreCase));
+                        break;
+                    case "consumernumber":
+                        q = q.Where(x => (x.ConsumerNumber ?? string.Empty).Contains(criteriaText, StringComparison.OrdinalIgnoreCase));
+                        break;
+                    case "providerrefno":
+                        q = q.Where(x => (x.ProviderRefNo ?? string.Empty).Contains(criteriaText, StringComparison.OrdinalIgnoreCase)
+                                      || (x.ProviderRequestID ?? string.Empty).Contains(criteriaText, StringComparison.OrdinalIgnoreCase));
+                        break;
+                }
+            }
+
+            string search = text.Search.Trim();
+            if (search.Length > 0)
+            {
+                q = q.Where(x =>
+                    (x.ConsumerNumber ?? string.Empty).Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                    (x.ReferenceNo ?? string.Empty).Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                    (x.ProviderRefNo ?? string.Empty).Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                    (x.ProviderRequestID ?? string.Empty).Contains(search, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return q.ToList();
         }
 
         // Fill the display-only fields (operator name/logo, user firm/mobile) for one page of rows.
@@ -749,10 +1167,39 @@ namespace FintechApp.Services
                     r.FirmName = u.FirmName;
                     r.UserMobile = u.MobileNumber;
                 }
+                // The chain above the user, as a name AND a number. A tier that is the operator
+                // itself — a retailer parked straight under the admin, or an admin account stamped
+                // as the "distributor" — reads "Admin" rather than the operator's firm name, which
+                // is what a support desk means when it asks "who is this retailer under".
+                static bool IsOperator(UserMaster u) =>
+                    u.UserTypeID == UserTypeCode.Admin || u.UserTypeID == UserTypeCode.SupportUser;
                 if (users.TryGetValue(r.DistributerUserID, out var dist))
-                    r.DistributerName = !string.IsNullOrWhiteSpace(dist.FirmName) ? dist.FirmName : dist.PersonName;
+                {
+                    if (IsOperator(dist)) { r.DistributerName = "Admin"; r.DistributerMobile = string.Empty; }
+                    else
+                    {
+                        r.DistributerName = !string.IsNullOrWhiteSpace(dist.FirmName) ? dist.FirmName : dist.PersonName;
+                        r.DistributerMobile = dist.MobileNumber ?? string.Empty;
+                    }
+                }
+                else if (r.DistributerUserID <= 0 && r.UserID > 0 && users.TryGetValue(r.UserID, out var self)
+                         && self.ParentID is int pid && users.TryGetValue(pid, out var parent) && IsOperator(parent))
+                {
+                    r.DistributerName = "Admin";
+                }
                 if (users.TryGetValue(r.SuperDistributerUserID, out var superDist))
-                    r.SuperDistributerName = !string.IsNullOrWhiteSpace(superDist.FirmName) ? superDist.FirmName : superDist.PersonName;
+                {
+                    if (IsOperator(superDist)) { r.SuperDistributerName = "Admin"; r.SuperDistributerMobile = string.Empty; }
+                    else
+                    {
+                        r.SuperDistributerName = !string.IsNullOrWhiteSpace(superDist.FirmName) ? superDist.FirmName : superDist.PersonName;
+                        r.SuperDistributerMobile = superDist.MobileNumber ?? string.Empty;
+                    }
+                }
+                else if (r.SuperDistributerUserID <= 0 && r.DistributerName == "Admin")
+                {
+                    r.SuperDistributerName = "Admin";
+                }
                 if (walletById.TryGetValue(r.WalletID, out var walletName))
                     r.WalletName = walletName;
                 if (providerById.TryGetValue(r.ProviderID, out var providerName))

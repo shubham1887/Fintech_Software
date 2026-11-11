@@ -49,8 +49,17 @@ namespace FintechApp.Services
         private readonly IProviderOperatorDenominationMappingRepository _denominationMappingRepo;
         private readonly IDenominationMasterRepository _denominationRepo;
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly Fino.JaiJuiApi.Interfaces.IJaiJuiApiService _jaijui;
-        private readonly Fino.Pay1Api.Interfaces.IPay1ApiService _pay1;
+        // Compiled integrations (Pay1, JaiJui, …). The gateway no longer knows any of them by
+        // name — it asks the registry whether this provider row has an adapter, and a null
+        // answer means the ordinary endpoint-template path. See Interfaces/Providers/ICodedProvider.
+        private readonly ICodedProviderRegistry _coded;
+        // The admin's rewrites for the words a provider sends back (Settings -> Response Messages).
+        // Applied HERE as well as on the way out, because this is the only layer that knows WHICH
+        // provider spoke - a rule pinned to one provider can only be honoured where that is known.
+        private readonly IResponseMessageRuleService _messageRules;
+        // Amount-band commission for this provider (Provider Setting -> Commission). Providers price
+        // in bands; the per-route figure below is only the flat fallback.
+        private readonly IProviderConfigurationAdminCommissionService _commissionSlabs;
         private readonly Logger _logger;
 
         public ProviderGatewayService(
@@ -65,11 +74,13 @@ namespace FintechApp.Services
             IProviderOperatorDenominationMappingRepository denominationMappingRepo,
             IDenominationMasterRepository denominationRepo,
             IHttpClientFactory httpClientFactory,
-            Fino.JaiJuiApi.Interfaces.IJaiJuiApiService jaijui,
-            Fino.Pay1Api.Interfaces.IPay1ApiService pay1)
+            ICodedProviderRegistry coded,
+            IResponseMessageRuleService messageRules,
+            IProviderConfigurationAdminCommissionService commissionSlabs)
         {
-            _jaijui = jaijui;
-            _pay1 = pay1;
+            _coded = coded;
+            _messageRules = messageRules;
+            _commissionSlabs = commissionSlabs;
             _providerRepo = providerRepo;
             _endpointRepo = endpointRepo;
             _routeRepo = routeRepo;
@@ -171,26 +182,70 @@ namespace FintechApp.Services
                     var provider = await _providerRepo.GetByID(route.ProviderID);
                     if (provider == null || !provider.IsActive || provider.IsDelete) continue;
 
-                    // Pay1 Utility (BBPS) has no endpoint template - see DispatchPay1.
-                    if (Providers.Pay1ProviderResolver.IsPay1(provider.ProviderName))
+                    // A compiled integration has no endpoint template — its adapter IS the whole
+                    // of its protocol. A provider with no adapter, or an adapter that does not do
+                    // transactions, returns null and falls through to the template path below.
+                    var codedAdapter = _coded.For(provider);
+                    var codedResult = codedAdapter == null
+                        ? null
+                        : await codedAdapter.Dispatch(provider, route, context);
+
+                    if (codedResult != null)
                     {
-                        var pay1Result = await DispatchPay1(provider, route, context);
-                        if (!pay1Result.IsConfigured)
+                        if (!codedResult.IsConfigured)
                         {
                             // Nothing left our server (credentials or biller code missing). No money
                             // is at risk, so fall through to the next provider in the sequence; if
                             // there is none, the pipeline refunds with this reason.
-                            notConfigured.Message = pay1Result.Message;
-                            lastFailure = pay1Result;
+                            notConfigured.Message = codedResult.Message;
+                            lastFailure = codedResult;
                             continue;
                         }
                         anyDispatched = true;
-                        return pay1Result;
+                        // Same rule as the template path below: an EXPLICIT failure from the
+                        // provider means nothing moved, so the next provider in the switching
+                        // sequence gets the transaction. Returning here regardless of status is
+                        // why a sequence of "Payin, then RealRobo" failed outright the moment
+                        // Payin declined — the second provider was never tried.
+                        if (codedResult.Status == StatusType.Failed) { lastFailure = codedResult; continue; }
+                        return codedResult;
                     }
 
                     // 2. Resolve the endpoint template for this provider + service.
                     var endpoint = await ResolveEndpoint(provider.ProviderID, KindTransaction, context.ServiceID);
                     if (endpoint == null) continue;
+
+                    // 2b. Can this provider's answer be READ at all?
+                    //
+                    // The reply is interpreted by the provider's TRANSACTION response rules. With no
+                    // rules configured, nothing it ever says can match, so every transaction sent to
+                    // it comes back unmatched and is held as PENDING below - correct caution for one
+                    // ambiguous reply, but for a provider that has never been set up it is a trap:
+                    // the customer is debited, the transaction parks in the pending queue, and the
+                    // NEXT provider in the switching sequence is never tried, because an unmatched
+                    // reply stops the loop.
+                    //
+                    // That is what a half-configured provider sitting first in a sequence does to
+                    // every transaction behind it. So it is checked BEFORE the call goes out: no
+                    // request has left our server, nothing can have moved, and skipping to the next
+                    // provider in the sequence is therefore safe - exactly like a missing endpoint
+                    // above. A provider that HAS rules and merely answers something unrecognised is
+                    // still held, unchanged; that case really might mean the money moved.
+                    var rules = await GetActiveRules(provider.ProviderID, KindTransaction);
+                    if (rules.Count == 0)
+                    {
+                        lastFailure = new RechargeProviderResult
+                        {
+                            Status = StatusType.Failed,
+                            ProviderRequestID = context.ProviderRequestID,
+                            ProviderID = provider.ProviderID,
+                            Message = string.Format(Messages.Provider.Message.ResponseRulesMissing, provider.ProviderName)
+                        };
+                        _logger.Write($"Provider {provider.ProviderID} ({provider.ProviderName}) skipped for transaction "
+                                      + $"{context.TransactionMasterID}: no active TRANSACTION response rules, so its reply "
+                                      + "could not be read. Moving to the next provider in the sequence.");
+                        continue;
+                    }
 
                     string requestID = string.Concat(endpoint.TransactionIDPrefix ?? string.Empty, context.ProviderRequestID);
                     anyDispatched = true;
@@ -226,8 +281,8 @@ namespace FintechApp.Services
                         };
                     }
 
-                    // 4. Read the reply through the provider's TRANSACTION rules.
-                    var rules = await GetActiveRules(provider.ProviderID, KindTransaction);
+                    // 4. Read the reply through the provider's TRANSACTION rules (resolved above,
+                    //    before the call, so a provider that cannot be read is never called).
                     var outcome = EvaluateRules(rules, rawResponse);
 
                     if (!outcome.Matched)
@@ -243,14 +298,14 @@ namespace FintechApp.Services
                         };
                     }
 
-                    var result = BuildDispatchResult(outcome, requestID, provider.ProviderID, rawResponse);
+                    var result = await BuildDispatchResult(outcome, requestID, provider.ProviderID, rawResponse);
 
                     // Provider commission = what the admin earns from the provider for this route.
                     // The route configuration (Provider Setting → Commission) is AUTHORITATIVE — it is
                     // the markup the admin set (e.g. ₹10 Fix), and must not be silently overridden by
                     // whatever the provider/simulator happens to echo back in its reply. Only fall back
                     // to the reply's commission when the route has none configured (0).
-                    decimal routeCommission = ComputeRouteCommission(route, context.Amount);
+                    decimal routeCommission = await ComputeRouteCommission(provider.ProviderID, route, context);
                     result.ProviderCommission = routeCommission != 0m
                         ? routeCommission
                         : (result.ProviderCommission ?? 0m);
@@ -351,12 +406,22 @@ namespace FintechApp.Services
 
         // Commission earned from the provider per the route configuration (Provider Setting →
         // Commission tab): FLEXI = percent of amount, FIX = flat; SURCHARGE category = we pay them.
-        private static decimal ComputeRouteCommission(ProviderConfiguration route, decimal amount)
-            => SlabCommissionResolver.Normalize(route.AdminComm, route.AdminCommType, amount, route.CommissionCategory);
+        /// <summary>
+        /// What the provider pays us for this dispatch. An amount band configured for the provider
+        /// (Provider Setting -> Commission) wins, because that is the shape a provider's rate card
+        /// actually takes; the route's single flat figure is the fallback for providers priced that
+        /// way. Either is signed: positive = they pay us, negative = we pay them.
+        /// </summary>
+        private async Task<decimal> ComputeRouteCommission(int providerID, ProviderConfiguration route, RechargeDispatchContext context)
+        {
+            decimal band = await _commissionSlabs.Resolve(providerID, context.ServiceID, context.OperatorID, context.Amount);
+            if (band != 0m) return band;
+            return SlabCommissionResolver.Normalize(route.AdminComm, route.AdminCommType, context.Amount, route.CommissionCategory);
+        }
 
         // Builds the dispatch result from a matched rule, backfilling well-known fields from the
         // raw JSON reply when the rule template did not capture them.
-        private static RechargeProviderResult BuildDispatchResult(RuleOutcome outcome, string requestID, int providerID, string rawResponse)
+        private async Task<RechargeProviderResult> BuildDispatchResult(RuleOutcome outcome, string requestID, int providerID, string rawResponse)
         {
             var values = new Dictionary<string, string>(outcome.ExtractedValues, StringComparer.OrdinalIgnoreCase);
             MergeJsonFallback(rawResponse, values);
@@ -380,7 +445,24 @@ namespace FintechApp.Services
             if (TryReadDecimal(values, out var pComm, "Commission", "Comm", "CommissionAmount"))
                 result.ProviderCommission = pComm;
 
+            result.Message = await Rewrite(result.Message, providerID);
+
             return result;
+        }
+
+        /// <summary>
+        /// Put a provider's own wording through the admin's rewrite rules. The rules are a cached
+        /// in-memory list, so this costs nothing per call after the first read, and it never throws:
+        /// a rewrite problem must not change the outcome of a dispatch that has already moved money.
+        /// </summary>
+        private async Task<string> Rewrite(string message, int providerID, int serviceID = 0)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(message)) return message;
+                return await _messageRules.Apply(message, providerID, serviceID, MessageChannel.All);
+            }
+            catch (Exception ex) { _logger.Write(ex); return message; }
         }
 
         // Providers reply JSON in slightly different shapes (e.g. Payin adds refrenceID/referenceID
@@ -427,20 +509,74 @@ namespace FintechApp.Services
 
         // ── Balance enquiry ──────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Re-enquire EVERY active provider's balance and persist what comes back.
+        ///
+        /// The dashboard's "Provider Stock" panel reads ProviderMaster.RechargeBalance/DMTBalance,
+        /// which are only written when something actually asks the provider. Between enquiries they
+        /// drift — a provider whose stock was topped up (or burnt down) upstream still showed the
+        /// figure from the last call, which is what made the panel look wrong. The refresh button
+        /// now calls this, so one click re-reads the real balance of every provider.
+        ///
+        /// Providers are enquired sequentially: each one is its own HTTP round-trip through the
+        /// gateway (which writes provider logs on a shared scoped DbContext), so a fan-out here
+        /// would mean concurrent EF operations on one context. A failing or unreachable provider is
+        /// reported in its own row and never aborts the sweep.
+        /// </summary>
+        public async Task<(string failureMessage, List<ProviderBalanceResponse> data)> CheckAllBalances()
+        {
+            var providers = (await _providerRepo.GetAll())
+                .Where(p => !p.IsDelete && p.IsActive)
+                .OrderBy(p => p.ProviderName)
+                .ToList();
+
+            var results = new List<ProviderBalanceResponse>();
+            foreach (var provider in providers)
+            {
+                try
+                {
+                    var (fail, data) = await CheckBalance(provider.ProviderID);
+                    results.Add(data ?? new ProviderBalanceResponse
+                    {
+                        ProviderID = provider.ProviderID,
+                        ProviderName = provider.ProviderName,
+                        Status = StatusType.Failed,
+                        Message = fail,
+                        // Keep the stored figures on the row so the caller can still show a number
+                        // (clearly marked as the last known one) for a provider that did not answer.
+                        RechargeBalance = provider.RechargeBalance,
+                        DMTBalance = provider.DMTBalance,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.Write(ex);
+                    results.Add(new ProviderBalanceResponse
+                    {
+                        ProviderID = provider.ProviderID,
+                        ProviderName = provider.ProviderName,
+                        Status = StatusType.Failed,
+                        Message = Messages.Provider.Message.ProviderUnreachable,
+                        RechargeBalance = provider.RechargeBalance,
+                        DMTBalance = provider.DMTBalance,
+                    });
+                }
+            }
+
+            if (results.Count == 0) return (Messages.Common.Message.DataNotFound, results);
+            return (StatusType.Ok, results);
+        }
+
         public async Task<(string failureMessage, ProviderBalanceResponse? data)> CheckBalance(int providerID)
         {
             var provider = await _providerRepo.GetByID(providerID);
             if (provider == null || provider.IsDelete) return (Messages.Provider.Message.NotFound, null);
 
-            // JaiJui is a coded library integration (not a template-driven gateway), so it has no
-            // BALANCE endpoint/rules. Fetch its wallet balance directly through Fino.JaiJuiApi using the
-            // credentials stored on this "Add API" provider row.
-            if (Providers.JaiJuiProviderResolver.IsJaiJui(provider.ProviderName))
-                return await CheckJaiJuiBalance(provider);
-
-            // Pay1 Utility is a library integration too - no BALANCE endpoint/rules to run.
-            if (Providers.Pay1ProviderResolver.IsPay1(provider.ProviderName))
-                return await CheckPay1Balance(provider);
+            // A coded integration has no BALANCE endpoint or rules to run — it reads its wallet
+            // through its own library, using the credentials stored on this "API Providers" row.
+            var coded = _coded.For(provider);
+            if (coded != null && await coded.CheckBalance(provider) is CodedBalanceResult codedBalance)
+                return (codedBalance.FailureMessage, codedBalance.Data);
 
             var endpoint = await ResolveEndpoint(providerID, KindBalance, serviceID: 0);
             if (endpoint == null) return (Messages.Provider.Message.BalanceEndpointMissing, null);
@@ -501,216 +637,6 @@ namespace FintechApp.Services
             return (StatusType.Ok, result);
         }
 
-        // Balance enquiry for a JaiJui gateway — bypasses the endpoint/rule engine and calls the
-        // Fino.JaiJuiApi wallet-balance endpoint with the credentials on the provider row. JaiJui is a
-        // DMT/payout provider, so the wallet figure is stored as the DMT balance.
-        private async Task<(string failureMessage, ProviderBalanceResponse? data)> CheckJaiJuiBalance(ProviderMaster provider)
-        {
-            var creds = Providers.JaiJuiProviderResolver.CredentialsFrom(provider);
-            var resp = await _jaijui.GetBalance(creds);
-
-            var result = new ProviderBalanceResponse
-            {
-                ProviderID = provider.ProviderID,
-                ProviderName = provider.ProviderName,
-                ExtractedValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                RawResponse = Truncate(resp.Data ?? string.Empty, 4000)
-            };
-
-            // Provider returns HTTP 200 even on decline: transport failure OR an explicit FAILURE status
-            // means we could not read a balance.
-            string status = (resp.Status ?? string.Empty).Trim().ToUpperInvariant();
-            if (!resp.Success || status == "FAILURE")
-            {
-                result.Status = StatusType.Failed;
-                result.Message = string.IsNullOrWhiteSpace(resp.Message)
-                    ? Messages.Provider.Message.ProviderUnreachable
-                    : resp.Message;
-                return (StatusType.Ok, result);
-            }
-
-            result.Status = StatusType.Success;
-            result.DMTBalance = resp.Balance;
-            result.Message = string.IsNullOrWhiteSpace(resp.Message)
-                ? Messages.Provider.Message.BalanceFetched
-                : resp.Message;
-            result.ExtractedValues["DMTBalance"] = resp.Balance.ToString(CultureInfo.InvariantCulture);
-
-            provider.DMTBalance = resp.Balance;
-            await _providerRepo.Update(provider);
-
-            return (StatusType.Ok, result);
-        }
-
-        // ---- Pay1 Utility (BBPS) ---------------------------------------------------
-        //
-        // Pay1 signs every call with sha1(partner_id + trans_id + api_key). A ProviderDetails URL
-        // template cannot produce that hash, so this provider talks through the Fino.Pay1Api
-        // library instead of an endpoint row - the same arrangement JaiJui uses for DMT.
-        // Everything around it is unchanged: the route and the switching sequence still decide
-        // that Pay1 serves this biller (ProviderConfiguration.OpCode carries the Pay1 product id),
-        // every call is still written to the provider log, and the money rules still hold - a
-        // reply we never received leaves the transaction PENDING, never FAILED.
-
-        private async Task<RechargeProviderResult> DispatchPay1(
-            ProviderMaster provider, ProviderConfiguration route, RechargeDispatchContext context)
-        {
-            var request = new Fino.Pay1Api.Requests.BillPaymentRequest
-            {
-                Operator = route.OpCode ?? string.Empty,
-                AccountNumber = context.ConsumerNumber,
-                Amount = context.Amount,
-                Param = context.Param1,
-                Param1 = context.Param2,
-                RequestID = context.ProviderRequestID,
-            };
-
-            var reply = await _pay1.BillPayment(request, Providers.Pay1ProviderResolver.CredentialsFrom(provider));
-
-            await WriteLog(provider.ProviderID, context.UserID, context.TransactionMasterID, context.ServiceID,
-                context.IPAddress,
-                $"Pay1 BillPayment operator={request.Operator} account={request.AccountNumber} amount={request.Amount:0.##} trans_id={request.RequestID}",
-                reply.Attempted ? reply.Data : reply.Message);
-
-            var result = new RechargeProviderResult
-            {
-                ProviderID = provider.ProviderID,
-                ProviderRequestID = context.ProviderRequestID,
-                ProviderRefNo = reply.TransactionID,
-                RawResponse = Truncate(reply.Data, 4000),
-                ProviderCommission = route.AdminComm > 0 ? route.AdminComm : null,
-            };
-
-            // Never sent: credentials or biller code missing. No money is at risk, so the caller
-            // may try the next provider in the sequence.
-            if (!reply.Attempted)
-            {
-                result.Status = StatusType.Failed;
-                result.IsConfigured = false;
-                result.Message = reply.Message;
-                return result;
-            }
-
-            // Sent, but no readable answer: the payment may well have gone through - hold it.
-            if (!reply.Success)
-            {
-                result.Status = StatusType.Pending;
-                result.Message = string.IsNullOrWhiteSpace(reply.Message)
-                    ? Messages.Provider.Message.AwaitingConfirmation : reply.Message;
-                return result;
-            }
-
-            if (reply.Balance > 0) result.ProviderClosingBalance = reply.Balance;
-
-            result.Status = reply.IsSuccess ? StatusType.Success
-                          : reply.IsFailure ? StatusType.Failed
-                          : StatusType.Pending;   // "pending" and anything unrecognised hold the money
-            result.Message = string.IsNullOrWhiteSpace(reply.Message)
-                ? DefaultMessageFor(result.Status) : reply.Message;
-            return result;
-        }
-
-        private async Task<(string failureMessage, BillFetchResponse? data)> FetchPay1Bill(
-            ProviderMaster provider, ProviderConfiguration route, BillFetchContext context)
-        {
-            var request = new Fino.Pay1Api.Requests.BillFetchRequest
-            {
-                Operator = route.OpCode ?? string.Empty,
-                AccountNumber = context.ConsumerNumber,
-                Param = context.Param1,
-                Param1 = context.Param2,
-            };
-
-            var reply = await _pay1.BillFetch(request, Providers.Pay1ProviderResolver.CredentialsFrom(provider));
-
-            await WriteLog(provider.ProviderID, context.UserID, transactionID: 0, context.ServiceID, context.IPAddress,
-                $"Pay1 BillFetch operator={request.Operator} account={request.AccountNumber}",
-                reply.Attempted ? reply.Data : reply.Message);
-
-            // Could not reach Pay1 - no money involved, let the caller try the next provider.
-            if (!reply.Attempted || !reply.Success) return (reply.Message, null);
-
-            return (StatusType.Ok, new BillFetchResponse
-            {
-                Status = reply.IsSuccess ? StatusType.Success : StatusType.Failed,
-                OperatorID = context.OperatorID,
-                ProviderID = provider.ProviderID,
-                CustomerName = reply.CustomerName,
-                BillAmount = reply.BillAmount > 0 ? reply.BillAmount : null,
-                DueDate = reply.DueDate,
-                BillDate = reply.BillDate,
-                BillNumber = reply.BillNumber,
-                Message = reply.Message,
-                RawResponse = Truncate(reply.Data, 4000),
-            });
-        }
-
-        private async Task<ProviderStatusResult> CheckPay1Status(ProviderMaster provider, ProviderStatusContext context)
-        {
-            var reply = await _pay1.StatusCheck(
-                new Fino.Pay1Api.Requests.StatusCheckRequest { RequestIDs = context.ProviderRequestID },
-                Providers.Pay1ProviderResolver.CredentialsFrom(provider));
-
-            await WriteLog(provider.ProviderID, context.UserID, context.TransactionMasterID, context.ServiceID,
-                context.IPAddress, $"Pay1 StatusCheck trans_id={context.ProviderRequestID}",
-                reply.Attempted ? reply.Data : reply.Message);
-
-            var result = new ProviderStatusResult
-            {
-                ProviderRefNo = string.IsNullOrWhiteSpace(reply.TransactionID) ? context.ProviderRequestID : reply.TransactionID,
-                RawResponse = Truncate(reply.Data, 4000),
-            };
-
-            // An enquiry we could not complete tells us nothing - leave the transaction alone.
-            if (!reply.Attempted || !reply.Success)
-            {
-                result.Status = StatusType.Pending;
-                result.Message = string.IsNullOrWhiteSpace(reply.Message)
-                    ? Messages.Provider.Message.ProviderUnreachable : reply.Message;
-                return result;
-            }
-
-            result.Status = reply.IsSuccess ? StatusType.Success
-                          : reply.IsFailure ? StatusType.Failed
-                          : StatusType.Pending;
-            result.Message = string.IsNullOrWhiteSpace(reply.Message)
-                ? DefaultMessageFor(result.Status) : reply.Message;
-            return result;
-        }
-
-        private async Task<(string failureMessage, ProviderBalanceResponse? data)> CheckPay1Balance(ProviderMaster provider)
-        {
-            var reply = await _pay1.Balance(Providers.Pay1ProviderResolver.CredentialsFrom(provider));
-
-            var result = new ProviderBalanceResponse
-            {
-                ProviderID = provider.ProviderID,
-                ProviderName = provider.ProviderName,
-                ExtractedValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                RawResponse = Truncate(reply.Data, 4000),
-            };
-
-            if (!reply.IsSuccess)
-            {
-                result.Status = StatusType.Failed;
-                result.Message = string.IsNullOrWhiteSpace(reply.Message)
-                    ? Messages.Provider.Message.ProviderUnreachable : reply.Message;
-                return (StatusType.Ok, result);
-            }
-
-            result.Status = StatusType.Success;
-            result.RechargeBalance = reply.Balance;
-            result.Message = Messages.Provider.Message.BalanceFetched;
-            result.ExtractedValues["Balance"] = reply.Balance.ToString(CultureInfo.InvariantCulture);
-
-            // Keep the dashboard figure in step with the provider, exactly as JaiJui does.
-            provider.RechargeBalance = reply.Balance;
-            await _providerRepo.Update(provider);
-
-            return (StatusType.Ok, result);
-        }
-
-
         // ── Bill fetch (BBPS / utility bill details before payment) ─────────────────
 
         public async Task<(string failureMessage, BillFetchResponse? data)> FetchBill(BillFetchContext context)
@@ -739,12 +665,14 @@ namespace FintechApp.Services
                 var provider = await _providerRepo.GetByID(route.ProviderID);
                 if (provider == null || !provider.IsActive || provider.IsDelete) continue;
 
-                if (Providers.Pay1ProviderResolver.IsPay1(provider.ProviderName))
+                var codedBill = _coded.For(provider) is ICodedProvider adapter
+                    ? await adapter.FetchBill(provider, route, context)
+                    : null;
+                if (codedBill != null)
                 {
                     anyEndpoint = true;
-                    var (pay1Failure, pay1Bill) = await FetchPay1Bill(provider, route, context);
-                    if (pay1Bill == null) { lastMessage = pay1Failure; continue; } // no money involved - try the next provider
-                    return (StatusType.Ok, pay1Bill);
+                    if (codedBill.Data == null) { lastMessage = codedBill.FailureMessage; continue; } // no money involved - try the next provider
+                    return (StatusType.Ok, codedBill.Data);
                 }
 
                 var endpoint = await ResolveEndpoint(provider.ProviderID, KindBillFetch, context.ServiceID);
@@ -827,8 +755,9 @@ namespace FintechApp.Services
             var provider = await _providerRepo.GetByID(context.ProviderID);
             if (provider == null || provider.IsDelete) return notConfigured;
 
-            if (Providers.Pay1ProviderResolver.IsPay1(provider.ProviderName))
-                return await CheckPay1Status(provider, context);
+            if (_coded.For(provider) is ICodedProvider codedStatusAdapter
+                && await codedStatusAdapter.CheckStatus(provider, context) is ProviderStatusResult codedStatus)
+                return codedStatus;
 
             var endpoint = await ResolveEndpoint(context.ProviderID, KindStatus, context.ServiceID);
             if (endpoint == null) return notConfigured;
@@ -865,9 +794,10 @@ namespace FintechApp.Services
                 Status = outcome.Matched ? outcome.MappedStatus : StatusType.Pending,
                 ProviderRefNo = FirstValue(extracted, "RefID", "TxnID", "TransactionID", "ReferenceNo"),
                 RawResponse = Truncate(rawResponse, 4000),
-                Message = FirstValue(extracted, "Message", "Description") is { Length: > 0 } msg
+                Message = await Rewrite(FirstValue(extracted, "Message", "Description") is { Length: > 0 } msg
                     ? msg
-                    : (outcome.Matched ? DefaultMessageFor(outcome.MappedStatus) : Messages.Provider.Message.AwaitingConfirmation)
+                    : (outcome.Matched ? DefaultMessageFor(outcome.MappedStatus) : Messages.Provider.Message.AwaitingConfirmation),
+                    context.ProviderID, context.ServiceID)
             };
         }
 

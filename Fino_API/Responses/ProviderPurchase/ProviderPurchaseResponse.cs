@@ -11,5 +11,7 @@
     public int PurchaseDOCInt { get; set; }
     public bool IsDelete { get; set; }
     public DateTime DateTime { get; set; } = DateTime.MinValue;
+    public string ProviderName { get; set; } = string.Empty;
+    public string WalletName { get; set; } = string.Empty;
     }
 }

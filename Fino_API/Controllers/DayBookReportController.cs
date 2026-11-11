@@ -78,6 +78,17 @@ namespace FintechApp.Controllers
         public Task<APIResponse> Select([FromForm] APIRequest apiRequest)
             => Report(apiRequest, _analytics.Daybook);
 
+        // Profit & loss: opening / purchase / sale / closing, every commission tier, the GST on
+        // both sides, the margin between them and the net profit. GroupBy chooses the granularity
+        // (Date, Service, Operator or User); Date is the default.
+        //
+        // It lives on this controller because it is the daybook's figures read as a P&L, and
+        // because this controller is already granted to the accounting desk - the role the report
+        // was asked for.
+        [HttpPost("ProfitLoss")]
+        public Task<APIResponse> ProfitLoss([FromForm] APIRequest apiRequest)
+            => Report(apiRequest, _analytics.ProfitLoss);
+
         // Provider-wise daybook (Admin only) — aggregates TransactionMaster by Provider+Operator:
         // hits/amounts per status (Success/Failed/Pending), commissions and provider profit.
         [HttpPost("ProviderDaybook")]
@@ -173,7 +184,9 @@ namespace FintechApp.Controllers
                     var failed = g.Where(x => x.Status == StatusType.Failed).ToList();
                     var pending = g.Where(x => x.Status == StatusType.Pending).ToList();
                     decimal successAmount = success.Sum(x => x.Amount);
-                    decimal profit = success.Sum(x => x.AdminProfit);
+                    // AdminProfit is stamped by the recharge pipeline only; the bank-transfer rail
+                    // writes AdminCommission (the same net figure) and leaves AdminProfit at 0.
+                    decimal profit = success.Sum(x => x.AdminProfit != 0m ? x.AdminProfit : x.AdminCommission);
                     return new ProviderDayBookViewModel
                     {
                         ProviderID = g.Key.ProviderID,

@@ -25,6 +25,9 @@ export interface DashboardData {
   Surcharge: number;
   TotalAdminCommission: number;
   TotalAdminSurcharge: number;
+  /** Commission PAID DOWN to the network (retailer + distributor + super-distributor) on the day. */
+  TotalUserCommission: number;
+  TotalUserCommissionCount: number;
   AdminCommissionProfit: number;
   AdminSurchargeProfit: number;
   RofferComm: number;

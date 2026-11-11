@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { subDays } from 'date-fns';
 import { Download, RefreshCw, Search as SearchIcon, SlidersHorizontal } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
 import { fetchList } from '@/api/list.api';
 import { inr, apiDate } from '@/lib/format';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvDownload } from '@/lib/exportAll';
 import { getField } from '@/lib/row';
+import { StatRow } from '@/components/report/StatRow';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -36,7 +36,9 @@ interface Totals {
 }
 
 function defaultFilters(): Filters {
-  return { fromDate: apiDate(subDays(new Date(), 7)), toDate: apiDate(new Date()), walletId: '0' };
+  // Opens on today: the summary is read as "where do the books stand right now", and a week of
+  // opening/closing rows was the wrong answer to that on every visit.
+  return { fromDate: apiDate(new Date()), toDate: apiDate(new Date()), walletId: '0' };
 }
 
 const num = (r: Row, k: string) => Number(getField(r, k) ?? 0) || 0;
@@ -62,15 +64,6 @@ function Money({ value, positive = 'text-slate-700', negative = 'text-danger-600
   return <span className={`tabular-nums ${value < 0 ? negative : positive}`}>{inr(value)}</span>;
 }
 
-/** A flat KPI in the summary strip — label over value, no card chrome. */
-function Kpi({ label, value, tone = 'text-slate-800' }: { label: string; value: number; tone?: string }) {
-  return (
-    <div className="px-4 py-3">
-      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={`mt-1 text-lg font-semibold tabular-nums ${tone}`}>{inr(value)}</div>
-    </div>
-  );
-}
 
 /**
  * Admin Accounting — company wallet-wise accounting. One row per wallet over a date range with
@@ -78,6 +71,7 @@ function Kpi({ label, value, tone = 'text-slate-800' }: { label: string; value: 
  * earned, plus a flat summary strip and totals. (Ledger/AdminReconciliation.)
  */
 export function AdminAccountingScreen({ def }: CustomScreenProps) {
+  const downloadCsv = useCsvDownload();
   const [draft, setDraft] = useState<Filters>(defaultFilters);
   const [applied, setApplied] = useState<Filters>(draft);
   const upd = (patch: Partial<Filters>) => setDraft((d) => ({ ...d, ...patch }));
@@ -121,7 +115,7 @@ export function AdminAccountingScreen({ def }: CustomScreenProps) {
         icon={pickIcon(def.title)}
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => exportToCsv(rows, def.title)} disabled={rows.length === 0}>
+            <Button variant="outline" size="sm" onClick={() => downloadCsv(rows, def.title)} disabled={rows.length === 0}>
               <Download className="size-4" />
               Export
             </Button>
@@ -158,16 +152,19 @@ export function AdminAccountingScreen({ def }: CustomScreenProps) {
         </CardBody>
       </Card>
 
-      {/* Flat wallet-wise summary strip. */}
-      <div className="mb-4 grid grid-cols-2 divide-x divide-y divide-slate-200/70 overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card sm:grid-cols-4 lg:grid-cols-7 lg:divide-y-0">
-        <Kpi label="Opening Balance" value={totals.opening} />
-        <Kpi label="Closing Balance" value={totals.closing} />
-        <Kpi label="Sale" value={totals.sale} />
-        <Kpi label="Purchase" value={totals.purchase} />
-        <Kpi label="Credit" value={totals.credit} tone="text-success-600" />
-        <Kpi label="Debit" value={totals.debit} tone="text-danger-600" />
-        <Kpi label="Commission" value={totals.comm} tone="text-success-600" />
-      </div>
+      {/* Compact wallet-wise summary bar — same seven figures and the same colour coding, in
+          roughly half the height, so the wallet table starts above the fold. */}
+      <StatRow
+        items={[
+          { label: 'Opening Balance', value: inr(totals.opening) },
+          { label: 'Closing Balance', value: inr(totals.closing) },
+          { label: 'Sale', value: inr(totals.sale) },
+          { label: 'Purchase', value: inr(totals.purchase) },
+          { label: 'Credit', value: inr(totals.credit), tone: 'text-success-600' },
+          { label: 'Debit', value: inr(totals.debit), tone: 'text-danger-600' },
+          { label: 'Commission', value: inr(totals.comm), tone: 'text-success-600' },
+        ]}
+      />
 
       <div className="overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card">
         <div className="overflow-x-auto">

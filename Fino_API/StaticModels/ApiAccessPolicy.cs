@@ -52,6 +52,10 @@ namespace FintechApp.StaticModels
             UserTypeCode.Admin, UserTypeCode.SuperDistributor, UserTypeCode.Distributor,
             UserTypeCode.SupportUser, UserTypeCode.SDFOS, UserTypeCode.DFOS,
         };
+        // The distributor tier plus the accounting desk. Reads that are about money owed BETWEEN
+        // businesses in the network: the tier that extended the credit needs them to collect, and
+        // the accountant needs them because an unrecovered receivable is a figure in the books.
+        public static readonly int[] DistAndAccounting = [.. Dist, UserTypeCode.Accountant];
         // Roles that may add a second login to their own account (LinkedProfilePolicy).
         // Reading the list is open to everyone, because the account switcher has to know
         // whether to appear — including for the linked account itself, which needs the
@@ -226,8 +230,85 @@ namespace FintechApp.StaticModels
                 "einvoice",             // IRP status and deadline alerts
                 "exchangeregister");    // the barter register
 
+            // ── GST Phase 3: purchases, 2B, reconciliation, ITC register ────────────────
+            // Reads for the whole accounting desk. Every WRITE here is pinned below, because the
+            // WriteVerb regex does not match Capture / Commit / Build / Mark / Claim / Reverse, so
+            // without an explicit pin they would fall through to the controller grant and hand an
+            // accountant the ability to capture a purchase or claim a credit.
+            Set(Accounting,
+                "purchase",             // the purchase register + capture + e-invoice import
+                "gstr2b",               // 2B snapshots and their lines
+                "purchaserecon",        // the 4-bucket reconciliation + three-way
+                "itc");                 // the ITC register and its deadline alerts
+
+            // ── GST Phase 4: the double-entry ledger ────────────────────────────────────
+            // Reads for the desk. Every WRITE is pinned below — Enqueue / ProcessOutbox / PostJournal
+            // / Reverse / Lock / Unlock are none of them matched by the WriteVerb regex, so without a
+            // pin an accountant could post to the books or reopen a closed period.
+            Set(Accounting,
+                "acctaccount",          // the chart of accounts (read-only over the API)
+                "acctledger",           // vouchers, outbox, and the posting acts
+                "acctperiod",           // period locks
+                "acctintegrity");       // trial balance + the two tie-outs
+
+            // ── GST Phase 5: bank statements and the bank reconciliation ────────────────
+            // Reads for the desk. Import and Save ARE matched by the WriteVerb regex, so they fall
+            // to Admin on their own; Preview / Commit / Match / Unmatch are not, and the three that
+            // write are pinned below. Preview is deliberately left open — it changes nothing, and
+            // an accountant who cannot run the comparison cannot do the job the role exists for.
+            Set(Accounting,
+                "bankaccount",          // the accounts we reconcile, and their ledger code
+                "bankstatement",        // statement uploads and their lines
+                "bankrecon");           // the 4-bucket bank-vs-books comparison
+
+            // ── GST Phase 6: the returns ────────────────────────────────────────────────
+            // Building and exporting a return change nothing and are the accounting desk's actual
+            // job, so the controller is theirs. "Save" IS matched by the WriteVerb regex and so
+            // falls to Admin on its own — which is right: a saved snapshot is what GSTR-9 later
+            // reconciles against, and marking a period filed freezes what was declared.
+            Set(Accounting, "gstreturn");
+
+            // The place-of-supply review. Reading it is the desk's job; Backfill and Set write the
+            // party's tax identity, which every later document is stamped from, so both are pinned
+            // to Admin below — neither verb is caught by the WriteVerb regex.
+            Set(Accounting, "partystate");
+
+            // How a commission is taxed. Reading the profiles and trying one out change nothing;
+            // Save and Delete change how every later commission splits and whether money is
+            // withheld from real people, so both are pinned to Admin below.
+            Set(Accounting, "commissiontax");
+
+            // The per-band GST preview. It writes nothing — it works a hypothetical amount through
+            // the rate cards and says which layer decided — and the desk needs it to answer "why is
+            // this charge 5.90 and where is the 0.90?" without being able to edit a band.
+            Set(Accounting, "chargegst");
+
+            // TDS. The brief is explicit that the admin AND the accountant set these, and it is
+            // the accounting desk that knows what the rate should be - so unusually for this file,
+            // the writes are granted to the desk as well. The one exception is pinned below:
+            // returning withheld money to a wallet moves real money and stays with Admin.
+            Set(Accounting, "tdssetting", "tdsreport");
+
+            // The GST collection report. Read-only, and the desk's own screen.
+            Set(Accounting, "gstcollection");
+
+            // Bank reconciliation setup. Reading it is the desk's; the writes below are pinned to
+            // Admin, because a format or a category rule decides how every later statement is read.
+            Set(Accounting, "banksetup");
+
             // Distributor-tier: fund transfer + downline onboarding/management.
             Set(Dist, "onboardinguser", "onboardinguserdocument");
+
+            // Outstanding / cash collection. "cashcollection" itself is already in the Txn set
+            // above (and in SelfServiceWrite) because a retailer reads their own balance from it;
+            // these two were left UNLISTED, which under deny-by-default made them silently
+            // Admin-only - so a distributor opening the outstanding report, the one person who
+            // actually has to chase the money, got "no permission" and read it as broken.
+            //
+            // Who may see WHOSE rows is not decided here: the service scopes a non-admin caller to
+            // their own downline and pins a statement to their own edge of the network, from the
+            // signed token. This grant decides reachability only.
+            Set(Dist, "cashcollectionreport", "cashcollectiondetail");
 
             // Fund is mixed (request-raise vs transfer/accept) — granted to Txn here; action-level
             // rules in Resolve keep transfer/accept for the distributor tier.
@@ -278,6 +359,31 @@ namespace FintechApp.StaticModels
             ["transactiondetails.selectadminaccounting"] = Accounting,
             ["transactiondetails.getall"] = Admin,
 
+            // The credit limit is the only real control on cash collection: it decides whether the
+            // Credit payment mode is offered at all and it is the ceiling a credit posting refuses
+            // to cross. An upline able to raise their own downline's limit would make it a
+            // formality, so it is Admin's alone - narrower than the controller it lives on, which
+            // every transacting role can reach for their own balance. (The endpoint also carries
+            // [JwtAuthorization(Admin)]; this is the same decision in the place that is audited.)
+            ["cashcollection.setlimit"] = TaxDocumentWrite,
+            ["cashcollection.clearlimit"] = TaxDocumentWrite,
+            // Recording and undoing a collection are self-service writes for the tier that is
+            // owed the money - the service then requires the caller to BE the direct upline (or
+            // admin) and to confirm with their MPIN. Stated explicitly because "Reverse" is not
+            // one of the verbs WriteVerb matches, so leaving it implicit meant it was governed by
+            // a regex rather than a decision.
+            ["cashcollection.add"] = Txn,
+            ["cashcollection.reverse"] = Txn,
+            ["cashcollection.statement"] = Txn,
+            // The distributor tier, who are owed the money — plus the accountant, who has to be
+            // able to read it. An unrecovered receivable is a figure in the books before it is a
+            // collection problem, and the Outstanding Report is where it is read; the accountant
+            // already reads the whole company's ledgers, so withholding this one list would only
+            // mean the receivable is the number they cannot tie out. They still cannot act on it:
+            // Add, Reverse, SetLimit and SendCollectionMessage are all granted separately above.
+            ["cashcollection.outstandingreport"] = DistAndAccounting,
+            ["cashcollection.sendcollectionmessage"] = Dist,
+
             // Fund: raising requests is retailer-and-up; moving money down is distributor-tier.
             ["fund.requestinsert"] = Txn,
             ["fund.reverserequest"] = Txn,
@@ -294,6 +400,12 @@ namespace FintechApp.StaticModels
             // an account without presenting a code. Admin/Support only, regardless of the
             // controller-level grant above (the controller re-checks this too).
             ["twofactor.clearforuser"] = Admin,
+
+            // The maintenance banner renders on every screen for every role, so reading the
+            // window's state has to be reachable by all of them. The controller itself stays
+            // unlisted, which keeps SelectPolicy and SavePolicy on the Admin-only default - a
+            // window any role could switch on would be a way to stop the whole network trading.
+            ["systemdown.status"] = AllAuth,
 
             // Users: self-service reads/profile for everyone; management stays Admin/Dist.
             ["users.selectprofile"] = AllAuth,
@@ -333,6 +445,40 @@ namespace FintechApp.StaticModels
             ["users.restore"] = Admin,
             ["users.selectdeletedusers"] = Admin,
 
+            // ── Onboarding by the distribution tier ────────────────────────────────────────
+            // Creating and editing a user in your OWN branch. Every one of these was unlisted,
+            // so deny-by-default made it Admin-only and a super-distributor or distributor
+            // opening Add User got "You don't have permission to perform this action." on submit
+            // — the screen, the role dropdown and the upline picker were all already wired for
+            // them. The server-side scoping these grants rely on is not new either:
+            //   Insert  — UserService.CreatableRoles refuses a role the caller's tier may not
+            //             create, and a non-admin creator's ParentID is forced into their own
+            //             branch (anything outside it is refused, not re-pointed).
+            //   Update /
+            //   SelectByID — both run IsWithinCallerScope first, so a downline caller can only
+            //             ever name themselves or someone beneath them.
+            // Insert/Update match WriteVerb, but an action-level entry is resolved before that
+            // rule, which is why they have to be stated here rather than added to
+            // SelfServiceWrite (that would open Activate/Deactivate/Delete as well).
+            ["users.insert"] = Dist,
+            ["users.update"] = Dist,
+            ["users.selectbyid"] = Dist,
+            // The inline "already registered" hint on the Add User form. Answers a strict
+            // yes/no for the one mobile/email being typed and returns no user data at all.
+            ["users.checkavailability"] = Dist,
+            // Texting a user their credentials again. Scoped to the caller's branch in the
+            // service, and it is the first thing an upline is asked for after onboarding.
+            ["users.sendpassword"] = Dist,
+
+            // The three pickers the Add User form renders besides the ones granted above: the
+            // commission-slab dropdown, the slab already mapped to the chosen upline (shown as
+            // "parent's slab" so the creator can see what they are working within), and the KYC
+            // document checklist. All three are reference reads; the write actions on those
+            // controllers stay Admin-only through WriteVerb.
+            ["slabs.getdropdown"] = Dist,
+            ["userslabmapping.getbyuserid"] = Dist,
+            ["verificationdocument.getall"] = Dist,
+
             // Add User shows the auto-generated User Code the moment a role is picked, so every
             // role that may create a user must be able to read the preview. Configuring the
             // formats (UserCode/GetAll, Save, Delete) stays Admin-only by deny-by-default.
@@ -342,6 +488,38 @@ namespace FintechApp.StaticModels
             // OWN assigned slab pays them. SlabDetail's CRUD actions stay Admin-only (the
             // controller is unlisted, so deny-by-default still applies to them).
             ["slabdetail.commissionstructure"] = Txn,
+
+            // ── Hierarchy commission-slab delegation ──────────────────────────────────────
+            // The distribution tier cutting its own rate cards out of the one it was given. This
+            // is the one place a downline role is granted writes on commission, so it is worth
+            // being explicit about why that is safe:
+            //
+            //   * every action resolves the caller's id and role from the SESSION, and a slab is
+            //     editable only when its OwnerUserID IS that caller — a role check alone would
+            //     not be enough, and is not what the service relies on;
+            //   * a figure is validated against the matching band of the caller's OWN assigned
+            //     card before it is written, per tier and on the row total, so nobody can hand
+            //     out more than they hold;
+            //   * amount ranges, commission types and the GST decision are not accepted from the
+            //     client at all — they are cloned from the parent card and re-checked;
+            //   * assignment is clipped to the caller's downline AND to the roles their tier may
+            //     assign to (SlabDelegationPolicy.AssignableTo).
+            //
+            // Granted to Dist rather than Txn deliberately: a retailer reads its rate through
+            // slabdetail.commissionstructure above and has nothing to delegate.
+            ["slabdelegation.myparentslab"] = Dist,
+            ["slabdelegation.myslabs"] = Dist,
+            ["slabdelegation.slabview"] = Dist,
+            ["slabdelegation.createslab"] = Dist,
+            ["slabdelegation.updaterow"] = Dist,
+            ["slabdelegation.createrow"] = Dist,
+            ["slabdelegation.deleterow"] = Dist,
+            ["slabdelegation.deleteslab"] = Dist,
+            ["slabdelegation.assignslab"] = Dist,
+            ["slabdelegation.assignments"] = Dist,
+            ["slabdelegation.unassignslab"] = Dist,
+            ["slabdelegation.fixtoparent"] = Dist,
+            ["slabdelegation.audit"] = Dist,
 
             // Alerts: reading the feed is everyone's (granted at controller level above), but
             // BROADCASTING is the platform operator's alone. An alert carries the operator's
@@ -402,6 +580,16 @@ namespace FintechApp.StaticModels
             // cannot be withdrawn - only credit-noted. That is not a reviewer's button.
             ["taxinvoice.generatetopups"] = TaxDocumentWrite,
             ["taxinvoice.generatecommission"] = TaxDocumentWrite,
+            // A whole month in one act, which is the same irreversible thing the two above do:
+            // it allocates invoice numbers that go into GSTR-1 and can only be credit-noted.
+            // Admin alone, like them — and NOT caught by the WriteVerb regex, which does not match
+            // "Generate", so stating it here is what keeps it off the accounting desk.
+            ["taxinvoice.generatemonth"] = TaxDocumentWrite,
+            // Withdraws numbers a customer may already hold, to re-issue the month. Narrower than
+            // narrow: Admin alone, like every other act that restates what the law was told.
+            ["taxinvoice.regroupmonth"] = TaxDocumentWrite,
+            // Withdrawing one document and handing its number back to the series: the same act.
+            ["taxinvoice.cancel"] = TaxDocumentWrite,
             ["taxinvoice.issueselfinvoice"] = TaxDocumentWrite,
 
             // A credit note reduces declared output tax. WindowAlerts stays open to the desk -
@@ -419,6 +607,81 @@ namespace FintechApp.StaticModels
             ["einvoice.enqueueperiod"] = Admin,
             ["einvoice.processqueue"] = Admin,
             ["exchangeregister.detectlegs"] = Admin,
+
+            // ── Phase 3 writes the WriteVerb regex does not catch ───────────────────────
+            // Operational (Admin + Support): recording a supplier bill, committing a match,
+            // (re)building the register, marking a supplier paid. None allocates a number of ours
+            // or changes declared tax on its own; each is idempotent or re-runnable.
+            ["purchase.capture"] = Admin,
+            ["purchaserecon.commit"] = Admin,
+            ["itc.build"] = Admin,
+            ["itc.markpaid"] = Admin,
+            // Changing declared INPUT tax - the mirror of issuing a document. Admin alone, the same
+            // line drawn for the sale side: taking a credit and giving one back both move the
+            // return, and when an auditor asks who did it the answer should be a very short list.
+            ["itc.claim"] = TaxDocumentWrite,
+            ["itc.reverse"] = TaxDocumentWrite,
+            // The GST Returns page's one button: store the 2B file, match it, and CLAIM the
+            // credit on what matched. It ends in itc.claim, so it carries itc.claim's rule and
+            // not the wider Admin + Support that "Import" would otherwise fall to.
+            ["gstreturn.import2b"] = TaxDocumentWrite,
+
+            // ── Phase 4 ledger writes the WriteVerb regex does not catch ────────────────
+            // Operational (Admin + Support): recording an event to post, and working the outbox.
+            ["acctledger.enqueue"] = Admin,
+            ["acctledger.processoutbox"] = Admin,
+            // Writing the books directly, and sealing / unsealing a filed month. Admin alone - the
+            // same weight as issuing a document, and a period lock is the control that makes a filed
+            // month unchangeable, so reopening one is not a reviewer's button.
+            ["acctledger.postjournal"] = TaxDocumentWrite,
+            ["acctledger.reverse"] = TaxDocumentWrite,
+            ["acctperiod.lock"] = TaxDocumentWrite,
+            ["acctperiod.unlock"] = TaxDocumentWrite,
+
+            // ── Phase 5 bank-recon writes the WriteVerb regex does not catch ────────────
+            // Committing a match marks a ledger line reconciled for every FUTURE statement too, so
+            // a wrong one hides a real difference months later. Operational (Admin + Support) —
+            // it allocates no number and can be undone by Unmatch, which is held to the same bar.
+            ["bankrecon.commit"] = Admin,
+            ["bankrecon.match"] = Admin,
+            ["bankrecon.unmatch"] = Admin,
+
+            // ── The party's place of supply ─────────────────────────────────────────────
+            // It decides CGST+SGST against IGST on every document stamped afterwards, so writing
+            // it is a document-weight act, not a reviewer's button.
+            ["partystate.backfill"] = TaxDocumentWrite,
+            ["partystate.setplaceofsupply"] = TaxDocumentWrite,
+            // Cancelling real documents, even unfiled ones.
+            ["partystate.cancelforregeneration"] = TaxDocumentWrite,
+
+            // ── Commission tax treatment ────────────────────────────────────────────────
+            // Save changes how every later commission splits; Delete can remove the row a whole
+            // provider was being taxed under. Both carry document weight.
+            ["commissiontax.save"] = TaxDocumentWrite,
+            ["commissiontax.delete"] = TaxDocumentWrite,
+
+            // ── TDS ─────────────────────────────────────────────────────────────────────
+            // Writing a rule changes what every later commission loses, and the desk is meant to
+            // do it - so Save and Delete are granted to Accounting rather than pinned to Admin.
+            ["tdssetting.save"] = Accounting,
+            ["tdssetting.delete"] = Accounting,
+            // Recording a deposit is a bookkeeping fact; the desk records it.
+            ["tdsreport.markdeposited"] = Accounting,
+            // Giving withheld TDS back to a party credits a real wallet. Admin alone, and the
+            // verb would not be caught by the WriteVerb regex on its own.
+            ["tdsreport.settletowallet"] = TaxDocumentWrite,
+
+            // ── Bank reconciliation setup ───────────────────────────────────────────────
+            // A statement format and a category rule decide how money is READ on every statement
+            // imported afterwards, so changing them is the operator's own act, not the desk's.
+            ["banksetup.syncbanks"] = Admin,
+            ["banksetup.saveformat"] = Admin,
+            ["banksetup.deleteformat"] = Admin,
+            ["banksetup.saverule"] = Admin,
+            ["banksetup.deleterule"] = Admin,
+            ["banksetup.reclassify"] = Admin,
+            // Deciding what ONE line is, on the register, is the desk's own work.
+            ["banksetup.setlinecategory"] = Accounting,
         };
 
         /// <summary>Resolve the allowed role ids for a controller/action from the static defaults.</summary>

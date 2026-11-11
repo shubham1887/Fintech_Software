@@ -21,24 +21,38 @@ import { ApiDocsScreen } from './ApiDocsScreen';
 import { OperatorsScreen } from './OperatorsScreen';
 import { SlabCommissionScreen } from './SlabCommissionScreen';
 import { FundRequestsScreen } from './FundRequestsScreen';
+import { OutstandingScreen } from './OutstandingScreen';
+import { OutstandingReportScreen } from './OutstandingReportScreen';
+import { MenuVisibilityScreen } from './MenuVisibilityScreen';
 import { AepsScreen } from './AepsScreen';
 import { ProviderPerformanceScreen } from './ProviderPerformanceScreen';
 import { UISettingsScreen } from './UISettingsScreen';
 import { WebsiteBuilderScreen } from './WebsiteBuilderScreen';
 import { VirtualBalanceScreen } from './VirtualBalanceScreen';
 import { SlabAssignScreen } from './SlabAssignScreen';
+import { SlabDelegationScreen } from './SlabDelegationScreen';
+import { SlabAuditScreen } from './SlabAuditScreen';
 import { ProviderHubScreen } from './ProviderHubScreen';
 import { ProviderSettingScreen } from './ProviderSettingScreen';
 import { ProviderSequenceScreen } from './ProviderSequenceScreen';
 import { UserwiseSequenceScreen } from './UserwiseSequenceScreen';
 import { ServiceCatalogScreen } from './ServiceCatalogScreen';
 import { ModeMasterScreen } from './ModeMasterScreen';
-import { PendingRechargeScreen } from './PendingRechargeScreen';
+import { PendingRechargeScreen, PendingDmtScreen } from './PendingQueueScreens';
+import { PendingQueueHubScreen } from './PendingQueueHubScreen';
+import { BulkActionScreen } from './BulkActionScreen';
 import { MessageSettingScreen } from './MessageSettingScreen';
 import { MessagingSetupScreen } from './MessagingSetupScreen';
 import { ComplaintsScreen } from './ComplaintsScreen';
+import { SecurityScreen } from './SecurityScreen';
+import { TicketsScreen } from './TicketsScreen';
+import { NotificationsScreen } from './NotificationsScreen';
+import { AlertComposerScreen } from './AlertComposerScreen';
 import { ProviderLogScreen } from './ProviderLogScreen';
+import { MessageRulesScreen } from './MessageRulesScreen';
 import { SmsLogScreen } from './SmsLogScreen';
+import { ApiUserLogScreen } from './ApiUserLogScreen';
+import { FundReverseScreen } from './FundReverseScreen';
 import { ProviderDaybookScreen } from './ProviderDaybookScreen';
 import { AdminAccountingScreen } from './AdminAccountingScreen';
 import { TaxSimulatorScreen } from './TaxSimulatorScreen';
@@ -46,6 +60,26 @@ import { AdminLedgerScreen } from './AdminLedgerScreen';
 import { PurchaseReportScreen } from './PurchaseReportScreen';
 import { DMTSettingScreen } from './DMTSettingScreen';
 import { KeySettingScreen } from './KeySettingScreen';
+import { InvoiceSettingsScreen } from './InvoiceSettingsScreen';
+import { TaxInvoicesScreen } from './TaxInvoicesScreen';
+import { ExchangeRegisterScreen } from './ExchangeRegisterScreen';
+import { EInvoiceQueueScreen } from './EInvoiceQueueScreen';
+import { CreditNoteAlertsScreen } from './CreditNoteAlertsScreen';
+import { PurchaseRegisterScreen } from './PurchaseRegisterScreen';
+import { InvoicesScreen } from './InvoicesScreen';
+import { GstMonthScreen } from './GstMonthScreen';
+import { Gstr2bReconScreen } from './Gstr2bReconScreen';
+import { ItcRegisterScreen } from './ItcRegisterScreen';
+import { ChartOfAccountsScreen } from './ChartOfAccountsScreen';
+import { LedgerVouchersScreen } from './LedgerVouchersScreen';
+import { TrialBalanceScreen } from './TrialBalanceScreen';
+import { BankReconScreen } from './BankReconScreen';
+import { PartyStateScreen } from './PartyStateScreen';
+import { CommissionTaxScreen } from './CommissionTaxScreen';
+import { TdsSettingScreen } from './TdsSettingScreen';
+import { TdsReportScreen } from './TdsReportScreen';
+import { GstCollectionScreen } from './GstCollectionScreen';
+import { BankSetupScreen } from './BankSetupScreen';
 import { RegistrationApprovalsScreen } from './RegistrationApprovalsScreen';
 import { InactiveUsersScreen } from './InactiveUsersScreen';
 import { DeletedUsersScreen } from './DeletedUsersScreen';
@@ -68,22 +102,40 @@ const CUSTOM_SCREENS: Record<string, ComponentType<CustomScreenProps>> = {
   operators: OperatorsScreen,
   slabCommission: SlabCommissionScreen,
   fundRequests: FundRequestsScreen,
+  fundReverse: FundReverseScreen,
+  apiUserLog: ApiUserLogScreen,
+  outstanding: OutstandingScreen,
+  outstandingReport: OutstandingReportScreen,
+  menuVisibility: MenuVisibilityScreen,
   aeps: AepsScreen,
   providerPerformance: ProviderPerformanceScreen,
   uiSettings: UISettingsScreen,
   websiteBuilder: WebsiteBuilderScreen,
   virtualBalance: VirtualBalanceScreen,
   slabAssign: SlabAssignScreen,
+  slabDelegation: SlabDelegationScreen,
+  slabAudit: SlabAuditScreen,
   providerHub: ProviderHubScreen,
   providerSetting: ProviderSettingScreen,
   providerSequence: ProviderSequenceScreen,
   userwiseSequence: UserwiseSequenceScreen,
   serviceCatalog: ServiceCatalogScreen,
   pendingRecharge: PendingRechargeScreen,
+  pendingDmt: PendingDmtScreen,
+  // Every queue the install actually has, discovered from the service catalogue rather than
+  // written one screen at a time. Recharge and DMT keep their own entries above because each has
+  // a capability of its own, and both are reachable from here too.
+  pendingQueues: PendingQueueHubScreen,
+  bulkAction: BulkActionScreen,
   messageSetting: MessageSettingScreen,
   messagingSetup: MessagingSetupScreen,
   complaints: ComplaintsScreen,
+  security: SecurityScreen,
+  tickets: TicketsScreen,
+  notifications: NotificationsScreen,
+  alertComposer: AlertComposerScreen,
   providerLog: ProviderLogScreen,
+  messageRules: MessageRulesScreen,
   smsLog: SmsLogScreen,
   providerDaybook: ProviderDaybookScreen,
   adminAccounting: AdminAccountingScreen,
@@ -92,6 +144,26 @@ const CUSTOM_SCREENS: Record<string, ComponentType<CustomScreenProps>> = {
   purchaseReport: PurchaseReportScreen,
   dmtSetting: DMTSettingScreen,
   keySettings: KeySettingScreen,
+  invoiceSettings: InvoiceSettingsScreen,
+  taxInvoices: TaxInvoicesScreen,
+  exchangeRegister: ExchangeRegisterScreen,
+  einvoiceQueue: EInvoiceQueueScreen,
+  creditNoteAlerts: CreditNoteAlertsScreen,
+  purchaseRegister: PurchaseRegisterScreen,
+  invoices: InvoicesScreen,
+  gstr2bRecon: Gstr2bReconScreen,
+  itcRegister: ItcRegisterScreen,
+  chartOfAccounts: ChartOfAccountsScreen,
+  ledgerVouchers: LedgerVouchersScreen,
+  trialBalance: TrialBalanceScreen,
+  bankRecon: BankReconScreen,
+  gstReturns: GstMonthScreen,
+  partyState: PartyStateScreen,
+  commissionTax: CommissionTaxScreen,
+  tdsSetting: TdsSettingScreen,
+  tdsMonthlyReport: TdsReportScreen,
+  gstCollection: GstCollectionScreen,
+  bankSetup: BankSetupScreen,
   registrationApprovals: RegistrationApprovalsScreen,
   inactiveUsers: InactiveUsersScreen,
   deletedUsers: DeletedUsersScreen,

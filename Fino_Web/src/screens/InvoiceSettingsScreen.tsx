@@ -19,6 +19,7 @@ import { Select } from '@/components/ui/Select';
 import { Spinner } from '@/components/ui/Spinner';
 import { ImageField } from '@/components/ui/DynamicForm';
 import { pickIcon } from '@/components/layout/iconMap';
+import { INVOICE_TEMPLATES, INVOICE_TEMPLATE_KEY, useInvoiceTemplate } from '@/lib/invoiceTemplate';
 import type { CustomScreenProps } from './registry';
 
 type Row = Record<string, unknown>;
@@ -518,6 +519,8 @@ export function InvoiceSettingsScreen({ def }: CustomScreenProps) {
         </Card>
       </div>
 
+      <InvoiceTemplateCard canWrite={canWrite} />
+
       {/* ── The step after this one ───────────────────────────────────────────────── */}
       <Card>
         <CardHeader>
@@ -569,5 +572,69 @@ export function InvoiceSettingsScreen({ def }: CustomScreenProps) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Which layout the bills print in. One SettingMaster row (`InvoiceTemplate`) rather than a new
+ * column on InvoiceSettings — see lib/invoiceTemplate.ts for why — read by the Invoices screen
+ * each time a bill is opened, so a change here shows on the very next print.
+ */
+function InvoiceTemplateCard({ canWrite }: { canWrite: boolean }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const { template, settingId, loading } = useInvoiceTemplate();
+
+  const save = useMutation({
+    mutationFn: (value: string) => {
+      const base = { Key: INVOICE_TEMPLATE_KEY, Value: value, IsOn: true, IsSecure: false, IsPassword: false, Description: 'Invoice print layout (Classic / Modern / Compact / Letterhead)' };
+      return settingId > 0
+        ? apiPost('SettingMaster/Update', { SettingMasterID: settingId, ...base })
+        : apiPost('SettingMaster/Create', base);
+    },
+    onSuccess: (res, value) => {
+      if (!res.ok) { toast.error(res.message || 'The template could not be saved.'); return; }
+      toast.success(`Invoices will print in the ${value} layout.`);
+      qc.invalidateQueries({ queryKey: ['crud', 'SettingMaster/GetAll'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Invoice template</CardTitle>
+        <span className="text-xs text-slate-400">How the bills on the Invoices screen print</span>
+      </CardHeader>
+      <CardBody>
+        {loading ? (
+          <Spinner className="size-5 text-brand-500" />
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {INVOICE_TEMPLATES.map((t) => {
+              const active = t.value === template;
+              return (
+                <button
+                  key={t.value}
+                  type="button"
+                  disabled={!canWrite || save.isPending}
+                  onClick={() => save.mutate(t.value)}
+                  className={`rounded-xl border p-3 text-left transition ${active ? 'border-brand-500 bg-brand-50/60 ring-1 ring-brand-500/30' : 'border-slate-200 hover:border-slate-300'} disabled:cursor-default`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-800">{t.label}</span>
+                    {active && <span className="rounded-full bg-brand-600 px-2 py-0.5 text-[11px] font-medium text-white">In use</span>}
+                  </div>
+                  <p className="mt-1 text-xs leading-snug text-slate-500">{t.description}</p>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <p className="mt-3 text-xs text-slate-400">
+          The company logo above prints on the Classic, Modern and Compact layouts; Letterhead leaves the top blank for pre-printed paper.
+        </p>
+      </CardBody>
+    </Card>
   );
 }

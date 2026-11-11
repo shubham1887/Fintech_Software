@@ -1,5 +1,6 @@
 using FintechApp.Authorization;
 using FintechApp.Interfaces.Services;
+using FintechApp.Jobs;
 using FintechApp.Requests;
 using FintechApp.Requests.TaxEngine;
 using FintechApp.Requests.TaxInvoice;
@@ -21,9 +22,14 @@ namespace FintechApp.Controllers
     public class TaxInvoiceController : TaxControllerBase
     {
         private readonly ITaxInvoiceService _invoices;
+        private readonly MonthlyInvoiceJob _monthly;
 
-        public TaxInvoiceController(ITaxInvoiceService invoices, IConfiguration configuration)
-            : base(configuration) => _invoices = invoices;
+        public TaxInvoiceController(ITaxInvoiceService invoices, MonthlyInvoiceJob monthly, IConfiguration configuration)
+            : base(configuration)
+        {
+            _invoices = invoices;
+            _monthly = monthly;
+        }
 
         [HttpPost("Select")]
         public Task<APIResponse> Select([FromForm] APIRequest apiRequest) =>
@@ -62,7 +68,45 @@ namespace FintechApp.Controllers
                 return Ok(await _invoices.GenerateCommissionInvoices(request));
             });
 
+        /// <summary>
+        /// Issue (or preview) a whole month's sale documents in one act — commission and charge
+        /// plus the gross-basis wallet top-ups.
+        ///
+        /// The same method the month-end schedule runs, deliberately: the refusal when a party has
+        /// no place of supply has to behave identically whether a person or a cron started it, and
+        /// two copies of that rule would eventually disagree. Pass DryRun to see the figures and
+        /// the blockers without writing anything.
+        /// </summary>
+        [HttpPost("GenerateMonth")]
+        public Task<APIResponse> GenerateMonth([FromForm] APIRequest apiRequest) =>
+            Handle<MonthlyInvoiceRequest>(apiRequest, async (request, keyData) =>
+                Ok(await _monthly.Generate(request.PeriodKey, request.DryRun, keyData.UserID,
+                                           request.Consolidation, request.SaveAsDefault)));
+
+        /// <summary>
+        /// Re-issue a month under a different grouping: cancel its sale documents, generate again.
+        ///
+        /// The sharpest action on this controller — it withdraws numbers a customer may already
+        /// hold — so it refuses a filed period outright and supports DryRun, which reports how
+        /// many documents would be cancelled before any of them are.
+        /// </summary>
+        [HttpPost("RegroupMonth")]
+        public Task<APIResponse> RegroupMonth([FromForm] APIRequest apiRequest) =>
+            Handle<MonthlyInvoiceRequest>(apiRequest, async (request, keyData) =>
+                Ok(await _monthly.Regroup(request.PeriodKey, request.Consolidation, request.DryRun,
+                                          keyData.UserID, request.SaveAsDefault)));
+
         /// <summary>Reverse charge: we owe the tax on somebody else's supply, so we document it.</summary>
+        /// <summary>Withdraw an issued sale document (no IRN, no credit note). Admin only — see ApiAccessPolicy.</summary>
+        [HttpPost("Cancel")]
+        public Task<APIResponse> Cancel([FromForm] APIRequest apiRequest) =>
+            Handle<CancelDocumentRequest>(apiRequest, async (request, keyData) =>
+            {
+                request.CreatedByUserID = keyData.UserID;
+                var (ok, message) = await _invoices.CancelDocument(request);
+                return ok ? Ok(new { Cancelled = true, Message = message }) : Refuse(message);
+            });
+
         [HttpPost("IssueSelfInvoice")]
         public Task<APIResponse> IssueSelfInvoice([FromForm] APIRequest apiRequest) =>
             Handle<SelfInvoiceRequest>(apiRequest, async (request, keyData) =>

@@ -38,6 +38,11 @@ namespace FintechApp.Responses.TransactionMaster
         public decimal NetCommission { get; set; }
         public decimal Charge { get; set; }
         public decimal AdminProfit { get; set; }
+        // What the PROVIDER said it held before and after this transaction. Stored on every
+        // dispatch but never carried into a report, so the "API Cl Bal" column on the recharge
+        // and BBPS reports — the figure an operator reconciles a provider against — was blank.
+        public decimal ProviderOpeningBalance { get; set; }
+        public decimal ProviderClosingBalance { get; set; }
         public string DMT_SenderID { get; set; } = string.Empty;
         public string DMT_SenderName { get; set; } = string.Empty;
         public string DMT_SenderNumber { get; set; } = string.Empty;
@@ -80,6 +85,9 @@ namespace FintechApp.Responses.TransactionMaster
         public string ProviderName { get; set; } = string.Empty;
         public string DistributerName { get; set; } = string.Empty;
         public string SuperDistributerName { get; set; } = string.Empty;
+        /// <summary>The tier's mobile number beside its name; blank when the tier is the operator ("Admin").</summary>
+        public string DistributerMobile { get; set; } = string.Empty;
+        public string SuperDistributerMobile { get; set; } = string.Empty;
 
         // Human settlement remark (transaction Description) plus, when a complaint exists for this
         // transaction, the complaint remark appended — the report "Remark" column binds to this
