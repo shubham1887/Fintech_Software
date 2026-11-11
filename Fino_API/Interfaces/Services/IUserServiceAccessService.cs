@@ -16,6 +16,16 @@ namespace FintechApp.Interfaces.Services
         /// can clear it themselves by completing their KYC.
         /// </summary>
         KycLocked = 3,
+        /// <summary>
+        /// Granted and otherwise usable, but the platform is inside its scheduled system-down
+        /// window (Key Settings "System Down") and this service is not one of the ones the
+        /// operator allowed to keep running.
+        ///
+        /// Distinct from <see cref="Locked"/> on purpose: nothing is wrong with this user or this
+        /// service, the whole platform is closed for a stated period, and that is what the user
+        /// needs to be told. "Locked by your service provider" would send them to support.
+        /// </summary>
+        SystemDown = 4,
     }
 
     /// <summary>
@@ -34,6 +44,12 @@ namespace FintechApp.Interfaces.Services
 
         /// <summary>Services the admin allows while KYC is still pending.</summary>
         public HashSet<int> KycExemptServiceIDs { get; init; } = new();
+
+        /// <summary>
+        /// The scheduled maintenance window as it stands for this request. Open (blocking
+        /// nothing) outside the window and for roles that do not transact.
+        /// </summary>
+        public SystemDownState SystemDown { get; init; } = SystemDownState.Open;
 
         /// <summary>Nothing to check — the fully unrestricted context (admin / support).</summary>
         public static ServiceAccessContext Unrestricted => new();

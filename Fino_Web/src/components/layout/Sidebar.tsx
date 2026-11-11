@@ -4,11 +4,10 @@ import { useQuery } from '@tanstack/react-query';
 import { ChevronRight } from 'lucide-react';
 import { getMenu, type MenuNode } from '@/api/menu.api';
 import { useSubscriptionStatus } from '@/features/subscription/useSubscriptionStatus';
-import { useBrand } from '@/theme/BrandProvider';
 import { cn } from '@/lib/cn';
 import { pickIcon } from './iconMap';
-import { resolveHref } from './resolveRoute';
-import { BrandGlyph } from '@/components/ui/BrandMark';
+import { resolveHref, isActiveHref } from './resolveRoute';
+import { BrandLockup } from '@/components/ui/BrandMark';
 
 /** True when this node (or any descendant) maps to the currently-open route. */
 function containsActivePath(node: MenuNode, pathname: string): boolean {
@@ -44,7 +43,6 @@ function pruneSubscription(nodes: MenuNode[], enabled: boolean): MenuNode[] {
 }
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const { appName, tagline } = useBrand();
   const { pathname } = useLocation();
   const { data, isLoading, isError } = useQuery({
     queryKey: ['menu'],
@@ -70,12 +68,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <aside className="flex h-full w-72 flex-col text-ink-200" style={{ backgroundColor: 'var(--ui-navbar)' }}>
-      <div className="flex h-16 shrink-0 items-center gap-2.5 border-b border-white/5 px-5">
-        <BrandGlyph className="size-9 shrink-0 rounded-xl" />
-        <div className="leading-tight">
-          <p className="font-display text-base font-bold text-white">{appName}</p>
-          <p className="text-[11px] uppercase tracking-widest text-ink-400">{tagline}</p>
-        </div>
+      {/* 76px, matching the app bar on the right. On a 3.5:1 wordmark the twelve pixels bought
+          over a 64px bar are forty-odd pixels of width, which is what fills the plate. */}
+      <div className="flex h-[4.75rem] shrink-0 items-center border-b border-white/5 px-3">
+        <BrandLockup tone="dark" size="md" fill />
       </div>
 
       <nav className="no-scrollbar flex-1 space-y-1 overflow-y-auto px-3 py-4">
@@ -121,7 +117,7 @@ function MenuEntry({
   openKey?: string | null;
   setOpenKey?: (key: string | null) => void;
 }) {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const hasChildren = Array.isArray(node.children) && node.children.length > 0;
   const isActiveGroup = hasChildren && containsActivePath(node, pathname);
 
@@ -168,19 +164,22 @@ function MenuEntry({
     );
   }
 
+  // Active state is computed from the full href (query string included) instead of taken
+  // from NavLink's own `isActive`, which ignores the query — see isActiveHref.
+  const href = resolveHref(node);
+  const active = isActiveHref(href, pathname, search);
+
   return (
     <NavLink
-      to={resolveHref(node)}
+      to={href}
       onClick={onNavigate}
-      className={({ isActive }) =>
-        cn(
-          'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors',
-          depth > 0 && 'text-[13px]',
-          isActive
-            ? 'bg-brand-600 font-medium text-white shadow-sm'
-            : 'text-ink-200 hover:bg-white/5 hover:text-white',
-        )
-      }
+      className={cn(
+        'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors',
+        depth > 0 && 'text-[13px]',
+        active
+          ? 'bg-brand-600 font-medium text-white shadow-sm'
+          : 'text-ink-200 hover:bg-white/5 hover:text-white',
+      )}
     >
       <Icon className={cn('shrink-0', depth === 0 ? 'size-4' : 'size-3.5', 'opacity-90')} />
       <span className="truncate">{node.name}</span>

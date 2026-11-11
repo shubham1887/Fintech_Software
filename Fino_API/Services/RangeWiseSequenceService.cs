@@ -35,8 +35,24 @@ namespace FintechApp.Services
             return entity == null ? null : MapToResponse(entity);
         }
 
+        // Amount bands decide which provider a transfer is routed through. Two bands that overlap
+        // for the same operator make the routing ambiguous — whichever row the engine happens to
+        // read first wins — so an overlap is rejected at the point it is entered rather than
+        // discovered later as transfers going out through the wrong provider.
+        private async Task<string> ValidateRange(int operatorId, decimal from, decimal to, int ignoreId)
+        {
+            if (to <= from) return RangeWiseSequenceMessages.InvalidRange;
+            var existing = await _repository.GetByOperatorID(operatorId);
+            bool clashes = existing.Any(x =>
+                x.RangeWiseSequenceID != ignoreId && !x.IsDelete && from <= x.ToAmount && to >= x.FromAmount);
+            return clashes ? RangeWiseSequenceMessages.OverlappingRange : StatusType.Ok;
+        }
+
         public async Task<string> Create(CreateRangeWiseSequenceRequest request)
         {
+            string invalid = await ValidateRange(request.OperatorID, request.FromAmount, request.ToAmount, 0);
+            if (invalid != StatusType.Ok) return invalid;
+
             var entity = new RangeWiseSequence
             {
                 ProviderID = request.ProviderID,
@@ -57,6 +73,10 @@ namespace FintechApp.Services
         {
             var entity = await _repository.GetByID(request.RangeWiseSequenceID);
             if (entity == null) return RangeWiseSequenceMessages.NotFound;
+
+            string invalid = await ValidateRange(request.OperatorID, request.FromAmount, request.ToAmount, request.RangeWiseSequenceID);
+            if (invalid != StatusType.Ok) return invalid;
+
             entity.ProviderID = request.ProviderID;
             entity.ServiceID = request.ServiceID;
             entity.OperatorID = request.OperatorID;
@@ -78,8 +98,11 @@ namespace FintechApp.Services
         {
             RangeWiseSequenceID = e.RangeWiseSequenceID,
             ProviderID = e.ProviderID,
+            ProviderName = e.ProviderMaster?.ProviderName ?? string.Empty,
             ServiceID = e.ServiceID,
+            ServiceName = e.ServiceMaster?.Name ?? string.Empty,
             OperatorID = e.OperatorID,
+            OperatorName = e.OperatorMaster?.OperatorName ?? string.Empty,
             FromAmount = e.FromAmount,
             ToAmount = e.ToAmount,
             IsDelete = e.IsDelete,

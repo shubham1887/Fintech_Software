@@ -7,10 +7,11 @@ import {
 } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
 import { inr, dateTime, apiDate } from '@/lib/format';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvExport } from '@/lib/exportAll';
 import { getField } from '@/lib/row';
 import { cn } from '@/lib/cn';
 import { useBrand } from '@/theme/BrandProvider';
+import { StatRow } from '@/components/report/StatRow';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardBody } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -60,10 +61,16 @@ interface LedgerData {
   count: number;
 }
 
-async function fetchLedger(f: Filters): Promise<LedgerData> {
+/**
+ * One window of the statement. The screen reads a window it can page through in the browser; an
+ * export asks for every row the filters matched (`IsExcelDownload`, which the service honours by
+ * skipping its own paging) rather than for the window on screen.
+ */
+async function fetchLedger(f: Filters, skip = 0, take = FETCH_CAP, forExport = false): Promise<LedgerData> {
   const res = await apiPost<unknown>('TransactionDetails/SelectAdminAccounting', {
-    TakeCount: FETCH_CAP,
-    SkipCount: 0,
+    TakeCount: take,
+    SkipCount: skip,
+    IsExcelDownload: forExport,
     FromDate: f.fromDate,
     ToDate: f.toDate,
     AmountCreditDebit: f.side,
@@ -93,28 +100,6 @@ interface Totals {
 }
 
 /** One KPI in the summary strip — label, value, an accent icon and a subtle tone. */
-function Kpi({
-  label, value, icon, tone = 'text-slate-800', sub,
-}: {
-  label: string;
-  value: string;
-  icon: React.ReactNode;
-  tone?: string;
-  sub?: string;
-}) {
-  return (
-    <div className="flex items-start gap-3 px-4 py-3.5">
-      <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-slate-50 text-slate-400 ring-1 ring-inset ring-slate-200/70">
-        {icon}
-      </div>
-      <div className="min-w-0">
-        <div className="truncate text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
-        <div className={cn('mt-0.5 font-display text-lg font-bold tabular-nums', tone)}>{value}</div>
-        {sub && <div className="text-[11px] text-slate-400">{sub}</div>}
-      </div>
-    </div>
-  );
-}
 
 /**
  * Admin Ledger — the company's own account statement rendered as a true double-entry ledger:
@@ -129,6 +114,7 @@ export function AdminLedgerScreen({ def }: CustomScreenProps) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [detail, setDetail] = useState<Row | null>(null);
+  const { exporting, runExport } = useCsvExport();
   const upd = (patch: Partial<Filters>) => setDraft((d) => ({ ...d, ...patch }));
 
   const { data, isFetching, refetch } = useQuery({
@@ -196,7 +182,18 @@ export function AdminLedgerScreen({ def }: CustomScreenProps) {
               <Printer className="size-4" />
               Print
             </Button>
-            <Button variant="outline" size="sm" onClick={() => exportToCsv(rows, def.title)} disabled={rows.length === 0}>
+            <Button
+              variant="outline"
+              size="sm"
+              loading={exporting}
+              disabled={rows.length === 0}
+              // The whole statement for these filters, not the window the screen is paging through.
+              onClick={() => runExport({
+                filename: def.title,
+                onScreen: rows,
+                fetchAll: (skip, take) => fetchLedger(applied, skip, take, true),
+              })}
+            >
               <Download className="size-4" />
               Export
             </Button>
@@ -291,19 +288,26 @@ export function AdminLedgerScreen({ def }: CustomScreenProps) {
         </CardBody>
       </Card>
 
-      {/* Period summary strip. */}
-      <div className="mb-4 grid grid-cols-1 divide-y divide-slate-200/70 overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card sm:grid-cols-2 sm:divide-y-0 lg:grid-cols-4 [&>*]:border-slate-200/70 sm:[&>*:nth-child(n+3)]:border-t lg:[&>*:nth-child(n+3)]:border-t-0 sm:[&>*:nth-child(even)]:border-l lg:[&>*:not(:first-child)]:border-l">
-        <Kpi label="Opening Balance" value={inr(totals.opening)} icon={<Wallet className="size-4" />} sub="Start of period" />
-        <Kpi label="Total Credit" value={inr(totals.credit)} tone="text-success-600" icon={<ArrowDownLeft className="size-4" />} sub={`${rows.filter((r) => sideOf(r) === 'C').length} entries`} />
-        <Kpi label="Total Debit" value={inr(totals.debit)} tone="text-danger-600" icon={<ArrowUpRight className="size-4" />} sub={`${rows.filter((r) => sideOf(r) === 'D').length} entries`} />
-        <Kpi label="Closing Balance" value={inr(totals.closing)} icon={<Scale className="size-4" />} sub="End of period" />
-      </div>
-      <div className="mb-4 grid grid-cols-2 divide-x divide-slate-200/70 overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card lg:grid-cols-4">
-        <Kpi label="Net Movement" value={inr(net)} tone={net < 0 ? 'text-danger-600' : 'text-success-600'} icon={<TrendingUp className="size-4" />} sub="Credit − Debit" />
-        <Kpi label="Commission" value={inr(totals.commission)} tone="text-success-600" icon={<TrendingUp className="size-4" />} sub="Net of TDS" />
-        <Kpi label="GST" value={inr(totals.gst)} icon={<TrendingUp className="size-4" />} />
-        <Kpi label="TDS" value={inr(totals.tds)} icon={<TrendingUp className="size-4" />} />
-      </div>
+      {/* Period summary — the four bounding figures, then the derived ones. Both compact bars:
+          this is context for the ledger below, and it used to cost two card strips of height. */}
+      <StatRow
+        columns={4}
+        items={[
+          { label: 'Opening Balance', value: inr(totals.opening), icon: <Wallet />, sub: 'Start of period' },
+          { label: 'Total Credit', value: inr(totals.credit), tone: 'text-success-600', icon: <ArrowDownLeft />, sub: `${rows.filter((r) => sideOf(r) === 'C').length} entries` },
+          { label: 'Total Debit', value: inr(totals.debit), tone: 'text-danger-600', icon: <ArrowUpRight />, sub: `${rows.filter((r) => sideOf(r) === 'D').length} entries` },
+          { label: 'Closing Balance', value: inr(totals.closing), icon: <Scale />, sub: 'End of period' },
+        ]}
+      />
+      <StatRow
+        columns={4}
+        items={[
+          { label: 'Net Movement', value: inr(net), tone: net < 0 ? 'text-danger-600' : 'text-success-600', icon: <TrendingUp />, sub: 'Credit − Debit' },
+          { label: 'Commission', value: inr(totals.commission), tone: 'text-success-600', icon: <TrendingUp />, sub: 'Net of TDS' },
+          { label: 'GST', value: inr(totals.gst), icon: <TrendingUp /> },
+          { label: 'TDS', value: inr(totals.tds), icon: <TrendingUp /> },
+        ]}
+      />
 
       {truncated && (
         <div className="mb-4 rounded-card border border-warning-500/20 bg-warning-50 px-4 py-3 text-sm text-warning-600">

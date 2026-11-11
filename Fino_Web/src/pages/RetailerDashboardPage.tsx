@@ -2,57 +2,28 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  ArrowLeftRight, Banknote, CreditCard, Droplet, Fingerprint, Landmark, PlusCircle,
-  ReceiptText, RefreshCw, Smartphone, Tv, Wallet, Wifi, Zap, Car,
+  PlusCircle, RefreshCw, ArrowLeftRight,
   TrendingUp, TrendingDown, BadgeIndianRupee, ArrowDownToLine, ChevronRight, AlertTriangle,
   Search, BookOpenText, ScrollText, History, KeyRound, FileText, Lock, type LucideIcon,
 } from 'lucide-react';
-import { getMyWallets } from '@/api/wallet.api';
+import { useLiveWallets } from '@/features/live/useLiveSummary';
+import { useOutstandingPosition } from '@/features/live/useOutstandingPosition';
 import { getDashboard, getTodaySummary } from '@/api/dashboard.api';
-import { fetchCatalog, imageUrl, type CatalogService } from '@/api/catalog.api';
+import { fetchCatalog, imageUrl, orderedServices } from '@/api/catalog.api';
 import { useAuth } from '@/features/auth/AuthContext';
 import { apiDate, inr } from '@/lib/format';
-import { UserTypeCode } from '@/lib/roles';
+import { isRetailer, UserTypeCode } from '@/lib/roles';
 import { cn } from '@/lib/cn';
+import { lockMessage, serviceHref, serviceLook } from '@/lib/serviceTiles';
+import { QuickServices } from '@/components/dashboard/QuickServices';
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 
-// Keyword → icon + colour + destination for catalog services. First match wins; the icon is
-// only the fallback when the admin hasn't uploaded a service image yet.
-const SERVICE_LOOKS: Array<{ match: RegExp; icon: LucideIcon; tone: string; to?: string }> = [
-  { match: /aeps/i, icon: Fingerprint, tone: 'bg-rose-50 text-rose-600', to: '/s/AEPSIndex' },
-  { match: /micro\s*atm|matm/i, icon: Banknote, tone: 'bg-lime-50 text-lime-600', to: '/s/AEPSIndex' },
-  { match: /money transfer|dmt/i, icon: ArrowLeftRight, tone: 'bg-emerald-50 text-emerald-600', to: '/s/DMTTransaction' },
-  { match: /payout|settlement/i, icon: Landmark, tone: 'bg-indigo-50 text-indigo-600', to: '/s/PayoutV1' },
-  { match: /prepaid/i, icon: Smartphone, tone: 'bg-blue-50 text-blue-600' },
-  { match: /postpaid/i, icon: ReceiptText, tone: 'bg-cyan-50 text-cyan-600' },
-  { match: /dth|cable/i, icon: Tv, tone: 'bg-violet-50 text-violet-600' },
-  { match: /electricity/i, icon: Zap, tone: 'bg-amber-50 text-amber-600' },
-  { match: /water/i, icon: Droplet, tone: 'bg-sky-50 text-sky-600' },
-  { match: /broadband|landline|fiber/i, icon: Wifi, tone: 'bg-fuchsia-50 text-fuchsia-600' },
-  { match: /fastag/i, icon: Car, tone: 'bg-orange-50 text-orange-600' },
-  { match: /credit card/i, icon: CreditCard, tone: 'bg-purple-50 text-purple-600' },
-  { match: /gas|lpg/i, icon: Zap, tone: 'bg-red-50 text-red-600' },
-  { match: /insurance|loan|emi/i, icon: Landmark, tone: 'bg-teal-50 text-teal-600' },
-];
-const DEFAULT_LOOK = { icon: Wallet, tone: 'bg-slate-100 text-slate-600' };
-
-function serviceLook(name: string) {
-  return SERVICE_LOOKS.find((l) => l.match.test(name)) ?? DEFAULT_LOOK;
-}
-
-/** Where a catalog service tile navigates: special flows (AEPS/DMT/Payout) go to their own
- *  screens, everything else lands on the recharge/bill-pay flow pre-filtered to the service. */
-function serviceHref(svc: CatalogService): string {
-  const look = SERVICE_LOOKS.find((l) => l.match.test(svc.Name));
-  return (look && 'to' in look && look.to) || `/recharge?service=${encodeURIComponent(svc.Name)}`;
-}
 
 export default function RetailerDashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const userId = user?.UserID ?? 0;
   const roleId = user?.UserTypeID ?? 0;
   // Only true retail POS roles get the service grid; API users / others get a summary + links.
   const isRetail = roleId === UserTypeCode.Retailer || roleId === UserTypeCode.Client;
@@ -62,7 +33,10 @@ export default function RetailerDashboardPage() {
 
   // Auto-refresh so the dashboard stays in sync with the DB without a manual reload:
   // balances change on every transaction, so poll them and the day's summary periodically.
-  const wallets = useQuery({ queryKey: ['my-wallets', userId], queryFn: () => getMyWallets(userId), enabled: userId > 0, refetchInterval: 30_000, retry: 1 });
+  // Balances come from the shared live feed — same numbers the header shows, no second poll.
+  const wallets = useLiveWallets();
+  // A retailer has no downline, so only the payable half of the credit position applies.
+  const outstanding = useOutstandingPosition(false);
   const dash = useQuery({ queryKey: ['dashboard', user?.UserTypeID, dateStr], queryFn: () => getDashboard(user?.UserTypeID ?? 0, date), refetchInterval: 30_000 });
   const catalogQ = useQuery({ queryKey: ['service-catalog'], queryFn: fetchCatalog, staleTime: 300_000, enabled: isRetail });
   // Today's account movement — shown to non-retail roles (API user etc.) in place of the grid.
@@ -76,7 +50,11 @@ export default function RetailerDashboardPage() {
   // The live catalog drives the grid — only services the admin keeps active + displayed
   // arrive here (the backend filters for non-admin roles). One flat, admin-ordered grid.
   const [showAll, setShowAll] = useState(false);
-  const allServices = useMemo(() => (catalogQ.data ?? []).flatMap((c) => c.Services), [catalogQ.data]);
+  // One flat grid in the ADMIN's order. The catalogue arrives grouped by category and sorted
+  // within each group, so flattening it alone produced category-by-category order — a service
+  // the admin had moved to position 1 still sat below every service of an earlier category,
+  // which is not what "display order" means on a grid that shows no category headings.
+  const allServices = useMemo(() => orderedServices(catalogQ.data ?? []), [catalogQ.data]);
   const VISIBLE = 11; // 11 tiles + a "More" tile = two clean rows of 6
   const visibleServices = showAll || allServices.length <= VISIBLE + 1 ? allServices : allServices.slice(0, VISIBLE);
 
@@ -113,6 +91,16 @@ export default function RetailerDashboardPage() {
                 <PlusCircle className="size-4" />
                 Request Funds
               </Button>
+              {/* Wallet to wallet. The sidebar is built from the client's own menu table, so a
+                  fresh install may not carry a row for this screen; the balance panel is where
+                  somebody looks when they want to move money between wallets anyway. */}
+              <button
+                onClick={() => navigate('/s/WalletTransfer')}
+                className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 text-sm text-white transition-colors hover:bg-white/20"
+              >
+                <ArrowLeftRight className="size-4" />
+                Wallet to Wallet
+              </button>
               <button
                 onClick={() => { wallets.refetch(); dash.refetch(); }}
                 className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-3 text-sm text-white transition-colors hover:bg-white/20"
@@ -135,6 +123,22 @@ export default function RetailerDashboardPage() {
                 No wallets provisioned yet.
               </div>
             )}
+            {/* What this user owes their upline for funds taken on credit — one more tile in the
+                wallet row, because it is the same question asked the other way round: this is how
+                much of what they are holding is not theirs yet. Self-hiding, so a retailer who
+                always pays cash never sees it. */}
+            {outstanding.payable > 0 && (
+              <Link
+                to="/s/Outstanding"
+                className="rounded-xl border border-warning-300/40 bg-warning-400/15 p-4 backdrop-blur transition-colors hover:bg-warning-400/25"
+              >
+                <p className="text-xs font-medium text-ink-200">Outstanding</p>
+                <p className="mt-1 font-display text-lg font-bold tabular-nums text-warning-200">{inr(outstanding.payable)}</p>
+                <p className="mt-0.5 truncate text-[11px] text-ink-200">
+                  {outstanding.payableTo ? `Payable to ${outstanding.payableTo}` : 'Payable to your upline'}
+                </p>
+              </Link>
+            )}
           </div>
         </div>
       </div>
@@ -146,6 +150,14 @@ export default function RetailerDashboardPage() {
         <Kpi label="Commission earned" value={inr(d?.TotalCommission)} icon={BadgeIndianRupee} tone="bg-brand-50 text-brand-600" loading={dash.isLoading} />
         <Kpi label="Funds received" value={inr(d?.PurchaseAmount)} icon={ArrowDownToLine} tone="bg-info-50 text-info-600" loading={dash.isLoading} />
       </div>
+
+      {/* The retailer's own pinned shortcuts, above everything they have to scroll for — and the
+          retailer's alone. It is the counter operator's row: the one role that opens the same few
+          services all day. Nobody else works a service grid here — the distributor tier lives in
+          network screens and reports, and an API user is a server-to-server credential with no
+          dashboard at all. QuickService/Select and /Save refuse every other role server-side too,
+          so this panel could only ever render empty for them. */}
+      {isRetailer(roleId) && <QuickServices />}
 
       {/* Retail POS roles get the service grid; everyone else (API user, etc.) gets a
           Today's Summary + quick links to their reports. */}
@@ -196,9 +208,7 @@ export default function RetailerDashboardPage() {
                     <div
                       key={svc.ServiceID}
                       title={
-                        svc.LockReason === 'KYC pending'
-                          ? 'Your KYC is not approved yet. Complete your KYC from your profile to use this service.'
-                          : 'This service is locked for your account. Please contact your service provider.'
+                        lockMessage(svc.LockReason)
                       }
                       className="flex cursor-not-allowed flex-col items-center gap-2.5 rounded-2xl p-3.5 text-center"
                     >
@@ -209,7 +219,7 @@ export default function RetailerDashboardPage() {
                 return (
                   <Link
                     key={svc.ServiceID}
-                    to={serviceHref(svc)}
+                    to={serviceHref(svc.Name)}
                     className="group flex flex-col items-center gap-2.5 rounded-2xl p-3.5 text-center transition-all hover:-translate-y-0.5 hover:bg-brand-50/50"
                   >
                     {tile}
@@ -239,8 +249,9 @@ export default function RetailerDashboardPage() {
 
 /** Quick links for non-retail roles (API user, field officers) — reports they can reach. */
 const QUICK_LINKS: { title: string; to: string; icon: LucideIcon }[] = [
+  { title: 'Wallet to Wallet', to: '/s/WalletTransfer', icon: ArrowLeftRight },
   { title: 'Quick Search', to: '/s/Search', icon: Search },
-  { title: 'Userwise Sale', to: '/s/UserwiseSale', icon: TrendingUp },
+  { title: 'Sales by User', to: '/s/UserwiseSale', icon: TrendingUp },
   { title: 'Daybook', to: '/s/Daybook/Report', icon: ScrollText },
   { title: 'Ledger', to: '/s/UserLedger', icon: BookOpenText },
   { title: 'Transaction History', to: '/transactions', icon: History },
@@ -255,7 +266,7 @@ function NonRetailHome({ summary, loading }: { summary: { Type: string; TotalAmo
       <Card className="lg:col-span-2">
         <CardHeader>
           <CardTitle>Today's Summary</CardTitle>
-          <span className="text-xs text-slate-400">Your account movement for today</span>
+          <span className="text-xs text-slate-400">Your account movement for today, across every wallet</span>
         </CardHeader>
         <CardBody className="p-0">
           {loading ? (

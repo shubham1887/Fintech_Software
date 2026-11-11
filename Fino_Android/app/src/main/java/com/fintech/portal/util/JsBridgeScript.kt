@@ -112,6 +112,18 @@ object JsBridgeScript {
       return once('notificationPermission', function () { B.requestNotificationPermission(); });
     },
 
+    /**
+     * Push. `pushAvailable()` says whether this install has Firebase configured at all;
+     * `requestPushToken()` asks for the device token, which arrives as the `native:pushToken`
+     * event (the fetch is asynchronous, so there is nothing to return).
+     *
+     * The console listens for that event in lib/push.ts and posts the token to
+     * AppNotification/RegisterDevice — that is the link that was missing entirely, and why
+     * alerts sent from the admin panel never reached an Android phone.
+     */
+    pushAvailable: function () { try { return !!B.pushAvailable(); } catch (e) { return false; } },
+    requestPushToken: function () { try { B.requestPushToken(); } catch (e) {} },
+
     biometricAvailable: function () { return !!B.biometricAvailable(); },
     biometric: function (title, subtitle) {
       return once('biometric', function () {

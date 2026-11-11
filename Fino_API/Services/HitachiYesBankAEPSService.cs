@@ -1,4 +1,5 @@
 using FintechApp.Entities;
+using FintechApp.Helpers;
 using FintechApp.Interfaces.Repositories;
 using FintechApp.Interfaces.Services;
 using FintechApp.Requests.HitachiYesBankAEPS;
@@ -15,6 +16,7 @@ namespace FintechApp.Services
         private readonly IWalletServiceMappingRepository _walletServiceMappingRepository;
         private readonly IProviderMasterRepository _providerMasterRepository;
         private readonly IDailyAuthenticationMasterRepository _dailyAuthRepository;
+        private readonly ISystemDowntimeService _downtime;
 
         private const string YesBankSettingName = "YesBank";
         private const int AEPSServiceID = 4;
@@ -28,7 +30,8 @@ namespace FintechApp.Services
             ITransactionMasterRepository transactionMasterRepository,
             IWalletServiceMappingRepository walletServiceMappingRepository,
             IProviderMasterRepository providerMasterRepository,
-            IDailyAuthenticationMasterRepository dailyAuthRepository)
+            IDailyAuthenticationMasterRepository dailyAuthRepository,
+            ISystemDowntimeService downtime)
         {
             _userRepository = userRepository;
             _aepsSettingRepository = aepsSettingRepository;
@@ -36,6 +39,7 @@ namespace FintechApp.Services
             _walletServiceMappingRepository = walletServiceMappingRepository;
             _providerMasterRepository = providerMasterRepository;
             _dailyAuthRepository = dailyAuthRepository;
+            _downtime = downtime;
         }
 
         public async Task<(string failureMessage, YesBank_AuthenticationResponse data)> Authentication(YesBank_AuthenticationRequest request, int userID)
@@ -105,6 +109,17 @@ namespace FintechApp.Services
             if (request.Amount <= 0)
             {
                 response.Message = Messages.Common.Message.InvalidAmount;
+                return (response.Message, response);
+            }
+
+            // Scheduled maintenance. Cash withdrawal moves money, so it stops with everything else
+            // unless the operator has kept AEPS running through the window. Balance enquiry and
+            // mini statement below are left alone - they are reads, and refusing them would tell
+            // the customer at the counter nothing except that the shop is broken.
+            string downtime = await _downtime.EnsureOpenForKind(ServiceKinds.AEPS);
+            if (!downtime.EqualsIgnoreCase(StatusType.Ok))
+            {
+                response.Message = downtime;
                 return (response.Message, response);
             }
 

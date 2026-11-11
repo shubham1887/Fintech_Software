@@ -337,9 +337,13 @@ namespace FintechApp.Services
                 if (!combined.Any())
                     return (Messages.Common.Message.DataNotFound, null);
 
-                response.data = combined;
-                response.IsExcelDownload = request.IsExcelDownload;
+                // Count before paging, so the pager's total is the period's total rather than the
+                // length of the page it is looking at.
                 response.Count = combined.Count;
+                response.data = !request.IsExcelDownload && request.TakeCount > 0
+                    ? combined.Skip(Math.Max(0, request.SkipCount)).Take(request.TakeCount).ToList()
+                    : combined;
+                response.IsExcelDownload = request.IsExcelDownload;
 
                 return (StatusType.Ok, response);
             }

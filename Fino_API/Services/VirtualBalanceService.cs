@@ -14,18 +14,21 @@ namespace FintechApp.Services
         private readonly IUserWalletMasterRepository _userWalletRepo;
         private readonly IWalletMasterRepository _walletRepo;
         private readonly IAccountProcessingService _accountProcessing;
+        private readonly ISettlementAccountingService _settlementAccounting;
         private readonly Logger _logger;
 
         public VirtualBalanceService(
             IVirtualBalanceRepository repository,
             IUserWalletMasterRepository userWalletRepo,
             IWalletMasterRepository walletRepo,
-            IAccountProcessingService accountProcessing)
+            IAccountProcessingService accountProcessing,
+            ISettlementAccountingService settlementAccounting)
         {
             _repository = repository;
             _userWalletRepo = userWalletRepo;
             _walletRepo = walletRepo;
             _accountProcessing = accountProcessing;
+            _settlementAccounting = settlementAccounting;
             _logger = new Logger();
         }
 
@@ -88,6 +91,13 @@ namespace FintechApp.Services
                 DateTime = DateTime.Now,
             };
             await _repository.Insert(entity);
+
+            // Float arriving from outside is the one wallet credit that is real money in: Dr Bank,
+            // Cr User Wallet control. A transfer between two users posts nothing, because both
+            // sides of it sit inside the wallet control account and net to zero.
+            await _settlementAccounting.OnWalletToppedUp(
+                entity.VirtualBalanceID, entity.WalletID, entity.Amount, entity.DateTime);
+
             return StatusType.Ok;
         }
 

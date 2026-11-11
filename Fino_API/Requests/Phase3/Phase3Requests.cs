@@ -23,12 +23,45 @@ namespace FintechApp.Requests.Phase3
         public bool ITCEligible { get; set; } = true;
 
         public bool ReverseCharge { get; set; }
+
+        /// <summary>How much was billed, and at what rate — kept so the bill re-opens as it was entered.</summary>
+        public decimal UnitQuantity { get; set; }
+        public decimal UnitRate { get; set; }
+        /// <summary>PERCENT (amount = quantity × rate ÷ 100) or UNIT (quantity × rate).</summary>
+        public string RateType { get; set; } = string.Empty;
+    }
+
+    /// <summary>One purchase document by id — view, edit and delete all key on it.</summary>
+    public class PurchaseIdRequest
+    {
+        public int TaxInvoiceHeaderID { get; set; }
+    }
+
+    /// <summary>Add or change an item a supplier bills (the Description dropdown on a purchase line).</summary>
+    public class PurchaseItemSaveRequest
+    {
+        public int PurchaseItemMasterID { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string SACCode { get; set; } = string.Empty;
+        public decimal GSTRatePercent { get; set; } = 18m;
+        public decimal DefaultRate { get; set; }
+        public string RateType { get; set; } = string.Empty;
+        public bool ITCEligible { get; set; } = true;
+        public bool IsActive { get; set; } = true;
+    }
+
+    public class PurchaseItemIdRequest
+    {
+        public int PurchaseItemMasterID { get; set; }
     }
 
     /// <summary>Record a supplier's invoice as a purchase document. The supplier is the party; the
     /// number is theirs, not one we allocate.</summary>
     public class PurchaseCaptureRequest
     {
+        /// <summary>Set only when CHANGING a bill already captured (Purchase/Update); 0 on capture.</summary>
+        public int TaxInvoiceHeaderID { get; set; }
+
         /// <summary>The supplier as a party (PartyTaxProfile is keyed on this). 0 if not set up as
         /// a party, in which case the GSTIN / name / state below identify them on the document.</summary>
         public int SupplierUserID { get; set; }
@@ -51,6 +84,17 @@ namespace FintechApp.Requests.Phase3
         /// 0 when the purchase is not a provider wallet top-up (e.g. a service bill).</summary>
         public int ProviderID { get; set; }
         public int WalletID { get; set; }
+
+        /// <summary>
+        /// The supplier's own round-off line, signed as they wrote it — Ezytm's October bill
+        /// carries −0.01, which takes 40,000.01 down to a round 40,000.00.
+        ///
+        /// Recorded rather than recomputed, and not assumed to be zero, because the captured
+        /// document has to equal the supplier's to the paisa: the 2B reconciliation matches tax
+        /// heads within five paise, and the payment that clears the bill is for the rounded
+        /// figure. A bill with no round-off line simply leaves this at 0.
+        /// </summary>
+        public decimal RoundOff { get; set; }
 
         public string Remark { get; set; } = string.Empty;
         public List<PurchaseLineInput> Lines { get; set; } = new();

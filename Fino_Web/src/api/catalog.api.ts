@@ -39,6 +39,21 @@ export interface CatalogCategory {
   Services: CatalogService[];
 }
 
+/**
+ * The whole catalogue as one flat list in the admin's display order.
+ *
+ * The grids on the dashboard and the phone home screen show no category headings, so the order
+ * that matters there is the single running order the admin set (ServiceMaster.UISequence),
+ * across categories — not category by category, which is how the grouped response arrives.
+ * Ties fall back to the name so the order is stable rather than whatever the server happened
+ * to return.
+ */
+export function orderedServices(categories: CatalogCategory[]): CatalogService[] {
+  return categories
+    .flatMap((c) => c.Services)
+    .sort((a, b) => (a.UISequence - b.UISequence) || a.Name.localeCompare(b.Name));
+}
+
 export async function fetchCatalog(): Promise<CatalogCategory[]> {
   const res = await apiPost<CatalogCategory[]>('Service/GetCatalog', {});
   return res.ok && Array.isArray(res.data) ? res.data : [];
@@ -86,6 +101,20 @@ export async function uploadDocument(file: File, folder = 'kyc'): Promise<string
   });
   if (!res.ok || !res.data?.Path) throw new Error(res.message || 'Upload failed.');
   return res.data.Path;
+}
+
+/**
+ * Save the display order of the whole service grid in one call (Service/UpdateSequence).
+ *
+ * `serviceIds` is the order the admin arranged, first tile first; the API numbers them 1..N.
+ * Sending the whole list at once matters: ordering is a statement about the set, and pushing it
+ * one field-level update at a time left the catalogue half-renumbered between calls — which the
+ * retailer app could read, because it polls the same catalogue.
+ */
+export async function saveServiceOrder(serviceIds: number[]) {
+  return apiPost('Service/UpdateSequence', {
+    Items: serviceIds.map((ServiceID, i) => ({ ServiceID, UISequence: i + 1 })),
+  });
 }
 
 /** Field-level ServiceMaster update (Service/Update contract). */

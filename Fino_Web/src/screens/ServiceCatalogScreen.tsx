@@ -1,13 +1,14 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ChevronDown, Eye, EyeOff, ImagePlus, Layers, ListChecks, Pencil, Plus, Trash2, Wallet as WalletIcon,
+  ArrowUpDown, ChevronDown, ChevronUp, Eye, EyeOff, ImagePlus, Layers, ListChecks, Pencil, Plus,
+  Trash2, Wallet as WalletIcon,
 } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
 import { getField } from '@/lib/row';
 import { cn } from '@/lib/cn';
 import {
-  fetchCatalog, imageUrl, updateServiceField, uploadImage,
+  fetchCatalog, imageUrl, orderedServices, saveServiceOrder, updateServiceField, uploadImage,
   type CatalogCategory, type CatalogService,
 } from '@/api/catalog.api';
 import { useToast } from '@/components/ui/Toast';
@@ -16,7 +17,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { StatTile } from '@/components/ui/StatTile';
+import { StatTile, STAT_STRIP } from '@/components/ui/StatTile';
 import { ToggleDot } from './providerShared';
 import type { CustomScreenProps } from './registry';
 
@@ -66,6 +67,7 @@ export function ServiceCatalogScreen(_props: CustomScreenProps) {
   const [editing, setEditing] = useState<CatalogService | null>(null);
   const [adding, setAdding] = useState<string | null>(null); // category prefill, '' = blank
   const [deleting, setDeleting] = useState<CatalogService | null>(null);
+  const [arranging, setArranging] = useState(false);
 
   const catalogQ = useQuery({ queryKey: ['service-catalog'], queryFn: fetchCatalog });
   const walletsQ = useQuery({
@@ -178,10 +180,17 @@ export function ServiceCatalogScreen(_props: CustomScreenProps) {
       <PageHeader
         title="Service Catalog"
         subtitle="Categories, services, operators, icons & wallet mapping — what retailers see"
-        actions={<Button onClick={() => setAdding('')}><Plus className="size-4" />Add service</Button>}
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setArranging(true)}>
+              <ArrowUpDown className="size-4" />Arrange order
+            </Button>
+            <Button onClick={() => setAdding('')}><Plus className="size-4" />Add service</Button>
+          </div>
+        }
       />
 
-      <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className={cn(STAT_STRIP, "grid-cols-2 lg:grid-cols-4")}>
         <StatTile label="Categories" value={stats.categories} icon={Layers} tone="bg-brand-50 text-brand-600" loading={catalogQ.isLoading} />
         <StatTile label="Services" value={stats.services} icon={ListChecks} tone="bg-info-50 text-info-600" loading={catalogQ.isLoading} />
         <StatTile label="Operators" value={stats.operators} icon={WalletIcon} tone="bg-success-50 text-success-600" loading={catalogQ.isLoading} />
@@ -313,7 +322,126 @@ export function ServiceCatalogScreen(_props: CustomScreenProps) {
           </div>
         </Modal>
       )}
+
+      <ArrangeOrderModal
+        open={arranging}
+        onClose={() => setArranging(false)}
+        categories={categories}
+        onSaved={() => { setArranging(false); refresh(); }}
+      />
     </>
+  );
+}
+
+// ---------------------------------------------------------- arrange order ----
+/**
+ * The running order of the whole service grid, as one list.
+ *
+ * It is deliberately ONE list rather than a list per category: the grids that retailers and the
+ * mobile app actually see show no category headings, so a per-category order answers a question
+ * nobody asked. What the admin wants to express is "recharge first, then DMT, then AEPS" —
+ * across the catalogue — and that is what this saves.
+ *
+ * Up/down rather than drag: this screen is used on the phone as often as on a desktop, and a
+ * drag list inside a scrolling modal is painful to operate with a thumb. Numbers are shown so
+ * the position is a fact on screen rather than something to count.
+ */
+function ArrangeOrderModal({
+  open, onClose, categories, onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  categories: CatalogCategory[];
+  onSaved: () => void;
+}) {
+  const toast = useToast();
+  const [order, setOrder] = useState<CatalogService[]>([]);
+
+  // Re-seed each time it opens, so closing without saving discards cleanly and a catalogue
+  // changed elsewhere is picked up.
+  useEffect(() => {
+    if (open) setOrder(orderedServices(categories));
+  }, [open, categories]);
+
+  const move = (index: number, delta: number) => {
+    setOrder((prev) => {
+      const next = index + delta;
+      if (next < 0 || next >= prev.length) return prev;
+      const copy = [...prev];
+      [copy[index], copy[next]] = [copy[next], copy[index]];
+      return copy;
+    });
+  };
+
+  const saveMut = useMutation({
+    mutationFn: () => saveServiceOrder(order.map((s) => s.ServiceID)),
+    onSuccess: (res) => {
+      if (!res.ok) { toast.error(res.message); return; }
+      toast.success('Display order saved.');
+      onSaved();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  if (!open) return null;
+
+  return (
+    <Modal open onClose={onClose} title="Arrange service order" size="lg">
+      <p className="mb-3 text-sm text-slate-500">
+        This is the order services appear in for every user — on the web panel and in the mobile
+        app. Number 1 shows first.
+      </p>
+
+      {order.length === 0 ? (
+        <p className="py-8 text-center text-sm text-slate-400">No services to arrange yet.</p>
+      ) : (
+        <div className="max-h-[55vh] overflow-y-auto pr-1">
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+            {order.map((svc, i) => (
+              <li key={svc.ServiceID} className="flex items-center gap-3 px-3 py-2.5">
+                <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-slate-100 text-xs font-bold tabular-nums text-slate-600">
+                  {i + 1}
+                </span>
+                {imageUrl(svc.ServiceImagePath) ? (
+                  <img src={imageUrl(svc.ServiceImagePath)} alt="" className="size-8 shrink-0 rounded-lg object-contain" />
+                ) : (
+                  <span className="size-8 shrink-0 rounded-lg bg-slate-50" />
+                )}
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-700">{svc.Name}</span>
+                {(!svc.IsActive || !svc.IsDisplay) && (
+                  <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+                    hidden
+                  </span>
+                )}
+                <div className="flex shrink-0 gap-1">
+                  <button
+                    type="button" aria-label="Move up" disabled={i === 0}
+                    onClick={() => move(i, -1)}
+                    className="grid size-8 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"
+                  >
+                    <ChevronUp className="size-4" />
+                  </button>
+                  <button
+                    type="button" aria-label="Move down" disabled={i === order.length - 1}
+                    onClick={() => move(i, 1)}
+                    className="grid size-8 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"
+                  >
+                    <ChevronDown className="size-4" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-4 flex justify-end gap-2 border-t border-slate-100 pt-3">
+        <Button variant="outline" onClick={onClose} disabled={saveMut.isPending}>Cancel</Button>
+        <Button loading={saveMut.isPending} disabled={order.length === 0} onClick={() => saveMut.mutate()}>
+          Save order
+        </Button>
+      </div>
+    </Modal>
   );
 }
 

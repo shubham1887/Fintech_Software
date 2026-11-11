@@ -131,7 +131,35 @@ namespace FintechApp.Controllers
             if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
-            try { var data = await _service.SelectProviderForBulkSequence(); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
+
+            // ServiceID is optional: the chips are scoped to the service being edited when one is
+            // sent, and older clients that send no body still get the full dispatch-capable list.
+            int serviceID = 0;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(apiRequest.Request))
+                    serviceID = JsonConvert.DeserializeObject<SelectSequenceByServiceRequest>(_encryptDecrypt.Decrypt(apiRequest.Request))?.ServiceID ?? 0;
+            }
+            catch { serviceID = 0; }
+
+            try { var data = await _service.SelectProviderForBulkSequence(serviceID); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
+
+        /// <summary>
+        /// The services this screen may route. Only the operator-based rails appear; DMT, AEPS,
+        /// Micro-ATM, Payout, the payment gateway and verification route elsewhere and are not
+        /// offered here.
+        /// </summary>
+        [HttpPost("SelectRoutableServices")] public async Task<APIResponse> SelectRoutableServices([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel;
+            try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StaticModels.StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+            try { var data = await _service.SelectRoutableServices(); if (data == null || data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound); return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data))); }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 

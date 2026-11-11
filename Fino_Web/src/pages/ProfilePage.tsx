@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle, BadgeCheck, Building2, CalendarDays, CheckCircle2, ExternalLink, FileText,
-  Hash, IdCard, Mail, MapPin, Network, Pencil, Phone, ShieldCheck, Smartphone, Upload, UserRound, X,
+  AlertTriangle, ArrowLeftRight, BadgeCheck, Building2, CalendarDays, CheckCircle2, ExternalLink,
+  FileText, Hash, IdCard, Mail, MapPin, Network, Pencil, Phone, Plus, ShieldCheck, Smartphone,
+  Upload, UserRound, Users, X,
 } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
 import { fetchList } from '@/api/list.api';
 import { uploadDocument, imageUrl } from '@/api/catalog.api';
+import { addLinkedProfile, fetchLinkedProfiles, type LinkedProfile } from '@/api/users.api';
 import { useAuth } from '@/features/auth/AuthContext';
 import { roleLabel } from '@/lib/roles';
 import { getField as get } from '@/lib/row';
@@ -19,6 +21,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Autocomplete } from '@/components/ui/Autocomplete';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 type Row = Record<string, unknown>;
@@ -399,10 +402,16 @@ export default function ProfilePage() {
                     />
                     <Autocomplete
                       label="State"
-                      placeholder="Search a state…"
+                      placeholder={stateRows.length === 0 ? 'No states configured' : 'Search a state…'}
                       value={form.StateID}
                       options={stateRows.map((r) => ({ value: String(get(r, 'StateID') ?? ''), label: String(get(r, 'StateName') ?? '') }))}
                       onChange={(v) => setF('StateID', String(v))}
+                      // See UserFormScreen: an empty StateMasters table renders a dropdown with
+                      // nothing in it and no explanation. Name the reason rather than leave the
+                      // user tapping a control that cannot respond.
+                      error={stateRows.length === 0
+                        ? 'No states configured on this installation.'
+                        : undefined}
                     />
                     <Input label="City" value={form.CityName} onChange={(e) => setF('CityName', e.target.value)} />
                     <Input
@@ -446,6 +455,8 @@ export default function ProfilePage() {
                 <Field icon={Hash} label="Reference no" value={String(get(me ?? {}, 'UniqueReferenceNo') ?? '')} />
                 <Field icon={CalendarDays} label="Member since" value={joined ? dateOnly(String(joined)) : ''} />
               </SectionCard>
+
+              <LinkedLoginsSection />
 
               <SectionCard title="Statutory IDs" subtitle="Held against your KYC — contact your service provider to change these.">
                 <Field label="GST" value={String(get(me ?? {}, 'GSTNo') ?? '')} />
@@ -734,5 +745,145 @@ function KycSection({ state, ekyc, offerEkyc, loading, documents, submitted, app
         </p>
       </CardBody>
     </Card>
+  );
+}
+
+/**
+ * Second login — "one mobile number, two roles".
+ *
+ * A distributor who also runs a counter, a super-distributor who sells directly, or an API
+ * client that needs a retailer login to test with used to need a second mobile number, because
+ * sign-in is keyed on the number. This sets up a second REAL account on the same number and
+ * password: its own wallet, slab, services, user code and ledger, switched into from the
+ * account menu.
+ *
+ * Who may do it, and as what, is the server's decision (LinkedProfilePolicy) — the card asks and
+ * prints the answer, including the reason when the option is withheld, so it never looks broken
+ * to the roles it is not for.
+ */
+function LinkedLoginsSection() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const { switchProfile } = useAuth();
+
+  const [adding, setAdding] = useState(false);
+  const [role, setRole] = useState('');
+  const [firmName, setFirmName] = useState('');
+  const [switchingTo, setSwitchingTo] = useState(0);
+
+  const linkedQ = useQuery({ queryKey: ['linked-profiles'], queryFn: fetchLinkedProfiles });
+  const data = linkedQ.data;
+
+  const createMut = useMutation({
+    mutationFn: () => addLinkedProfile({ userTypeId: Number(role), firmName: firmName.trim() }),
+    onSuccess: (res) => {
+      if (!res.ok) { toast.error(res.message); return; }
+      toast.success(res.message || 'Second login created.');
+      setAdding(false);
+      setRole('');
+      setFirmName('');
+      void qc.invalidateQueries({ queryKey: ['linked-profiles'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const onSwitch = async (p: LinkedProfile) => {
+    setSwitchingTo(p.UserID);
+    try {
+      const res = await switchProfile(p.UserID);
+      if (res.ok) toast.success(`Now working as ${p.RoleName}.`);
+      else toast.error(res.message);
+    } finally {
+      setSwitchingTo(0);
+    }
+  };
+
+  // Nothing to show and nothing to offer — a retailer has no second role to be, and a card
+  // that only explains why it is empty is worse than no card.
+  if (!data || (!data.CanSetUp && data.Profiles.length <= 1)) return null;
+
+  return (
+    <SectionCard
+      title="Logins on this number"
+      subtitle="Two roles, one mobile number and one password. Switch between them from the account menu."
+      action={data.CanSetUp && !adding ? (
+        <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+          <Plus className="size-4" /> Add
+        </Button>
+      ) : undefined}
+    >
+      <div className="space-y-2">
+        {data.Profiles.map((p) => (
+          <div
+            key={p.UserID}
+            className={cn(
+              'flex items-center gap-3 rounded-xl border p-3',
+              p.IsCurrent ? 'border-brand-300 bg-brand-50/50' : 'border-slate-200 bg-white',
+            )}
+          >
+            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-500">
+              <Users className="size-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <p className="truncate text-sm font-semibold text-slate-800">{p.RoleName}</p>
+                {p.IsCurrent && <Badge tone="brand">Current</Badge>}
+                {!p.IsActive && <Badge tone="danger">Deactivated</Badge>}
+              </div>
+              <p className="truncate text-xs text-slate-500">
+                {p.FirmName}{p.UserCode ? ` · ${p.UserCode}` : ''}
+              </p>
+            </div>
+            {!p.IsCurrent && p.IsActive && (
+              <Button
+                variant="outline"
+                size="sm"
+                loading={switchingTo === p.UserID}
+                onClick={() => void onSwitch(p)}
+              >
+                <ArrowLeftRight className="size-4" /> Use
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {adding && (
+        <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+          <Select label="Role *" value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="">Select the role to add</option>
+            {data.AllowedRoles.map((r) => (
+              <option key={r.UserTypeID} value={String(r.UserTypeID)}>{r.RoleName}</option>
+            ))}
+          </Select>
+          <Input
+            label="Trading name (optional)"
+            value={firmName}
+            placeholder="Leave empty to derive it from your firm name"
+            onChange={(e) => setFirmName(e.target.value)}
+          />
+          <p className="text-xs text-slate-500">
+            This creates a separate account with its own wallet, commission slab and reports. It
+            starts with a zero balance and your current services, and signs in with this same
+            mobile number and password.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setAdding(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              loading={createMut.isPending}
+              disabled={role === ''}
+              onClick={() => createMut.mutate()}
+            >
+              Create login
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {!data.CanSetUp && data.Reason && !adding && (
+        <p className="mt-3 text-xs text-slate-400">{data.Reason}</p>
+      )}
+    </SectionCard>
   );
 }

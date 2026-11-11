@@ -1,40 +1,51 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { subDays } from 'date-fns';
-import { AlertTriangle, Download, MoreVertical, Printer, RefreshCw, Search as SearchIcon, Share2, SlidersHorizontal } from 'lucide-react';
+import { AlertTriangle, Download, MoreVertical, Printer, Share2 } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
 import { fetchList } from '@/api/list.api';
 import { loadSession } from '@/lib/storage';
-import { inr, dateTime, dateYmd, apiDate } from '@/lib/format';
-import { exportToCsv } from '@/lib/csv';
+import { inr, dateTime, apiDate } from '@/lib/format';
+import { useCsvExport } from '@/lib/exportAll';
 import { getField } from '@/lib/row';
+import { UserTypeCode } from '@/lib/roles';
+import { isOpenComplaint } from '@/lib/complaints';
 import { printReceipt, downloadReceipt, shareReceipt, getReceiptData, statusColor, type ReceiptBrand } from '@/lib/receipt';
 import { useBrand } from '@/theme/BrandProvider';
-import { cn } from '@/lib/cn';
-import { useIsMobileApp } from '@/lib/native';
-import { MobileRecordList } from '@/components/ui/MobileRecordList';
 import { useToast } from '@/components/ui/Toast';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Card, CardBody } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
-import { StatusBadge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Autocomplete, type AutocompleteOption } from '@/components/ui/Autocomplete';
 import { Modal } from '@/components/ui/Modal';
+import {
+  ReportActions, ReportFilterBar, ReportPager, ReportSummary, ReportTable,
+  humanize, operatorsForService, summaryFromRecord, type ReportTableColumn,
+} from '@/components/report';
 import { pickIcon } from '@/components/layout/iconMap';
-import type { ReportColumn, TxnReportConfig } from './txnReportTypes';
+import { txnState } from '@/lib/txnStatus';
+import type { TxnReportConfig } from './txnReportTypes';
 
 const LIST_PAGE = { IsActive: true, PageNumber: 1, PageSize: 500 };
 const USER_PAGE = { PageNumber: 1, PageSize: 1000, IsActive: true, TakeCount: 1000, SkipCount: 0 };
 const ADMIN_ROLES = [1, 2, 3, 6]; // admin / super-dist / dist / support see the user picker
+// Admin and support own the data, so they read a row whole. For every other role a row is only
+// ever the columns their own config left them — see `visibleKeys` below.
+const FULL_ROW_ROLES = [1, 6];
 const STATUS_SETS: Record<string, string[]> = {
   recharge: ['ALL', 'SUCCESS', 'PROCESS', 'FAILURE'],
   dmt: ['ALL', 'SUCCESS', 'PROCESS', 'FAILURE', 'REFUNDED'],
   simple: ['ALL', 'SUCCESS', 'FAILURE'],
+  // Fund movements. PROCESS is a real, common state here — a fund or reverse request that is
+  // raised and waiting on a decision — so 'simple' (SUCCESS / FAILURE only) would hide exactly
+  // the rows somebody opens a fund report to chase.
+  fund: ['ALL', 'SUCCESS', 'PROCESS', 'FAILURE'],
+  // The hold report reuses the same dropdown — its two states are the directions a hold moves.
+  hold: ['ALL', 'HOLD', 'RELEASE'],
 };
 const CRITERIA_OPTIONS = [
   { label: 'Transaction ID', value: 'TransactionID' },
@@ -62,9 +73,9 @@ interface Filters {
 
 function defaultFilters(config?: TxnReportConfig): Filters {
   return {
-    fromDate: apiDate(subDays(new Date(), 7)),
+    fromDate: apiDate(config?.defaultFromToday ? new Date() : subDays(new Date(), 7)),
     toDate: apiDate(new Date()),
-    status: 'ALL',
+    status: config?.defaultStatus ?? 'ALL',
     complaint: 'ALL',
     serviceId: '0',
     operatorId: '0',
@@ -91,10 +102,26 @@ interface TxnResult {
   message: string;
 }
 
-async function fetchTxn(endpoint: string, a: Filters, page: number, pageSize: number): Promise<TxnResult> {
+async function fetchTxn(
+  endpoint: string,
+  a: Filters,
+  skip: number,
+  take: number,
+  fixedPayload?: Record<string, unknown>,
+  /**
+   * Mark the request as an export.
+   *
+   * It no longer means "send me everything in one answer". Asking for that — a TakeCount of 0 —
+   * is read by the transaction store as "use your default page", which is 50 rows: a 322-row
+   * report downloaded as 50 and said so in a toast nobody expected to read. The export now names
+   * the window it wants and walks the windows (see `fetchAllRows`), and the flag only tells the
+   * service not to cap a window the caller did not name.
+   */
+  exportAll = false,
+): Promise<TxnResult> {
   const res = await apiPost<unknown>(endpoint, {
-    TakeCount: pageSize,
-    SkipCount: page * pageSize,
+    TakeCount: take,
+    SkipCount: skip,
     Search: a.searchText,
     SortColumnName: '',
     SortDirection: '',
@@ -112,7 +139,9 @@ async function fetchTxn(endpoint: string, a: Filters, page: number, pageSize: nu
     // range's end date keeps both kinds working from the one set of date inputs.
     Date: a.toDate,
     ExportType: 'Select Download',
-    IsExcelDownload: false,
+    IsExcelDownload: exportAll,
+    PageNumber: Math.floor(skip / Math.max(1, take)) + 1,
+    PageSize: take,
     IsPDFDownload: false,
     IsRechargeReport: false,
     Criteria: a.criteria,
@@ -123,13 +152,34 @@ async function fetchTxn(endpoint: string, a: Filters, page: number, pageSize: nu
     MaxAmount: 0,
     Latitude: '',
     Longitude: '',
+    // Last, so a screen that pins a field (e.g. the Reverse Requests queue pinning
+    // Type=REVERSE_REQUEST) wins over the generic default above.
+    ...(fixedPayload ?? {}),
   });
   if (!res.ok) return { rows: [], count: 0, summary: {}, message: specificReason(res.message) };
   const d = res.data as Record<string, unknown> | unknown[];
   const listRaw = Array.isArray(d) ? d : getField(d as Record<string, unknown>, 'list', 'List', 'Data', 'Items');
-  const rows = Array.isArray(listRaw) ? (listRaw as Record<string, unknown>[]) : [];
-  const count = Array.isArray(d) ? rows.length : Number(getField(d as Record<string, unknown>, 'Count', 'count') ?? rows.length);
+  const all = Array.isArray(listRaw) ? (listRaw as Record<string, unknown>[]) : [];
   const summary = (Array.isArray(d) ? {} : getField(d as Record<string, unknown>, 'HeaderSummary', 'headerSummary')) as Record<string, unknown>;
+
+  // Rows per page is a promise to the reader: pick 20 and you get 20.
+  //
+  // Not every endpoint pages server-side. Several answer with the whole result set and a truthful
+  // total, so the page has to be cut here. The test for which kind of reply this is used to be
+  // "did it send more rows than I asked for", which gets the common case right and the edge cases
+  // wrong: a 15-row result with a page size of 20 looks paged, and so does an endpoint that
+  // honours TakeCount but ignores SkipCount — the second one then shows page 1 forever.
+  //
+  // The server's own count answers it properly. Fewer rows than the total means this IS a page of
+  // a larger set, so it is passed through; rows equal to the total means the whole set arrived and
+  // the page is cut from the offset the request named. Both readings agree with the pager, which
+  // is driven by the same total.
+  const reported = Array.isArray(d) ? all.length : Number(getField(d as Record<string, unknown>, 'Count', 'count') ?? all.length);
+  const count = Math.max(reported, all.length);
+  // An export asked for a window of its own and keeps the lot — no page is cut from it.
+  const serverPaged = all.length < count;
+  const rows = exportAll || serverPaged ? all : all.slice(skip, skip + take);
+
   return { rows, count, summary: summary && typeof summary === 'object' ? summary : {}, message: '' };
 }
 
@@ -144,10 +194,6 @@ function specificReason(message: string): string {
   return GENERIC_EMPTY.test(m) ? '' : m;
 }
 
-function humanize(key: string) {
-  return key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ').replace(/\bI D\b/g, 'ID').trim();
-}
-const MONEYISH = /(amount|amt|balance|commission|charge|tds|gst|surcharge|opening|closing|credit|debit|sale|purchase|profit|hold)/i;
 
 /** Label of the built-in manual-settle row action (config.manualSettle). */
 const SETTLE_ACTION = 'Manual Success / Failed';
@@ -169,20 +215,44 @@ export function TxnReportScreen({ title, subtitle, config }: { title: string; su
   const [settleRow, setSettleRow] = useState<Record<string, unknown> | null>(null);
   const [complaintRow, setComplaintRow] = useState<Record<string, unknown> | null>(null);
   const [receiptRow, setReceiptRow] = useState<Record<string, unknown> | null>(null);
+  const [statusCheckRow, setStatusCheckRow] = useState<Record<string, unknown> | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(20);
+  const { exporting, runExport } = useCsvExport();
+
+  // Who sees WHAT in the transaction log. The provider rows are our own side of the wire — the
+  // upstream endpoint, the vendor id, our opening/closing balance and the margin — so they belong
+  // to admin/support alone. An API user opens the same "Log" action and must be shown its OWN API
+  // traffic instead: the request it posted to us, our reply, and the callbacks we pushed back.
+  // The server enforces both (ApiAccessPolicy + the services); this only keeps the UI from asking
+  // for rows it may not have and from drawing an empty provider panel at a role that never fills it.
+  const isProviderLogViewer = userTypeId === UserTypeCode.Admin || userTypeId === UserTypeCode.SupportUser;
+  const isApiUser = userTypeId === UserTypeCode.ApiUser;
+  const showApiUserLog = isProviderLogViewer || isApiUser;
 
   // Provider status-check / dispatch logs for one transaction (item: "recharge status check log").
   const { data: statusLogs = [], isFetching: logsLoading } = useQuery({
     queryKey: ['status-logs', logTxnId],
     queryFn: () => fetchList('ProviderRequestResponseLog/GetByTransaction', { TransactionID: logTxnId }),
-    enabled: logTxnId !== null,
+    enabled: logTxnId !== null && isProviderLogViewer,
   });
   // Provider callback logs for the same transaction (async provider callbacks — item #8).
   const { data: callbackLogs = [], isFetching: callbackLoading } = useQuery({
     queryKey: ['callback-logs', logTxnId],
     queryFn: () => fetchList('ProviderCallBackLog/GetByTransaction', { TransactionID: logTxnId }),
-    enabled: logTxnId !== null,
+    enabled: logTxnId !== null && isProviderLogViewer,
+  });
+  // The API user's own exchange with us: what it sent, what we answered.
+  const { data: apiUserLogs = [], isFetching: apiUserLoading } = useQuery({
+    queryKey: ['api-user-logs', logTxnId],
+    queryFn: () => fetchList('APIUserInitialRequestResponseLog/GetByTransaction', { TransactionMasterID: logTxnId }),
+    enabled: logTxnId !== null && showApiUserLog,
+  });
+  // The callbacks we pushed to the API user for this transaction, with their server's reply.
+  const { data: apiUserCallbacks = [], isFetching: apiUserCallbackLoading } = useQuery({
+    queryKey: ['api-user-callback-logs', logTxnId],
+    queryFn: () => fetchList('APIUserCallbackRequestResponseLog/GetByTransaction', { TransactionMasterID: logTxnId }),
+    enabled: logTxnId !== null && showApiUserLog,
   });
   const upd = (patch: Partial<Filters>) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -190,6 +260,20 @@ export function TxnReportScreen({ title, subtitle, config }: { title: string; su
     enabled: Boolean(f.service), queryKey: ['svc-opts'], staleTime: 300_000,
     queryFn: () => fetchList('Service/GetAll', LIST_PAGE),
   });
+  // A report that is about ONE service opens on one rather than on "All services". Commission
+  // Structure is the case: a rate card for every service at once is forty-odd rows of three
+  // different products interleaved, and the first thing anyone did on that screen was pick a
+  // service. Applied once, when the options first arrive, and only while the filter is still on
+  // its default — so it never fights an operator who has already chosen something.
+  useEffect(() => {
+    if (!config.defaultFirstService || services.length === 0) return;
+    const first = String(getField(services[0], 'ServiceID') ?? '');
+    if (!first || first === '0') return;
+    setDraft((d) => (d.serviceId === '0' ? { ...d, serviceId: first } : d));
+    setApplied((a) => (a.serviceId === '0' ? { ...a, serviceId: first } : a));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.defaultFirstService, services]);
+
   const { data: allOperators = [] } = useQuery({
     enabled: Boolean(f.operator), queryKey: ['op-opts'], staleTime: 300_000,
     queryFn: () => fetchList('Operator/GetAll', LIST_PAGE),
@@ -207,39 +291,117 @@ export function TxnReportScreen({ title, subtitle, config }: { title: string; su
     queryFn: () => fetchList('Users/Select', USER_PAGE),
   });
 
-  const { data, isFetching, refetch } = useQuery({
-    queryKey: ['txn', config.endpoint, applied, page, pageSize],
-    queryFn: () => fetchTxn(config.endpoint, applied, page, pageSize),
+  const { data, isFetching, isPending, refetch } = useQuery({
+    queryKey: ['txn', config.endpoint, config.fixedPayload, applied, page, pageSize],
+    queryFn: () => fetchTxn(config.endpoint, applied, page * pageSize, pageSize, config.fixedPayload),
   });
   const rows = data?.rows ?? [];
   const total = data?.count ?? 0;
   const summary = data?.summary ?? {};
   const emptyReason = data?.message ?? '';
 
+  // Export collects the WHOLE result set for the current filters, a window at a time, rather
+  // than writing out the page on screen. Asking for "all of it" in one request is what this used
+  // to do, and it is the one thing the transaction store quietly refuses: a take of 0 means "use
+  // your default page" there, so a 322-row report came back as 50.
+  const onExport = () => runExport({
+    filename: title,
+    columns: visibleKeys ?? undefined,
+    onScreen: rows,
+    fetchAll: (skip, take) =>
+      fetchTxn(config.endpoint, applied, skip, take, config.fixedPayload, true)
+        .then((r) => ({ rows: r.rows, count: r.count })),
+  });
+
   const userOptions: AutocompleteOption[] = useMemo(
     () => users.map((u) => ({
       value: String(getField(u, 'UserMasterID', 'UserID') ?? ''),
       label: String(getField(u, 'FirmName', 'PersonName', 'Name') ?? '—'),
       sublabel: String(getField(u, 'MobileNumber', 'Mobile') ?? ''),
+      // The tier, so a name in this list can be told apart from the same name a level up or down.
+      badge: String(getField(u, 'UserType', 'UserTypeName', 'Role') ?? ''),
     })),
     [users],
   );
   const operatorOptions = useMemo(
-    () => allOperators.filter((o) => String(getField(o, 'ServiceID') ?? '') === String(draft.serviceId)),
+    () => operatorsForService(allOperators, draft.serviceId),
     [allOperators, draft.serviceId],
   );
   const columns = useMemo(
     () => config.columns.filter((c) => !c.roles || c.roles.includes(userTypeId)),
     [config.columns, userTypeId],
   );
-  const summaryEntries = Object.entries(summary).filter(([, v]) => typeof v === 'number' || typeof v === 'string');
-  // The config's own labels are display-only stubs; the settle entry is a real, wired action.
-  const rowActionLabels = useMemo(
-    () => (config.manualSettle ? [...(config.actions ?? []), SETTLE_ACTION] : config.actions),
-    [config.actions, config.manualSettle],
+  // The config's report columns, expressed as the shared report table's columns. Money columns are
+  // marked so the common totals footer picks them up without every report config repeating itself.
+  const tableColumns = useMemo<ReportTableColumn[]>(
+    () => columns.map((c) => ({
+      key: c.key,
+      label: c.label,
+      // "#" has always meant a running serial in these reports, whatever the config says.
+      type: (c.type === 'serial' || c.label === '#' ? 'serial' : c.type ?? 'text') as ReportTableColumn['type'],
+      // Signed columns total too — a commission column's total is the net of what was earned
+      // against what was charged, which is the figure anyone reconciling the page wants.
+      total: c.type === 'money' || c.type === 'signedMoney' || c.type === 'plusMinusMoney',
+      totalMode: c.totalMode,
+    })),
+    [columns],
   );
+  /**
+   * The fields this role may read off a row.
+   *
+   * The table drops the columns a role is not allowed to see, but "View details" and Export both
+   * worked off the RAW row — every field the API sent, including the ones the column gate had just
+   * removed. On Commission Structure that meant a retailer could open any row's kebab menu, or
+   * export the page, and read what their distributor and super distributor earn on the same
+   * transaction. Both now go through the same role-filtered column list the table uses.
+   *
+   * `null` = no restriction (admin / support), which keeps their detail view and export complete.
+   */
+  const visibleKeys = useMemo<string[] | null>(
+    () => (FULL_ROW_ROLES.includes(userTypeId)
+      ? null
+      : columns.filter((c) => c.type !== 'serial' && c.key !== '_serial').map((c) => c.key)),
+    [columns, userTypeId],
+  );
+  const detailEntries = useMemo<Array<[string, unknown]>>(() => {
+    if (!detail) return [];
+    if (visibleKeys === null) return Object.entries(detail);
+    return columns
+      .filter((c) => visibleKeys.includes(c.key))
+      .map((c) => [c.label, detail[c.key]] as [string, unknown]);
+  }, [detail, columns, visibleKeys]);
+  const summaryItems = useMemo(() => summaryFromRecord(summary), [summary]);
+  // The config's own labels are display-only stubs; the settle entry is a real, wired action.
+  // "Status Check" is only offered where the report names an endpoint to ask the provider with —
+  // listing it otherwise just reopened the log under a second name.
+  const rowActionLabels = useMemo(() => {
+    let labels = config.actions ?? [];
+    if (!config.statusCheckEndpoint) labels = labels.filter((l) => !/status\s*check/i.test(l));
+    return config.manualSettle ? [...labels, SETTLE_ACTION] : labels;
+  }, [config.actions, config.manualSettle, config.statusCheckEndpoint]);
 
-  const runSearch = () => { setPage(0); setApplied(draft); };
+  // Searching used to give no feedback at all: a search that matched nothing looked identical to a
+  // search that had not run yet, and the API's reason for an empty result ("no slab assigned",
+  // "you don't have permission") was buried in the empty state. Every deliberate search now ends in
+  // a toast — how many rows matched, or why there are none. Only a search the user actually
+  // triggered announces itself; background refetches and paging stay quiet.
+  const [searchSeq, setSearchSeq] = useState(0);
+  const announcedSeq = useRef(0);
+  const runSearch = () => { setPage(0); setApplied(draft); setSearchSeq((s) => s + 1); };
+  const resetFilters = () => {
+    const d = defaultFilters(config);
+    setDraft(d); setApplied(d); setPage(0); setSearchSeq((s) => s + 1);
+  };
+
+  useEffect(() => {
+    if (searchSeq === 0 || announcedSeq.current === searchSeq) return;
+    if (isFetching || isPending) return;   // wait for this search to settle
+    announcedSeq.current = searchSeq;
+
+    if (total > 0) toast.success(`${total} ${total === 1 ? 'record' : 'records'} found.`);
+    else if (emptyReason) toast.info(emptyReason);
+    else toast.info('No record matched this search. Try a wider date range or different filters.');
+  }, [searchSeq, isFetching, isPending, total, emptyReason, toast]);
 
   if (hidden) {
     return (
@@ -260,29 +422,18 @@ export function TxnReportScreen({ title, subtitle, config }: { title: string; su
         subtitle={subtitle}
         icon={pickIcon(title)}
         actions={
-          <>
-            <span className="text-sm text-slate-400">{total} rows</span>
-            <Button variant="outline" size="sm" onClick={() => exportToCsv(rows, title)} disabled={rows.length === 0}>
-              <Download className="size-4" />
-              Export
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => refetch()} loading={isFetching}>
-              <RefreshCw className="size-4" />
-            </Button>
-          </>
+          <ReportActions
+            total={total}
+            loading={isFetching}
+            onRefresh={() => refetch()}
+            onExport={onExport}
+            exportLoading={exporting}
+            exportDisabled={rows.length === 0 || exporting}
+          />
         }
       />
 
-      <Card className="mb-4">
-        <CardBody>
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-600">
-            <SlidersHorizontal className="size-4 text-brand-600" />
-            Filters
-          </div>
-          <form
-            onSubmit={(e) => { e.preventDefault(); runSearch(); }}
-            className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
-          >
+      <ReportFilterBar onSearch={runSearch} onReset={resetFilters} loading={isFetching}>
             {f.search && (
               <Input
                 label={f.search.label}
@@ -291,8 +442,12 @@ export function TxnReportScreen({ title, subtitle, config }: { title: string; su
                 onChange={(e) => upd({ searchText: e.target.value })}
               />
             )}
-            <Input label="From date" type="date" max={draft.toDate} value={draft.fromDate} onChange={(e) => upd({ fromDate: e.target.value })} />
-            <Input label="To date" type="date" value={draft.toDate} onChange={(e) => upd({ toDate: e.target.value })} />
+            {!f.hideDates && (
+              <>
+                <Input label="From date" type="date" max={draft.toDate} value={draft.fromDate} onChange={(e) => upd({ fromDate: e.target.value })} />
+                <Input label="To date" type="date" value={draft.toDate} onChange={(e) => upd({ toDate: e.target.value })} />
+              </>
+            )}
 
             {f.service && (
               <Autocomplete
@@ -341,7 +496,12 @@ export function TxnReportScreen({ title, subtitle, config }: { title: string; su
             )}
             {f.status && (
               <Select label="Status" value={draft.status} onChange={(e) => upd({ status: e.target.value })}>
-                {STATUS_SETS[f.status].map((s) => <option key={s} value={s}>{s}</option>)}
+                {/* The VALUE stays the machine token the API filters on; only the label is
+                    humanised, so the dropdown reads the same words as the Status column
+                    ("Pending", not "PROCESS"). */}
+                {STATUS_SETS[f.status].map((s) => (
+                  <option key={s} value={s}>{s === 'ALL' ? 'All' : txnState(s).label}</option>
+                ))}
               </Select>
             )}
             {f.complaint && (
@@ -380,59 +540,55 @@ export function TxnReportScreen({ title, subtitle, config }: { title: string; su
                 onChange={(e) => upd({ criteriaText: e.target.value })}
               />
             )}
+      </ReportFilterBar>
 
-            <div className="flex items-end">
-              <Button type="submit" loading={isFetching} className="w-full">
-                <SearchIcon className="size-4" />
-                Search
-              </Button>
-            </div>
-          </form>
-        </CardBody>
-      </Card>
-
-      {summaryEntries.length > 0 && (
-        <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {summaryEntries.slice(0, 12).map(([k, v]) => (
-            <div key={k} className="rounded-card border border-slate-200/70 bg-white p-3 shadow-card">
-              <p className="truncate text-xs font-medium text-slate-500">{humanize(k)}</p>
-              <p className="mt-0.5 font-display text-lg font-bold text-slate-900">
-                {typeof v === 'number' && MONEYISH.test(k) ? inr(v) : String(v)}
-              </p>
-            </div>
-          ))}
-        </div>
-      )}
+      <ReportSummary items={summaryItems} />
 
       <ReportTable
-        columns={columns}
+        columns={tableColumns}
         rows={rows}
         loading={isFetching}
+        serialStart={page * pageSize + 1}
         emptyReason={emptyReason}
-        actions={rowActionLabels}
-        onView={setDetail}
-        onAction={(label, row) => {
-          if (label === SETTLE_ACTION) {
-            const id = Number(getField(row, 'TransactionMasterID', 'TransactionID') ?? 0);
-            if (id > 0) setSettleRow(row);
-            else toast.error('No transaction id on this row.');
-          } else if (/\blog\b|status\s*check/i.test(label)) {
-            const id = Number(getField(row, 'TransactionMasterID', 'TransactionID') ?? 0);
-            if (id > 0) setLogTxnId(id);
-            else toast.error('No transaction id on this row.');
-          } else if (/complaint/i.test(label)) {
-            const id = Number(getField(row, 'TransactionMasterID', 'TransactionID') ?? 0);
-            if (id > 0) setComplaintRow(row);
-            else toast.error('No transaction id on this row.');
-          } else if (/print|receipt/i.test(label)) {
-            setReceiptRow(row);
-          } else {
-            toast.info(`${label} — this action is coming soon.`);
-          }
-        }}
+        rowLeading={(row) => (
+          <RowActions
+            row={row}
+            onView={setDetail}
+            actions={rowActionLabels}
+            onAction={(label, r) => {
+              if (label === SETTLE_ACTION) {
+                const id = Number(getField(r, 'TransactionMasterID', 'TransactionID') ?? 0);
+                if (id > 0) setSettleRow(r);
+                else toast.error('No transaction id on this row.');
+              } else if (/status\s*check/i.test(label)) {
+                // Re-ask the PROVIDER — a different thing from reading the log of what was
+                // already asked. Opens a confirm dialog; the call goes out on Submit.
+                const id = Number(getField(r, 'TransactionMasterID', 'TransactionID') ?? 0);
+                if (id > 0) setStatusCheckRow(r);
+                else toast.error('No transaction id on this row.');
+              } else if (/\blog\b/i.test(label)) {
+                const id = Number(getField(r, 'TransactionMasterID', 'TransactionID') ?? 0);
+                if (id > 0) setLogTxnId(id);
+                else toast.error('No transaction id on this row.');
+              } else if (/complaint/i.test(label)) {
+                const id = Number(getField(r, 'TransactionMasterID', 'TransactionID') ?? 0);
+                if (id > 0) setComplaintRow(r);
+                else toast.error('No transaction id on this row.');
+              } else if (/print|receipt/i.test(label)) {
+                setReceiptRow(r);
+              } else {
+                toast.info(`${label} — this action is coming soon.`);
+              }
+            }}
+          />
+        )}
+      />
+
+      <ReportPager
         page={page}
         pageSize={pageSize}
         total={total}
+        loading={isFetching}
         onPage={setPage}
         onPageSize={(n) => { setPageSize(n); setPage(0); }}
       />
@@ -440,7 +596,7 @@ export function TxnReportScreen({ title, subtitle, config }: { title: string; su
       <Modal open={Boolean(detail)} onClose={() => setDetail(null)} title="Transaction details" size="lg">
         {detail && (
           <div className="grid grid-cols-1 gap-x-6 gap-y-0 sm:grid-cols-2">
-            {Object.entries(detail).map(([k, v]) => (
+            {detailEntries.map(([k, v]) => (
               <div key={k} className="flex justify-between gap-3 border-b border-slate-100 py-1.5 text-sm">
                 <span className="shrink-0 text-slate-500">{humanize(k)}</span>
                 <span className="truncate text-right font-medium text-slate-800">
@@ -471,57 +627,237 @@ export function TxnReportScreen({ title, subtitle, config }: { title: string; su
         }}
       />
 
+      <StatusCheckModal
+        row={statusCheckRow}
+        endpoint={config.statusCheckEndpoint ?? ''}
+        onClose={() => setStatusCheckRow(null)}
+        onChecked={() => void qc.invalidateQueries({ queryKey: ['txn', config.endpoint] })}
+        onViewLog={(id) => { setStatusCheckRow(null); setLogTxnId(id); }}
+      />
+
       <ReceiptModal row={receiptRow} brand={{ appName: brand.appName, logoUrl: brand.logoUrl }} onClose={() => setReceiptRow(null)} />
 
       <Modal open={logTxnId !== null} onClose={() => setLogTxnId(null)} title={`Transaction log · Txn ${logTxnId ?? ''}`} size="lg">
         <div className="space-y-5">
-          {/* Provider request / status-check logs */}
-          <section>
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Provider requests & status checks</h4>
-            {logsLoading ? (
-              <div className="space-y-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-lg" />)}</div>
-            ) : statusLogs.length === 0 ? (
-              <EmptyState title="No status checks yet" description="This transaction has not been re-checked against the provider. The scheduler runs every few minutes for pending recharges." />
-            ) : (
-              <div className="space-y-3">
-                {statusLogs.map((log, i) => (
-                  <div key={i} className="rounded-lg border border-slate-200 p-3 text-sm">
-                    <div className="mb-1 flex items-center justify-between">
-                      <span className="font-semibold text-slate-700">{String(getField(log, 'Through') || 'Provider call')}</span>
-                      <span className="text-xs text-slate-400">{dateTime(String(getField(log, 'DateTime') ?? ''))}</span>
-                    </div>
-                    <p className="break-all text-xs text-slate-500"><span className="font-medium text-slate-600">Request:</span> {String(getField(log, 'Request') || '—')}</p>
-                    <p className="mt-1 break-all text-xs text-slate-500"><span className="font-medium text-slate-600">Response:</span> {String(getField(log, 'Response') || '—')}</p>
+          {/* The API user's own traffic. For an API user this IS the log — it never sees our
+              provider exchange — and admin/support get it as well, because it is what an
+              integrator quotes when they open a ticket. */}
+          {showApiUserLog && (
+            <>
+              <section>
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  {isApiUser ? 'Your API request & response' : 'API user request & response'}
+                </h4>
+                {apiUserLoading ? (
+                  <div className="space-y-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-lg" />)}</div>
+                ) : apiUserLogs.length === 0 ? (
+                  <EmptyState
+                    title="No API request logged"
+                    description={isApiUser
+                      ? 'This transaction was not created through your API, so there is no request of yours to show.'
+                      : 'This transaction was not created through the API, so there is no integrator request to show.'}
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {apiUserLogs.map((log, i) => (
+                      <div key={i} className="rounded-lg border border-slate-200 p-3 text-sm">
+                        <div className="mb-1 flex items-center justify-between">
+                          <span className="font-semibold text-slate-700">{String(getField(log, 'APIUserRequestID') || 'API request')}</span>
+                          <span className="text-xs text-slate-400">{dateTime(String(getField(log, 'DateTime') ?? ''))}</span>
+                        </div>
+                        <p className="break-all text-xs text-slate-500"><span className="font-medium text-slate-600">Request:</span> {String(getField(log, 'Request') || '—')}</p>
+                        <p className="mt-1 break-all text-xs text-slate-500"><span className="font-medium text-slate-600">Response:</span> {String(getField(log, 'Response') || '—')}</p>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-          </section>
+                )}
+              </section>
 
-          {/* Provider callback logs (async callbacks the provider posted back for this txn) */}
-          <section>
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Provider callbacks</h4>
-            {callbackLoading ? (
-              <div className="space-y-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>
-            ) : callbackLogs.length === 0 ? (
-              <EmptyState title="No callbacks received" description="No provider callback has been posted for this transaction yet." />
-            ) : (
-              <div className="space-y-3">
-                {callbackLogs.map((log, i) => (
-                  <div key={i} className="rounded-lg border border-slate-200 p-3 text-sm">
-                    <div className="mb-1 flex items-center justify-between">
-                      <span className="font-semibold text-slate-700">{String(getField(log, 'Type') || 'Callback')}</span>
-                      <span className="text-xs text-slate-400">{dateTime(String(getField(log, 'DateTime') ?? ''))}</span>
-                    </div>
-                    <p className="break-all text-xs text-slate-500"><span className="font-medium text-slate-600">Reply:</span> {String(getField(log, 'ProviderReply') || '—')}</p>
+              <section>
+                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  {isApiUser ? 'Callbacks we sent you' : 'Callbacks sent to the API user'}
+                </h4>
+                {apiUserCallbackLoading ? (
+                  <div className="space-y-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>
+                ) : apiUserCallbacks.length === 0 ? (
+                  <EmptyState
+                    title="No callback pushed yet"
+                    description="A callback is pushed once the transaction reaches a final status. A transaction still in process has none."
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {apiUserCallbacks.map((log, i) => (
+                      <div key={i} className="rounded-lg border border-slate-200 p-3 text-sm">
+                        <div className="mb-1 flex items-center justify-between">
+                          <span className="font-semibold text-slate-700">{String(getField(log, 'APIUserRequestID') || 'Callback')}</span>
+                          <span className="text-xs text-slate-400">{dateTime(String(getField(log, 'DateTime') ?? ''))}</span>
+                        </div>
+                        <p className="break-all text-xs text-slate-500"><span className="font-medium text-slate-600">We sent:</span> {String(getField(log, 'Request') || '—')}</p>
+                        <p className="mt-1 break-all text-xs text-slate-500"><span className="font-medium text-slate-600">Your reply:</span> {String(getField(log, 'Response') || '—')}</p>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-          </section>
+                )}
+              </section>
+            </>
+          )}
+
+          {/* Provider request / status-check logs — admin/support only (see isProviderLogViewer). */}
+          {isProviderLogViewer && (
+            <>
+              <section>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Provider requests & status checks</h4>
+              {logsLoading ? (
+                <div className="space-y-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-lg" />)}</div>
+              ) : statusLogs.length === 0 ? (
+                <EmptyState title="No status checks yet" description="This transaction has not been re-checked against the provider. The scheduler runs every few minutes for pending recharges." />
+              ) : (
+                <div className="space-y-3">
+                  {statusLogs.map((log, i) => (
+                    <div key={i} className="rounded-lg border border-slate-200 p-3 text-sm">
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="font-semibold text-slate-700">{String(getField(log, 'Through') || 'Provider call')}</span>
+                        <span className="text-xs text-slate-400">{dateTime(String(getField(log, 'DateTime') ?? ''))}</span>
+                      </div>
+                      <p className="break-all text-xs text-slate-500"><span className="font-medium text-slate-600">Request:</span> {String(getField(log, 'Request') || '—')}</p>
+                      <p className="mt-1 break-all text-xs text-slate-500"><span className="font-medium text-slate-600">Response:</span> {String(getField(log, 'Response') || '—')}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* Provider callback logs (async callbacks the provider posted back for this txn) */}
+            <section>
+              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Provider callbacks</h4>
+              {callbackLoading ? (
+                <div className="space-y-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>
+              ) : callbackLogs.length === 0 ? (
+                <EmptyState title="No callbacks received" description="No provider callback has been posted for this transaction yet." />
+              ) : (
+                <div className="space-y-3">
+                  {callbackLogs.map((log, i) => (
+                    <div key={i} className="rounded-lg border border-slate-200 p-3 text-sm">
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="font-semibold text-slate-700">{String(getField(log, 'Type') || 'Callback')}</span>
+                        <span className="text-xs text-slate-400">{dateTime(String(getField(log, 'DateTime') ?? ''))}</span>
+                      </div>
+                      <p className="break-all text-xs text-slate-500"><span className="font-medium text-slate-600">Reply:</span> {String(getField(log, 'ProviderReply') || '—')}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              </section>
+            </>
+          )}
         </div>
       </Modal>
     </>
+  );
+}
+
+/**
+ * Status check — re-ask the PROVIDER what became of one transaction.
+ *
+ * This used to open the transaction log, which is the record of what we asked BEFORE; nothing
+ * went out to the provider at all, so "Status Check" and "Log" were two names for one panel and
+ * a stuck transaction stayed stuck. Submit now posts to the report's own status endpoint
+ * (`TransactionProcessing/Get…TransactionStatus`), which enquires upstream and settles the
+ * transaction from the answer — wallet credit and commission reversal included on a failure.
+ *
+ * It is a confirm-then-send dialog rather than a one-click action because the reply can move
+ * money, and because a provider's enquiry API is rate-limited: the operator should see which
+ * transaction they are about to re-ask, and its current status, first.
+ */
+function StatusCheckModal({
+  row, endpoint, onClose, onChecked, onViewLog,
+}: {
+  row: Record<string, unknown> | null;
+  endpoint: string;
+  onClose: () => void;
+  onChecked: () => void;
+  onViewLog: (id: number) => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const id = Number(getField(row ?? {}, 'TransactionMasterID', 'TransactionID') ?? 0);
+  const current = String(getField(row ?? {}, 'Status') ?? '—');
+  const amount = Number(getField(row ?? {}, 'Amount')) || 0;
+  const number = String(getField(row ?? {}, 'ConsumerNumber') ?? '—');
+  const reference = String(getField(row ?? {}, 'ReferenceNo', 'ProviderRefNo') ?? '') || '—';
+  const state = txnState(current);
+
+  // A fresh row means a fresh dialog: never show the previous transaction's answer.
+  useEffect(() => { setResult(null); setBusy(false); }, [id]);
+
+  async function submit() {
+    if (id <= 0 || !endpoint) return;
+    setBusy(true);
+    try {
+      const res = await apiPost<unknown>(endpoint, { ID: id, TransactionID: id });
+      if (!res.ok) {
+        // The provider's own words are the useful part — a refusal, "transaction not found",
+        // "please try after 10 minutes" — so it is shown in the dialog, not flashed in a toast.
+        setResult(res.message || 'The provider did not answer this enquiry.');
+        toast.error(res.message || 'Status check failed.');
+        return;
+      }
+      setResult(res.message || 'The provider has been asked. The status below is now up to date.');
+      toast.success(`Txn ${id}: status checked.`);
+      onChecked();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Status check failed.';
+      setResult(message);
+      toast.error(message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open={row !== null} onClose={onClose} title={`Status check · Txn ${id || ''}`} size="md">
+      <div className="space-y-4">
+        <p className="text-sm text-slate-600">
+          This asks the provider what happened to this transaction and records their answer. If they
+          report a final outcome, the transaction is settled accordingly — a failure refunds the
+          wallet and reverses the commission.
+        </p>
+
+        <dl className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+          {[
+            ['Transaction', id ? `#${id}` : '—'],
+            ['Number', number],
+            ['Amount', inr(amount)],
+            ['Operator reference', reference],
+            ['Current status', state.label],
+          ].map(([k, v]) => (
+            <div key={k} className="flex items-center justify-between gap-4 py-1">
+              <dt className="text-slate-500">{k}</dt>
+              <dd className="truncate font-medium text-slate-800">{v}</dd>
+            </div>
+          ))}
+        </dl>
+
+        {result && (
+          <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">Provider reply</p>
+            {result}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          {id > 0 && (
+            <Button type="button" variant="ghost" onClick={() => onViewLog(id)}>View log</Button>
+          )}
+          <Button type="button" variant="outline" onClick={onClose}>Close</Button>
+          <Button type="button" loading={busy} disabled={id <= 0 || !endpoint} onClick={() => void submit()}>
+            Submit
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -547,6 +883,18 @@ function ManualSettleModal({
   const current = String(getField(row ?? {}, 'Status') ?? '—');
   const amount = Number(getField(row ?? {}, 'Amount')) || 0;
 
+  // Settling a transaction by hand is nearly always the answer to a complaint raised on it, so the
+  // complaint is pulled up here — before the decision, not after. The backend closes any open
+  // complaint from the same decision (refund ⇒ accepted, success ⇒ rejected); showing it first is
+  // what stops two people working the same dispute from two screens.
+  const { data: complaints = [], isFetching: complaintsLoading } = useQuery({
+    queryKey: ['txn-complaints', id],
+    queryFn: () => fetchList('ComplaintMaster/GetByTransaction', { TransactionMasterID: id }),
+    enabled: row !== null && id > 0,
+  });
+  const openComplaint = complaints.find((c) => isOpenComplaint(String(getField(c, 'ComplaintStatus') ?? '')));
+  const decidedComplaint = complaints.find((c) => !isOpenComplaint(String(getField(c, 'ComplaintStatus') ?? '')));
+
   // Remount per row so the fields never carry over from a previous transaction.
   const reset = () => { setStatus(''); setTxnId(''); setRemark(''); };
 
@@ -561,7 +909,11 @@ function ManualSettleModal({
         Remark: remark,
       });
       if (!res.ok) { toast.error(res.message || 'Manual update failed.'); return; }
-      toast.success(`Txn ${id} marked ${status}.`);
+      toast.success(
+        openComplaint
+          ? `Txn ${id} marked ${status}. Its complaint was ${status === 'SUCCESS' ? 'rejected' : 'accepted'}.`
+          : `Txn ${id} marked ${status}.`,
+      );
       reset();
       onSettled();
     } catch (e) {
@@ -586,6 +938,32 @@ function ManualSettleModal({
             refunds the wallet and reverses all commission.
           </p>
         </div>
+
+        {/* Complaint on this transaction — checked before the decision is made, not after. */}
+        {complaintsLoading ? (
+          <Skeleton className="h-16 rounded-lg" />
+        ) : openComplaint ? (
+          <div className="rounded-lg border border-danger-200 bg-danger-50 p-3 text-sm text-danger-700">
+            <p className="font-semibold">This transaction has an open complaint.</p>
+            <p className="mt-1 text-danger-600">
+              {String(getField(openComplaint, 'ComplaintType') || 'Complaint')} ·{' '}
+              {String(getField(openComplaint, 'UserName') || '—')} ·{' '}
+              {dateTime(String(getField(openComplaint, 'DateTime') ?? ''))}
+            </p>
+            {Boolean(getField(openComplaint, 'CustomerRemark')) && (
+              <p className="mt-1 italic text-danger-600">"{String(getField(openComplaint, 'CustomerRemark'))}"</p>
+            )}
+            <p className="mt-2 text-xs text-danger-600">
+              Settling here closes it too: marking the transaction <b>Failed</b> refunds the customer and records the
+              complaint as <b>accepted</b>; marking it <b>Success</b> records the complaint as <b>rejected</b>.
+            </p>
+          </div>
+        ) : decidedComplaint ? (
+          <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-500">
+            A complaint was raised on this transaction and already{' '}
+            <span className="font-medium text-slate-700">{String(getField(decidedComplaint, 'ComplaintStatus') ?? '')}</span>.
+          </p>
+        ) : null}
 
         <Select label="New status" value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">— choose —</option>
@@ -803,160 +1181,6 @@ function ReceiptModal({
         </div>
       </div>
     </Modal>
-  );
-}
-
-function formatCell(col: ReportColumn, value: unknown, serial?: number): ReactNode {
-  // Any "#" column shows a running serial (1,2,3…) that continues across pages, instead of the
-  // raw row id. The id itself stays in the row data for the row actions (Print/Log/etc.).
-  if (col.type === 'serial' || col.label === '#') return <span className="tabular-nums text-slate-500">{serial}</span>;
-  if (value === null || value === undefined || value === '') return <span className="text-slate-300">—</span>;
-  switch (col.type) {
-    case 'status': return <StatusBadge status={String(value)} />;
-    case 'money': return <span className="tabular-nums">{inr(Number(value) || 0)}</span>;
-    case 'number': return <span className="tabular-nums">{String(value)}</span>;
-    case 'date': return dateYmd(String(value));
-    case 'bold': return <span className="font-medium text-slate-800">{String(value)}</span>;
-    case 'image':
-      return <img src={String(value)} alt="" className="h-7 w-7 rounded object-contain" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />;
-    default:
-      // A date-time value in an untyped column — format it rather than leak raw ISO.
-      if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return dateYmd(value);
-      return String(value);
-  }
-}
-
-const PAGE_SIZES = [10, 20, 50, 100];
-
-function ReportTable({
-  columns, rows, loading, emptyReason, actions, onView, onAction, page, pageSize, total, onPage, onPageSize,
-}: {
-  columns: ReportColumn[];
-  rows: Record<string, unknown>[];
-  loading: boolean;
-  /** The API's reason for returning nothing, shown instead of the generic empty message. */
-  emptyReason?: string;
-  actions?: string[];
-  onView: (row: Record<string, unknown>) => void;
-  onAction: (label: string, row: Record<string, unknown>) => void;
-  page: number;
-  pageSize: number;
-  total: number;
-  onPage: (p: number) => void;
-  onPageSize: (n: number) => void;
-}) {
-  const colCount = columns.length + 1;
-  const from = total === 0 ? 0 : page * pageSize + 1;
-  const to = Math.min((page + 1) * pageSize, total);
-  const isRight = (c: ReportColumn) => c.type === 'money' || c.type === 'number';
-  const serialFor = (i: number) => page * pageSize + i + 1;
-  const isMobile = useIsMobileApp();
-
-  // Every txn report is a wide table; on a phone the columns that matter scroll off screen.
-  // Same rows as cards, with the row's actions kept attached to it.
-  const mobileBody = (
-    <div className="overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card">
-      {loading ? (
-        <div className="space-y-3 p-4">
-          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}
-        </div>
-      ) : rows.length === 0 ? (
-        <EmptyState
-          title={emptyReason ? 'Nothing to show' : 'No records found'}
-          description={emptyReason || 'Change your date range / filters and try again.'}
-        />
-      ) : (
-        <MobileRecordList
-          rows={rows as unknown[]}
-          actions={(row) => (
-            <RowActions row={row as Record<string, unknown>} onView={onView} actions={actions} onAction={onAction} />
-          )}
-          fields={columns.map((c) => ({
-            key: c.key + c.label,
-            label: c.label,
-            render: (row: unknown) =>
-              formatCell(
-                c,
-                getField(row as Record<string, unknown>, c.key),
-                serialFor(rows.indexOf(row as Record<string, unknown>)),
-              ),
-          }))}
-        />
-      )}
-    </div>
-  );
-
-  if (isMobile) return mobileBody;
-
-  return (
-    <div className="overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card">
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50/80 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <th className="w-10 px-3 py-3" />
-              {columns.map((c) => (
-                <th key={c.key + c.label} className={cn('whitespace-nowrap px-4 py-3', isRight(c) ? 'text-right' : 'text-left')}>
-                  {c.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              Array.from({ length: 8 }).map((_, r) => (
-                <tr key={r} className="border-b border-slate-100 last:border-0">
-                  {Array.from({ length: Math.max(colCount, 1) }).map((__, c) => (
-                    <td key={c} className="px-4 py-3"><Skeleton className="h-4 w-full max-w-[120px]" /></td>
-                  ))}
-                </tr>
-              ))
-            ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={Math.max(colCount, 1)}>
-                  <EmptyState
-                    title={emptyReason ? 'Nothing to show' : 'No records found'}
-                    description={emptyReason || 'Change your date range / filters and try again.'}
-                  />
-                </td>
-              </tr>
-            ) : (
-              rows.map((row, i) => (
-                <tr key={i} className="border-b border-slate-100 transition-colors last:border-0 hover:bg-slate-50/60">
-                  <td className="px-3 py-3">
-                    <RowActions row={row} onView={onView} actions={actions} onAction={onAction} />
-                  </td>
-                  {columns.map((c) => (
-                    <td key={c.key + c.label} className={cn('whitespace-nowrap px-4 py-3 text-slate-700', isRight(c) && 'text-right')}>
-                      {formatCell(c, getField(row, c.key), serialFor(i))}
-                    </td>
-                  ))}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-sm text-slate-500">
-        <div className="flex items-center gap-2">
-          <span>Rows per page</span>
-          <select
-            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm text-slate-700 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-500/15"
-            value={pageSize}
-            disabled={loading}
-            onChange={(e) => onPageSize(Number(e.target.value))}
-          >
-            {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </div>
-        <span>{from}–{to} of {total}</span>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" disabled={page === 0 || loading} onClick={() => onPage(page - 1)}>Prev</Button>
-          <Button variant="outline" size="sm" disabled={to >= total || loading} onClick={() => onPage(page + 1)}>Next</Button>
-        </div>
-      </div>
-    </div>
   );
 }
 

@@ -58,7 +58,94 @@ namespace FintechApp.Repositories
         // of ServiceIDs plus the UI's Service/Operator dropdown filters, with a true total count.
         public async Task<(int count, List<TransactionMaster> list)> GetFiltered(
             int userId, string status, List<int>? serviceIds, int serviceId, int operatorId,
-            DateTime? fromDate, DateTime? toDate, int skip, int take)
+            DateTime? fromDate, DateTime? toDate, int skip, int take, TxnTextFilter? text = null)
+        {
+            var query = FilteredQuery(userId, status, serviceIds, serviceId, operatorId, fromDate, toDate, text);
+
+            int count = await query.CountAsync();
+            // The id breaks ties on the timestamp. Without it two rows written in the same second
+            // can swap places between two reads, and an export that walks the windows would then
+            // carry one of them twice and miss the other.
+            var list = await query
+                .OrderByDescending(x => x.DateTime)
+                .ThenByDescending(x => x.TransactionMasterID)
+                .Skip(skip)
+                .Take(take > 0 ? take : 50)
+                .ToListAsync();
+            return (count, list);
+        }
+
+        /// <summary>
+        /// The figures strip above a filter report: success / failed / pending money and counts,
+        /// and the net commission, over EVERYTHING the filter matched rather than the page on
+        /// screen. Three counts of a 400-row report cannot be read off 20 rows, and pulling all 400
+        /// back to add them up in memory is the thing to avoid on a transaction table.
+        ///
+        /// The STATUS filter is deliberately not applied: the strip is there to say how the day
+        /// went, and "0 failed" because the reader happens to be looking at the success list is a
+        /// worse answer than no strip at all. Every other filter — user, service, operator, dates,
+        /// search — is applied, because those DO narrow what the strip is about.
+        /// </summary>
+        public async Task<TxnFilterTotals> GetFilteredTotals(
+            int userId, List<int>? serviceIds, int serviceId, int operatorId,
+            DateTime? fromDate, DateTime? toDate, TxnTextFilter? text = null)
+        {
+            var query = FilteredQuery(userId, status: string.Empty, serviceIds, serviceId, operatorId,
+                fromDate, toDate, text);
+
+            // One trip: group by status in the database, add the buckets up here. The status column
+            // is free text and several spellings mean one thing (FAILED/FAILURE, PENDING/PROCESS),
+            // so the bucketing is done after the group rather than in it.
+            var grouped = await query
+                .GroupBy(x => x.Status)
+                .Select(g => new
+                {
+                    Status = g.Key,
+                    Count = g.Count(),
+                    Amount = g.Sum(x => x.Amount),
+                    Commission = g.Sum(x => x.RetailerCommission),
+                })
+                .ToListAsync();
+
+            var totals = new TxnFilterTotals();
+            foreach (var g in grouped)
+            {
+                string s = (g.Status ?? string.Empty).Trim().ToUpperInvariant();
+                switch (s)
+                {
+                    case "SUCCESS":
+                        totals.SuccessCount += g.Count;
+                        totals.SuccessAmount += g.Amount;
+                        // Commission is counted on settled business only. A pending transaction has
+                        // not paid anybody yet and a failed one never will, so including them would
+                        // make the strip disagree with the wallet.
+                        totals.Commission += g.Commission;
+                        break;
+                    case "FAILED":
+                    case "FAILURE":
+                    case "REFUND":
+                    case "REFUNDED":
+                        totals.FailedCount += g.Count;
+                        totals.FailedAmount += g.Amount;
+                        break;
+                    case "PENDING":
+                    case "PROCESS":
+                        totals.PendingCount += g.Count;
+                        totals.PendingAmount += g.Amount;
+                        break;
+                }
+                totals.TotalCount += g.Count;
+            }
+            return totals;
+        }
+
+        /// <summary>
+        /// The filter-report query, shared by the paged read and the totals above so the strip can
+        /// never describe a different set of rows from the table under it.
+        /// </summary>
+        private IQueryable<TransactionMaster> FilteredQuery(
+            int userId, string status, List<int>? serviceIds, int serviceId, int operatorId,
+            DateTime? fromDate, DateTime? toDate, TxnTextFilter? text)
         {
             var query = _context.TransactionMasters.AsNoTracking().Where(x => !x.IsDeleted);
 
@@ -84,19 +171,105 @@ namespace FintechApp.Repositories
             if (toDate.HasValue)
                 query = query.Where(x => x.DateTime <= toDate.Value);
 
-            int count = await query.CountAsync();
-            var list = await query
-                .OrderByDescending(x => x.DateTime)
-                .Skip(skip)
-                .Take(take > 0 ? take : 50)
-                .ToListAsync();
-            return (count, list);
+            // Text filters, applied to the QUERY so that the count below is the count of what the
+            // reader is actually looking at and page 2 holds the next 20 of those rows.
+            if (text != null && !text.IsEmpty)
+            {
+                if (text.UserIDs != null)
+                {
+                    // A resolved-to-nothing filter must return nothing. Passing an empty list
+                    // through Contains() does exactly that; the guard is only here to say so.
+                    var ids = text.UserIDs;
+                    query = query.Where(x => ids.Contains(x.UserID));
+                }
+
+                if (text.TransactionIDs != null)
+                {
+                    var txnIds = text.TransactionIDs;
+                    query = query.Where(x => txnIds.Contains(x.TransactionMasterID));
+                }
+
+                string criteriaText = (text.CriteriaText ?? string.Empty).Trim();
+                if (criteriaText.Length > 0)
+                {
+                    switch ((text.Criteria ?? string.Empty).Trim().ToLowerInvariant())
+                    {
+                        case "transactionid":
+                            // Our own id, or the reference we quote on the receipt. A reader with
+                            // a number in front of them does not know which of the two it is.
+                            if (int.TryParse(criteriaText, out int txnId))
+                                query = query.Where(x => x.TransactionMasterID == txnId
+                                                      || (x.ReferenceNo ?? string.Empty).Contains(criteriaText));
+                            else
+                                query = query.Where(x => (x.ReferenceNo ?? string.Empty).Contains(criteriaText));
+                            break;
+                        case "consumernumber":
+                            query = query.Where(x => (x.ConsumerNumber ?? string.Empty).Contains(criteriaText));
+                            break;
+                        case "providerrefno":
+                            query = query.Where(x => (x.ProviderRefNo ?? string.Empty).Contains(criteriaText)
+                                                  || (x.ProviderRequestID ?? string.Empty).Contains(criteriaText));
+                            break;
+                        // "usermobile" never reaches here - the caller turns it into UserIDs
+                        // above, because the mobile number is a UserMaster column. An unknown
+                        // criteria is ignored rather than returning nothing, so a newer UI sending
+                        // a criteria this build does not know still shows its rows.
+                    }
+                }
+
+                string search = (text.Search ?? string.Empty).Trim();
+                if (search.Length > 0)
+                {
+                    query = query.Where(x =>
+                        (x.ConsumerNumber ?? string.Empty).Contains(search) ||
+                        (x.ReferenceNo ?? string.Empty).Contains(search) ||
+                        (x.ProviderRefNo ?? string.Empty).Contains(search) ||
+                        (x.ProviderRequestID ?? string.Empty).Contains(search));
+                }
+            }
+
+            return query;
         }
 
         public async Task<TransactionMaster?> GetByID(int id)
         {
             return await _context.TransactionMasters.AsNoTracking()
                 .FirstOrDefaultAsync(x => x.TransactionMasterID == id && !x.IsDeleted);
+        }
+
+        public async Task<List<TransactionMaster>> GetByIDs(IEnumerable<int> ids)
+        {
+            var list = ids.Where(id => id > 0).Distinct().ToList();
+            if (list.Count == 0) return new List<TransactionMaster>();
+
+            // SQL Server's parameter ceiling is 2,100 and EF turns an IN list into one parameter
+            // per id, so a long page is chunked rather than failing at the driver.
+            const int chunk = 1000;
+            var result = new List<TransactionMaster>(list.Count);
+            for (int i = 0; i < list.Count; i += chunk)
+            {
+                var slice = list.Skip(i).Take(chunk).ToList();
+                result.AddRange(await _context.TransactionMasters.AsNoTracking()
+                    .Where(x => slice.Contains(x.TransactionMasterID) && !x.IsDeleted)
+                    .ToListAsync());
+            }
+            return result;
+        }
+
+        public async Task<decimal> SumChargeForUser(int userId, DateTime? fromDate, DateTime? toDate, int walletId = 0)
+        {
+            if (userId <= 0) return 0m;
+
+            var query = _context.TransactionMasters.AsNoTracking()
+                .Where(x => !x.IsDeleted && x.UserID == userId);
+
+            if (walletId > 0) query = query.Where(x => x.WalletID == walletId);
+            if (fromDate.HasValue) query = query.Where(x => x.DateTime >= fromDate.Value);
+            if (toDate.HasValue) query = query.Where(x => x.DateTime <= toDate.Value);
+
+            // SumAsync over an empty set returns null for a non-nullable projection, so the cast
+            // is what keeps this from throwing on a user with no transactions in the period.
+            return await query.SumAsync(x => (decimal?)x.Charge) ?? 0m;
         }
 
         public async Task<TransactionMaster?> GetByProviderRequestID(string providerRequestID)
@@ -232,15 +405,24 @@ namespace FintechApp.Repositories
         // means it actually reached a provider, and minAgeSeconds gives the provider time to settle
         // before we probe (mirrors the old isValidForBulkStatusCheck 90-second guard).
         public async Task<List<TransactionMaster>> GetPendingRechargeForStatusCheck(int minAgeSeconds, int take)
+            => await GetPendingForStatusCheck(ServiceKinds.Recharge, minAgeSeconds, take);
+
+        // Pending transactions of ONE service family eligible for an automated status re-check.
+        // Shared by the Hangfire sweeps (recharge + DMT) so both families settle the same way.
+        //
+        // Eligible = still PENDING/PROCESS, already dispatched to a provider (ProviderID > 0) and at
+        // least minAgeSeconds old. A HELD DMT transaction is deliberately NOT dispatched yet
+        // (ProviderID stays 0), so this query skips it — that is what keeps a hold on hold.
+        public async Task<List<TransactionMaster>> GetPendingForStatusCheck(string serviceKind, int minAgeSeconds, int take)
         {
             DateTime cutoff = DateTime.Now.AddSeconds(-Math.Max(minAgeSeconds, 0));
 
             // ServiceMaster rows are admin-created here, so ids are NOT the fixed FinovativeAPI ids
-            // (there 4=AEPS; in this DB 4=Prepaid Recharge). Resolve the recharge family the same
-            // way the Pending Recharge report does — via ServiceKinds — instead of hardcoded ids.
+            // (there 4=AEPS; in this DB 4=Prepaid Recharge). Resolve the family the same way the
+            // Pending reports do — via ServiceKinds — instead of hardcoded ids.
             var services = await _context.ServiceMasters.AsNoTracking().ToListAsync();
-            var rechargeIds = ServiceKinds.IdsOf(services, ServiceKinds.Recharge);
-            if (rechargeIds.Count == 0) return new List<TransactionMaster>();
+            var serviceIds = ServiceKinds.IdsOf(services, serviceKind);
+            if (serviceIds.Count == 0) return new List<TransactionMaster>();
 
             return await _context.TransactionMasters.AsNoTracking()
                 .Where(t => !t.IsDeleted
@@ -248,10 +430,59 @@ namespace FintechApp.Repositories
                     && t.ProviderID > 0
                     && t.Amount >= 1
                     && t.DateTime <= cutoff
-                    && rechargeIds.Contains(t.ServiceID))
+                    && serviceIds.Contains(t.ServiceID))
                 .OrderBy(t => t.DateTime)
                 .Take(take > 0 ? take : 50)
                 .ToListAsync();
+        }
+
+        // DMT transactions parked by the global "Hold DMT" switch: money already debited and
+        // commissions posted, but never dispatched upstream (ProviderID = 0, Description carries
+        // the hold marker). Releasing them re-runs the normal DMT provider sequence.
+        public async Task<List<TransactionMaster>> GetHeldDMT(int take)
+        {
+            var services = await _context.ServiceMasters.AsNoTracking().ToListAsync();
+            var dmtIds = ServiceKinds.IdsOf(services, ServiceKinds.DMT);
+            if (dmtIds.Count == 0) return new List<TransactionMaster>();
+
+            return await _context.TransactionMasters.AsNoTracking()
+                .Where(t => !t.IsDeleted
+                    && (t.Status == "PENDING" || t.Status == "PROCESS")
+                    && t.ProviderID == 0
+                    && t.Description.Contains(TransactionHold.Marker)
+                    && dmtIds.Contains(t.ServiceID))
+                .OrderBy(t => t.DateTime)
+                .Take(take > 0 ? take : 200)
+                .ToListAsync();
+        }
+
+        // Sums what one remitter has sent since fromDate. Deliberately NOT scoped to a single API
+        // user: the per-sender cap is a limit on the REMITTER, so it must hold across every outlet
+        // and every channel they transact through, or the cap could be bypassed by spreading the
+        // same customer's transfers over two retailers.
+        //
+        // Aggregated in the database rather than by loading rows, so a busy remitter costs one
+        // scalar read on the hot path of every transfer.
+        public async Task<decimal> GetDMTConsumedBySender(string senderMobile, DateTime fromDate)
+        {
+            string mobile = (senderMobile ?? string.Empty).Trim();
+            if (mobile.Length == 0) return 0m;
+
+            var services = await _context.ServiceMasters.AsNoTracking().ToListAsync();
+            var dmtIds = ServiceKinds.IdsOf(services, ServiceKinds.DMT);
+            if (dmtIds.Count == 0) return 0m;
+
+            // Anything that settled as failed, refunded or reversed released the money and must not
+            // count against the cap. Everything else — SUCCESS and still-in-flight alike — does.
+            return await _context.TransactionMasters.AsNoTracking()
+                .Where(t => !t.IsDeleted
+                    && t.DMT_SenderNumber == mobile
+                    && t.DateTime >= fromDate
+                    && dmtIds.Contains(t.ServiceID)
+                    && t.Status != "FAILED" && t.Status != "FAILURE"
+                    && t.Status != "REFUND" && t.Status != "REFUNDED"
+                    && t.Status != "REVERSED")
+                .SumAsync(t => (decimal?)t.Amount) ?? 0m;
         }
     }
 }

@@ -1,17 +1,16 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, KeyRound, Lock, Smartphone } from 'lucide-react';
-import { useBrand } from '@/theme/BrandProvider';
 import { useToast } from '@/components/ui/Toast';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { forgotPasswordGenerateOtp, forgotPasswordVerifyOtp } from '@/api/password.api';
-import { BrandGlyph } from '@/components/ui/BrandMark';
+import { BrandLockup } from '@/components/ui/BrandMark';
 
 type Step = 'mobile' | 'otp' | 'done';
 
 export default function ForgotPasswordPage() {
-  const { appName } = useBrand();
+
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -54,10 +53,7 @@ export default function ForgotPasswordPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas px-6">
       <div className="w-full max-w-sm animate-rise">
-        <div className="mb-8 flex items-center gap-3">
-          <BrandGlyph className="size-11 rounded-2xl" />
-          <span className="font-display text-lg font-bold text-slate-900">{appName}</span>
-        </div>
+        <BrandLockup tone="light" size="lg" className="mb-8" />
 
         {step === 'mobile' && (
           <>

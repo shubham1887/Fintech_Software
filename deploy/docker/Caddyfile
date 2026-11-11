@@ -1,0 +1,42 @@
+# ============================================================================
+#  Caddy — TLS termination and reverse proxy for the Fino stack.
+#
+#  Caddy obtains and renews a Let's Encrypt certificate for {$DOMAIN} on its
+#  own, provided ports 80 and 443 reach this machine from the internet and the
+#  domain's A record points here. That is the whole HTTPS setup.
+# ============================================================================
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The panel and the API are one origin, so there is nothing to split here.
+	reverse_proxy app:8080 {
+		header_up X-Real-IP {remote_host}
+	}
+
+	# Security headers. The panel is a single-page app talking only to its own
+	# origin, so the policy can be strict.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options    "nosniff"
+		X-Frame-Options           "DENY"
+		Referrer-Policy           "strict-origin-when-cross-origin"
+		# Payment panels are a phishing/clickjacking target; framing is denied above
+		# and embedding of third-party script is denied here.
+		Content-Security-Policy   "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		-Server
+	}
+
+	# Health checks should not fill the access log.
+	log {
+		output stdout
+		format console
+	}
+}
+
+# Anything arriving on the IP address rather than the domain gets nothing: a
+# certificate is only issued for the name above, and an open default host is how
+# a panel ends up indexed by search engines.
+:80 {
+	respond "Not found" 404
+}

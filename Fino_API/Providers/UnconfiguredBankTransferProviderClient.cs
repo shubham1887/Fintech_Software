@@ -18,5 +18,13 @@ namespace FintechApp.Providers
                 Message = Common.Message.ServiceUnavailable
             });
         }
+        public Task<BankTransferStatusResult> CheckTransferStatus(BankTransferStatusContext context) =>
+            Task.FromResult(new BankTransferStatusResult
+            {
+                Status = "PENDING",
+                IsConfigured = false,
+                Message = Common.Message.ServiceUnavailable
+            });
+
     }
 }

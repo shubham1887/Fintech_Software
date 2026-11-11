@@ -55,5 +55,15 @@ namespace FintechApp.Providers
             string seed = Guid.NewGuid().ToString("N").ToUpperInvariant();
             return $"SIM{context.TransactionMasterID}{seed}".Substring(0, 12);
         }
+        // The sandbox has no upstream to enquire against: report "not answered" so a pending
+        // simulated transfer is left exactly as it was rather than being settled on a guess.
+        public Task<BankTransferStatusResult> CheckTransferStatus(BankTransferStatusContext context) =>
+            Task.FromResult(new BankTransferStatusResult
+            {
+                Status = "PENDING",
+                IsConfigured = false,
+                Message = "[SIMULATION] status enquiry is not available."
+            });
+
     }
 }

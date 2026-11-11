@@ -51,6 +51,9 @@ namespace FintechApp.Services
             return service != null && StaticModels.ServiceKinds.Matches(service, StaticModels.ServiceKinds.Recharge);
         }
 
+        public async Task<bool> IsChainFundedService(int serviceID)
+            => await IsRechargeService(serviceID) || await IsDMTService(serviceID);
+
         public async Task<HashSet<int>> GetAEPSServiceIDs()
             => (await Load()).Where(IsAEPS).Select(s => s.ServiceID).ToHashSet();
 

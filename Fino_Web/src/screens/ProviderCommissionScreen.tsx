@@ -8,6 +8,7 @@ import { useToast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
 import { Autocomplete } from '@/components/ui/Autocomplete';
 import { OPT_PAYLOAD, Pill, useServices, type Row } from './providerShared';
+import { ProviderCommissionBands } from './ProviderCommissionBands';
 
 /** Editable commission state for one mapped operator route on this provider. */
 interface CommDraft {
@@ -72,6 +73,11 @@ export function ProviderCommissionPanel({ providerId }: { providerId: string }) 
     );
   }, [serviceId, operatorsAll.data, routes.data]);
 
+  // A provider routed per operator (recharge, BBPS) has configuration rows; a DMT or payout
+  // provider is routed from DMT Settings and has none, so the grid below would only ever be an
+  // empty box with a disabled button on it. Its whole rate card lives in the bands editor instead.
+  const perOperator = drafts.length > 0;
+
   const patch = (configurationId: number, changes: Partial<CommDraft>) =>
     setDrafts((prev) => prev.map((d) => (d.ConfigurationID === configurationId ? { ...d, ...changes } : d)));
 
@@ -126,11 +132,20 @@ export function ProviderCommissionPanel({ providerId }: { providerId: string }) 
             onChange={(v) => setServiceId(String(v))}
           />
         </div>
-        <Button size="sm" loading={saveAllMut.isPending} disabled={!providerId || !serviceId || drafts.length === 0} onClick={() => saveAllMut.mutate()}>
-          <Save className="size-4" /> Save all
-        </Button>
+        {perOperator && (
+          <Button size="sm" loading={saveAllMut.isPending} disabled={!providerId || !serviceId} onClick={() => saveAllMut.mutate()}>
+            <Save className="size-4" /> Save all operators
+          </Button>
+        )}
       </div>
 
+      {!perOperator ? (
+        <div className="rounded-card border border-dashed border-slate-200 bg-white/60 px-4 py-3 text-sm text-slate-500">
+          {serviceId
+            ? 'This provider has no operator routes for this service — it is routed from DMT Settings, not per operator. Its rate card is the amount bands below.'
+            : 'Pick a service to set this provider\u2019s rate card.'}
+        </div>
+      ) : (
       <div className="overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card">
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
@@ -147,7 +162,11 @@ export function ProviderCommissionPanel({ providerId }: { providerId: string }) 
               {!serviceId ? (
                 <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-400">Pick a service to set this provider's commission per operator.</td></tr>
               ) : drafts.length === 0 ? (
-                <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-400">No mapped operators for this service — map them on the Configuration tab first.</td></tr>
+                <tr><td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-400">
+                  No operator routes for this service. This grid is for providers routed per operator
+                  (recharge, BBPS); a DMT or payout provider is routed from DMT Settings, so set its
+                  rate card in <strong>Amount bands</strong> below.
+                </td></tr>
               ) : (
                 drafts.map((d) => (
                   <tr key={d.ConfigurationID} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
@@ -200,9 +219,15 @@ export function ProviderCommissionPanel({ providerId }: { providerId: string }) 
         </div>
       </div>
 
-      <p className="mt-3 text-xs text-slate-400">
-        When a provider's reply carries a commission value, the live value is stored on the transaction; this configured value is used otherwise.
-      </p>
+      )}
+
+      {perOperator && (
+        <p className="mt-3 text-xs text-slate-400">
+          When a provider's reply carries a commission value, the live value is stored on the transaction; this configured value is used otherwise.
+        </p>
+      )}
+
+      <ProviderCommissionBands providerId={providerId} serviceId={serviceId} />
     </>
   );
 }

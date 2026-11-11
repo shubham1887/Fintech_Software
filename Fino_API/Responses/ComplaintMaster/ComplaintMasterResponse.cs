@@ -19,6 +19,10 @@ namespace FintechApp.Responses.ComplaintMaster
         public int ProviderID { get; set; }
         public string? ProviderRequestID { get; set; }
         public string? ReferenceNo { get; set; }
+
+        /// <summary>The provider's own complaint number, for chasing it with them. "" = not sent.</summary>
+        public string? ProviderComplaintID { get; set; }
+
         public DateTime DateTime { get; set; }
 
         // Display names so the complaint screen never has to show a raw id.

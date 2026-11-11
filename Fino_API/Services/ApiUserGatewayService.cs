@@ -26,6 +26,7 @@ namespace FintechApp.Services
         private readonly ITransactionProcessingService _processing;
         private readonly ICallbackDispatchService _callbackDispatch;
         private readonly IAPIUserInitialRequestResponseLogService _initialLog;
+        private readonly IResponseMessageRuleService _messageRules;
         private readonly Logger _logger = new();
 
         private readonly bool _statusLiveProbe;
@@ -41,6 +42,7 @@ namespace FintechApp.Services
             ITransactionProcessingService processing,
             ICallbackDispatchService callbackDispatch,
             IAPIUserInitialRequestResponseLogService initialLog,
+            IResponseMessageRuleService messageRules,
             IConfiguration configuration)
         {
             _auth = auth;
@@ -52,6 +54,7 @@ namespace FintechApp.Services
             _processing = processing;
             _callbackDispatch = callbackDispatch;
             _initialLog = initialLog;
+            _messageRules = messageRules;
 
             var cfg = configuration.GetSection("ApiUser:Status");
             _statusLiveProbe = cfg.GetValue("LiveProbe", true);
@@ -72,7 +75,7 @@ namespace FintechApp.Services
 
             try
             {
-                var auth = await _auth.Authenticate(request.UserId, request.Token, request.ClientIp);
+                var auth = await _auth.Authenticate(request.Mobile, request.Token, request.ClientIp);
                 if (!auth.Succeeded)
                 {
                     response = ApiUserResponseFactory.FailTransaction(
@@ -172,6 +175,11 @@ namespace FintechApp.Services
             }
             finally
             {
+                // Rewrite before the audit row is written, not only on the way out — see
+                // ApplyMessageRules. The integrator's own log screen must read the same words
+                // we put on the wire.
+                await ApplyMessageRules(response);
+
                 // Audit every initial request, including the rejected ones — a rejected call is
                 // exactly what an integrator opens a ticket about.
                 await LogInitial(userId, txnId, request, response);
@@ -186,7 +194,7 @@ namespace FintechApp.Services
         {
             try
             {
-                var auth = await _auth.Authenticate(request.UserId, request.Token, request.ClientIp);
+                var auth = await _auth.Authenticate(request.Mobile, request.Token, request.ClientIp);
                 if (!auth.Succeeded)
                     return ApiUserResponseFactory.FailTransaction(
                         auth.ErrorCode, auth.Message, request.RequestId, ApiUserEventType.Status);
@@ -268,7 +276,7 @@ namespace FintechApp.Services
         {
             try
             {
-                var auth = await _auth.Authenticate(request.UserId, request.Token, request.ClientIp);
+                var auth = await _auth.Authenticate(request.Mobile, request.Token, request.ClientIp);
                 if (!auth.Succeeded)
                     return ApiUserResponseFactory.Fail(new ApiUserBalanceResponse(), auth.ErrorCode, auth.Message, request.RequestId);
 
@@ -286,7 +294,7 @@ namespace FintechApp.Services
         {
             try
             {
-                var auth = await _auth.Authenticate(request.UserId, request.Token, request.ClientIp);
+                var auth = await _auth.Authenticate(request.Mobile, request.Token, request.ClientIp);
                 if (!auth.Succeeded)
                     return ApiUserResponseFactory.Fail(new ApiUserOperatorListResponse(), auth.ErrorCode, auth.Message, request.RequestId);
 
@@ -329,6 +337,24 @@ namespace FintechApp.Services
                     $"Unknown or inactive operator '{request.Operator.Trim()}'. Call /api/v1/operators for valid codes."), null, 0);
 
             return (null, op, amount);
+        }
+
+        /// <summary>
+        /// Puts the reply's one human-readable field through the admin's rewrite rules
+        /// (Settings → Response Messages) on the API channel, in place, BEFORE the audit log is
+        /// written — so the wire, the log and the callback all carry the same words. Provider
+        /// wording is already rewritten at the gateway where the provider is known; this covers
+        /// the messages we wrote ourselves. Never throws.
+        /// </summary>
+        private async Task ApplyMessageRules(ApiUserTransactionResponse response)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(response.Message)) return;
+                response.Message = await _messageRules.Apply(
+                    response.Message, 0, response.ServiceId, MessageChannel.Api);
+            }
+            catch (Exception ex) { _logger.Write(ex); }
         }
 
         /// <summary>

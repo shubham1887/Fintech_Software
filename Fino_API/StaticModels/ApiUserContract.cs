@@ -82,6 +82,13 @@ namespace FintechApp.StaticModels
         public const string None = "";
 
         // ── Authentication / authorisation ───────────────────────────────
+        /// <summary>'mobile' missing, or not the account's registered 10-digit number.</summary>
+        public const string MobileRequired = "AUTH_MOBILE_REQUIRED";
+        /// <summary>
+        /// Legacy spelling of <see cref="MobileRequired"/>, from when the credential was the
+        /// numeric account id. Kept defined so an integrator switching on the old code still
+        /// compiles against the published list; nothing returns it any more.
+        /// </summary>
         public const string UserIdRequired = "AUTH_USERID_REQUIRED";
         public const string TokenRequired = "AUTH_TOKEN_REQUIRED";
         public const string UserNotFound = "AUTH_USER_NOT_FOUND";
@@ -102,6 +109,55 @@ namespace FintechApp.StaticModels
         public const string TransactionRejected = "TXN_REJECTED";
         /// <summary>Status check found no transaction for the given requestid / txnid.</summary>
         public const string TransactionNotFound = "TXN_NOT_FOUND";
+
+        // ── Request security (DMT and every signed endpoint) ─────────────
+        /// <summary>The signature header/field was not sent while signing is enforced.</summary>
+        public const string SignatureRequired = "SEC_SIGNATURE_REQUIRED";
+        /// <summary>The signature did not match the one computed over the request.</summary>
+        public const string SignatureInvalid = "SEC_SIGNATURE_INVALID";
+        /// <summary>timestamp missing, unparseable, or outside the accepted clock skew.</summary>
+        public const string TimestampInvalid = "SEC_TIMESTAMP_INVALID";
+        /// <summary>nonce missing, or already used inside the replay window.</summary>
+        public const string NonceInvalid = "SEC_NONCE_INVALID";
+        /// <summary>The endpoint was called with a method it does not accept (money moves on POST only).</summary>
+        public const string MethodNotAllowed = "SEC_METHOD_NOT_ALLOWED";
+
+        // ── DMT validation / flow ────────────────────────────────────────
+        public const string SenderMobileRequired = "VAL_SENDER_MOBILE_REQUIRED";
+        public const string SenderNameRequired = "VAL_SENDER_NAME_REQUIRED";
+        public const string SenderNotFound = "DMT_SENDER_NOT_FOUND";
+        public const string SenderNotVerified = "DMT_SENDER_NOT_VERIFIED";
+        public const string BeneficiaryRequired = "VAL_BENEFICIARY_REQUIRED";
+        public const string BeneficiaryNotFound = "DMT_BENEFICIARY_NOT_FOUND";
+        public const string BeneficiaryNotVerified = "DMT_BENEFICIARY_NOT_VERIFIED";
+        public const string AccountRequired = "VAL_ACCOUNT_REQUIRED";
+        public const string IfscRequired = "VAL_IFSC_REQUIRED";
+        public const string IfscInvalid = "VAL_IFSC_INVALID";
+        public const string PaymentTypeInvalid = "VAL_PAYMENT_TYPE_INVALID";
+        public const string OtpRequired = "VAL_OTP_REQUIRED";
+        /// <summary>Amount is above the per-transfer ceiling configured for the API channel.</summary>
+        public const string AmountAboveLimit = "VAL_AMOUNT_ABOVE_LIMIT";
+        /// <summary>Amount is below the per-transfer floor configured for the API channel.</summary>
+        public const string AmountBelowLimit = "VAL_AMOUNT_BELOW_LIMIT";
+        /// <summary>The DMT flow rejected the step — the message carries the reason verbatim.</summary>
+        public const string DmtRejected = "DMT_REJECTED";
+
+        /// <summary>
+        /// latitude/longitude sent but unusable — one without the other, or not a coordinate.
+        /// Checked because this is an AUDIT field: a transfer stored with "abc,xyz" as its outlet
+        /// location is worse than one stored with none, since it looks like evidence and is not.
+        /// </summary>
+        public const string LocationInvalid = "VAL_LOCATION_INVALID";
+
+        // ── Payout validation ────────────────────────────────────────────
+        /// <summary>Account holder's name was not sent. Payout names the beneficiary inline.</summary>
+        public const string BeneficiaryNameRequired = "VAL_BENEFICIARY_NAME_REQUIRED";
+        /// <summary>
+        /// No active payout service exists in the catalogue, so the platform has nothing to route
+        /// the transfer through. An admin configuration gap, never the integrator's mistake —
+        /// reported with its own code so support can tell the two apart at a glance.
+        /// </summary>
+        public const string PayoutUnavailable = "PAYOUT_UNAVAILABLE";
 
         // ── System ───────────────────────────────────────────────────────
         public const string SystemError = "SYS_ERROR";

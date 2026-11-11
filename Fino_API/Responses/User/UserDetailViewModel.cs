@@ -40,6 +40,15 @@
         public bool IsLoginOTP { get; set; }
         public bool IsPin { get; set; }
         public string AliasName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Set when this account is somebody's SECOND login on the same mobile number
+        /// (StaticModels/LinkedProfilePolicy) — it holds the id of the main account.
+        ///
+        /// Without it the admin's user list shows two rows carrying the same number and no
+        /// explanation, which reads as a data error rather than a feature.
+        /// </summary>
+        public int? LinkedPrimaryUserID { get; set; }
         public string UniqueReferenceNo { get; set; } = string.Empty;
         public string ProfileImagePath { get; set; } = string.Empty;
         public string ShopAddress { get; set; } = string.Empty;
@@ -110,6 +119,15 @@
         public string MobileNumber { get; set; } = string.Empty;
         public string UserType { get; set; } = string.Empty;
         public string AliasName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Set when this account is somebody's SECOND login on the same mobile number
+        /// (StaticModels/LinkedProfilePolicy) — it holds the id of the main account.
+        ///
+        /// Without it the admin's user list shows two rows carrying the same number and no
+        /// explanation, which reads as a data error rather than a feature.
+        /// </summary>
+        public int? LinkedPrimaryUserID { get; set; }
         public string UniqueReferenceNo { get; set; } = string.Empty;
     }
 

@@ -171,16 +171,45 @@ namespace FintechApp.Services
                         DocumentDate = TryDate((string?)d["dt"] ?? (string?)d["nt_dt"]) ?? DateTime.Today,
                         PlaceOfSupplyStateCode = ((string?)d["pos"] ?? string.Empty).Trim(),
                         ReverseCharge = string.Equals((string?)d["rev"], "Y", StringComparison.OrdinalIgnoreCase),
-                        TaxableValue = (decimal?)d["txval"] ?? 0m,
-                        IGST = (decimal?)d["iamt"] ?? 0m,
-                        CGST = (decimal?)d["camt"] ?? 0m,
-                        SGST = (decimal?)d["samt"] ?? 0m,
-                        Cess = (decimal?)d["csamt"] ?? 0m,
+                        TaxableValue = Amount(d, "txval"),
+                        IGST = Amount(d, "igst", "iamt"),
+                        CGST = Amount(d, "cgst", "camt"),
+                        SGST = Amount(d, "sgst", "samt"),
+                        Cess = Amount(d, "cess", "csamt"),
                         ItcAvailable = !string.Equals((string?)d["itcavl"], "N", StringComparison.OrdinalIgnoreCase),
                         ItcUnavailableReason = (string?)d["rsn"] ?? string.Empty,
                     });
                 }
             }
+        }
+
+        /// <summary>
+        /// One money figure of a 2B document, wherever the file keeps it.
+        ///
+        /// The portal has written this three ways. A GSTR-2B download names the heads
+        /// <c>igst / cgst / sgst / cess</c> and puts them either on the document or, when the
+        /// download carries item details, on each row of <c>items</c>. Files produced by older
+        /// tooling use the GSTR-2A names — <c>iamt / camt / samt / csamt</c> — nested under
+        /// <c>itms[].itm_det</c>. Reading only one of those gives every document a tax of zero,
+        /// which then "mismatches" every bill in the books and no credit can ever be claimed —
+        /// silently, because zero is a valid number. So: the document's own figure under either
+        /// name if it has one, otherwise the sum over its item rows.
+        /// </summary>
+        private static decimal Amount(JToken doc, params string[] names)
+        {
+            foreach (string n in names)
+                if (doc[n] != null && doc[n]!.Type != JTokenType.Null) return (decimal?)doc[n] ?? 0m;
+
+            decimal sum = 0m;
+            var rows = (doc["items"] as JArray) ?? (doc["itms"] as JArray);
+            if (rows == null) return 0m;
+            foreach (var row in rows)
+            {
+                var src = (row["itm_det"] as JObject) ?? row;
+                foreach (string n in names)
+                    if (src[n] != null && src[n]!.Type != JTokenType.Null) { sum += (decimal?)src[n] ?? 0m; break; }
+            }
+            return sum;
         }
 
         private static DateTime? TryDate(string? s)

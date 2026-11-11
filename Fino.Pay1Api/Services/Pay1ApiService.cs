@@ -45,7 +45,7 @@ namespace Fino.Pay1Api.Services
             var (options, error) = Resolve(creds);
             if (error != null) return Pay1BillerResponse.Fail(error);
 
-            var (body, reached, failure) = await Call(options, OpBillerInfo, NewRequestID("BI"));
+            var (body, reached, failure) = await Call(options, OpBillerInfo, NewRequestID());
             if (!reached) return Pay1BillerResponse.Fail(failure);
 
             return ParseBillerInfo(body);
@@ -59,7 +59,7 @@ namespace Fino.Pay1Api.Services
             var (options, error) = Resolve(creds);
             if (error != null) return Pay1ApiResponse.Fail(error);
 
-            string transId = string.IsNullOrWhiteSpace(request.RequestID) ? NewRequestID("BF") : request.RequestID.Trim();
+            string transId = string.IsNullOrWhiteSpace(request.RequestID) ? NewRequestID() : request.RequestID.Trim();
             var (body, reached, failure) = await Call(options, OpBillFetch, transId, new Dictionary<string, string>
             {
                 ["operator"] = request.Operator.Trim(),
@@ -104,7 +104,7 @@ namespace Fino.Pay1Api.Services
             if (error != null) return Pay1ApiResponse.Fail(error);
 
             // The balance enquiry is signed over a random reference rather than a transaction id.
-            var (body, reached, failure) = await Call(options, OpBalance, NewRequestID("BAL"));
+            var (body, reached, failure) = await Call(options, OpBalance, NewRequestID());
             if (!reached) return Transport(failure);
 
             var result = ParseCommon(body);
@@ -261,79 +261,148 @@ namespace Fino.Pay1Api.Services
             return root.TrimEnd('/') + "/apis/receiveApi";
         }
 
-        /// <summary>Unique numeric reference for the calls that need one of their own.</summary>
-        public static string NewRequestID(string prefix = "") =>
-            prefix + DateTime.Now.ToString("yyMMddHHmmss", CultureInfo.InvariantCulture) + Random.Shared.Next(100, 999);
+        private const int SequenceRange = 10000;
+
+        // Rolling tail for NewRequestID, started at a random point so two instances of the host do
+        // not march through the same sequence in the same second.
+        private static int _sequence = Random.Shared.Next(0, SequenceRange);
+
+        /// <summary>Unique reference for the calls that have to invent one (biller list, balance,
+        /// bill fetch). Digits only, deliberately: the document asks for a "random number" on the
+        /// balance enquiry and every trans_id it samples is numeric, so a letter-prefixed id risks
+        /// being rejected upstream as malformed.
+        ///
+        /// The tail counts rather than rolls dice. Three random digits gave only 900 ids a second,
+        /// which collides about a quarter of the time at even a modest bill-fetch rate, and Pay1
+        /// rejects a repeated trans_id. Counting makes the first 10,000 calls in any one second
+        /// collision-free, which is far past what this platform will ever ask of it.</summary>
+        public static string NewRequestID()
+        {
+            int tail = (int)((uint)Interlocked.Increment(ref _sequence) % SequenceRange);
+            return DateTime.Now.ToString("yyMMddHHmmss", CultureInfo.InvariantCulture) +
+                   tail.ToString("D4", CultureInfo.InvariantCulture);
+        }
 
         // ── Response parsing ─────────────────────────────────────────────────────────
 
         // One parser for every operation: the envelope is always the same (status / errCode /
         // description), and the operation-specific fields sit either beside it (payment, balance)
         // or inside "description" (bill fetch).
+        //
+        // A transaction enquiry (operation_type 3) answers with one object PER REQUEST ID instead
+        // of the single object every other operation returns, and it arrives in one of two shapes.
+        // The live API nests the list under "status":
+        //
+        //     {"status":[{"req_id":"…","status":"failure","errCode":"E015","trans_id":""}]}
+        //
+        // which makes "status" an ARRAY where every other operation has a string — read it as a
+        // string and the enquiry silently yields no status at all, leaving good transactions stuck
+        // pending. The document instead prints a flat object, and a bare top-level array also turns
+        // up, so all three are accepted here. The entries land in Results and the first is copied
+        // to the top level, which keeps a one-id enquiry identical however it was wrapped.
         private static Pay1ApiResponse ParseCommon(string body)
         {
-            var result = new Pay1ApiResponse { Data = body ?? string.Empty, Attempted = true };
-            if (string.IsNullOrWhiteSpace(body)) return Transport(Pay1.Message.UnreadableResponse);
+            if (string.IsNullOrWhiteSpace(body)) return Unreadable(body);
 
             JsonDocument document;
             try { document = JsonDocument.Parse(body); }
-            catch { return new Pay1ApiResponse { Data = body, Attempted = true, Success = false, Message = Pay1.Message.UnreadableResponse }; }
+            catch { return Unreadable(body); }
 
             using (document)
             {
                 var root = document.RootElement;
-                if (root.ValueKind != JsonValueKind.Object)
-                    return new Pay1ApiResponse { Data = body, Attempted = true, Success = false, Message = Pay1.Message.UnreadableResponse };
 
-                result.Success = true;
-                result.Status = Str(root, "status").ToLowerInvariant();
-                result.ErrorCode = Str(root, "errCode", "err_code");
-                result.RequestID = Str(root, "partner_reqid", "req_id");
-                result.TransactionID = Str(root, "ref_code", "trans_id");
-                result.Balance = Dec(root, "balance");
-                result.ComplaintID = Str(root, "complaint_id");
-                result.TurnaroundTimeHours = (int)Dec(root, "turnaround_time");
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    return TryGet(root, out var nested, "status") && nested.ValueKind == JsonValueKind.Array
+                        ? ParseBatch(nested, body)
+                        : ParseObject(root, body);
+                }
 
-                // "description" is a message on most operations and an object on bill fetch.
-                if (TryGet(root, out var description, "description") && description.ValueKind == JsonValueKind.Object)
-                {
-                    result.BillNumber = Str(description, "bill_number");
-                    result.BillDate = Str(description, "bill_date");
-                    result.DueDate = Str(description, "due_date");
-                    result.BillAmount = Dec(description, "bill_amount");
-                    result.BillPeriod = Str(description, "bill_period");
-                    result.CustomerName = Str(description, "customer_name");
-                    result.MobileNumber = Str(description, "mobile_number");
-                }
-                else
-                {
-                    result.Message = Str(root, "description", "message");
-                }
+                if (root.ValueKind == JsonValueKind.Array) return ParseBatch(root, body);
+
+                return Unreadable(body);
+            }
+        }
+
+        // One entry per request id. Parsed twice on purpose: the head is its own instance, so
+        // Results never contains the object that owns it.
+        private static Pay1ApiResponse ParseBatch(JsonElement array, string body)
+        {
+            var entries = array.EnumerateArray()
+                               .Where(element => element.ValueKind == JsonValueKind.Object)
+                               .ToList();
+            if (entries.Count == 0) return Unreadable(body);
+
+            var head = ParseObject(entries[0], body);
+            head.Results = entries.Select(element => ParseObject(element, body)).ToList();
+            return head;
+        }
+
+        private static Pay1ApiResponse ParseObject(JsonElement root, string body)
+        {
+            var result = new Pay1ApiResponse
+            {
+                Data = body ?? string.Empty,
+                Attempted = true,
+                Success = true,
+                Status = Str(root, "status").ToLowerInvariant(),
+                ErrorCode = Str(root, "errCode", "err_code"),
+                RequestID = Str(root, "partner_reqid", "req_id"),
+                TransactionID = Str(root, "ref_code", "trans_id"),
+                Balance = Dec(root, "balance"),
+                ComplaintID = Str(root, "complaint_id"),
+                TurnaroundTimeHours = (int)Dec(root, "turnaround_time"),
+            };
+
+            // "description" is a message on most operations and an object on bill fetch.
+            if (TryGet(root, out var description, "description") && description.ValueKind == JsonValueKind.Object)
+            {
+                result.BillNumber = Str(description, "bill_number");
+                result.BillDate = Str(description, "bill_date");
+                result.DueDate = Str(description, "due_date");
+                result.BillAmount = Dec(description, "bill_amount");
+                result.BillPeriod = Str(description, "bill_period");
+                result.CustomerName = Str(description, "customer_name");
+                result.MobileNumber = Str(description, "mobile_number");
+                result.AccountLabel = Str(description, "acc_no_label");
+            }
+            else
+            {
+                result.Message = Str(root, "description", "message");
             }
 
             return result;
         }
 
+        private static Pay1ApiResponse Unreadable(string? body) => new()
+        {
+            Data = body ?? string.Empty,
+            Attempted = true,
+            Success = false,
+            Message = Pay1.Message.UnreadableResponse,
+        };
+
         private static Pay1BillerResponse ParseBillerInfo(string body)
         {
             var response = new Pay1BillerResponse { Data = body ?? string.Empty };
-            if (string.IsNullOrWhiteSpace(body)) return Pay1BillerResponse.Fail(Pay1.Message.UnreadableResponse);
+            if (string.IsNullOrWhiteSpace(body)) return Pay1BillerResponse.Fail(Pay1.Message.UnreadableResponse, body ?? string.Empty);
 
             JsonDocument document;
             try { document = JsonDocument.Parse(body); }
-            catch { return Pay1BillerResponse.Fail(Pay1.Message.UnreadableResponse); }
+            catch { return Pay1BillerResponse.Fail(Pay1.Message.UnreadableResponse, body); }
 
             using (document)
             {
                 var root = document.RootElement;
-                if (root.ValueKind != JsonValueKind.Object) return Pay1BillerResponse.Fail(Pay1.Message.UnreadableResponse);
+                if (root.ValueKind != JsonValueKind.Object) return Pay1BillerResponse.Fail(Pay1.Message.UnreadableResponse, body);
 
                 if (!Str(root, "status").Equals("success", StringComparison.OrdinalIgnoreCase))
                 {
                     string message = TryGet(root, out var d, "description") && d.ValueKind == JsonValueKind.String
                         ? d.GetString() ?? string.Empty
                         : Pay1.Message.ServiceUnavailable;
-                    return Pay1BillerResponse.Fail(message);
+                    return Pay1BillerResponse.Fail(message, body);
                 }
 
                 // { "status":"success", "code":200, "description": { "data": [ … ] } }
@@ -349,7 +418,7 @@ namespace Fino.Pay1Api.Services
                 }
                 else
                 {
-                    return Pay1BillerResponse.Fail(Pay1.Message.UnreadableResponse);
+                    return Pay1BillerResponse.Fail(Pay1.Message.UnreadableResponse, body);
                 }
 
                 foreach (var item in data.EnumerateArray())
@@ -360,6 +429,7 @@ namespace Fino.Pay1Api.Services
                     {
                         ProductID = Str(item, "product_id"),
                         Name = Str(item, "Name", "name", "biller_name"),
+                        Category = Str(item, "category"),
                         BillFetch = Flag(item, "bill_fetch"),
                         AmountChange = Flag(item, "amount_change"),
                         AmountExactness = Str(item, "amt_exactness"),

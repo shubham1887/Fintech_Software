@@ -6,6 +6,14 @@ export interface AutocompleteOption {
   value: string | number;
   label: string;
   sublabel?: string;
+  /**
+   * A short qualifier shown as a pill on the right of the row - the user's ROLE, for the entity
+   * pickers. Two users can share a firm name, and a report filtered to the wrong one of them is
+   * indistinguishable from a report with no data, so which tier a name belongs to has to be on
+   * the row rather than in the reader's memory. Also matched when filtering, so typing "retailer"
+   * narrows the list to retailers.
+   */
+  badge?: string;
 }
 
 /**
@@ -54,7 +62,10 @@ export function Autocomplete({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q || (selected && q === selected.label.toLowerCase())) return options.slice(0, 50);
-    return options.filter((o) => o.label.toLowerCase().includes(q) || o.sublabel?.toLowerCase().includes(q)).slice(0, 50);
+    return options.filter((o) =>
+      o.label.toLowerCase().includes(q)
+      || o.sublabel?.toLowerCase().includes(q)
+      || o.badge?.toLowerCase().includes(q)).slice(0, 50);
   }, [options, query, selected]);
 
   return (
@@ -109,7 +120,14 @@ export function Autocomplete({
                       <span className="block truncate">{o.label}</span>
                       {o.sublabel && <span className="block truncate text-xs text-slate-400">{o.sublabel}</span>}
                     </span>
-                    {active && <Check className="size-4 shrink-0 text-brand-600" />}
+                    <span className="flex shrink-0 items-center gap-2">
+                      {o.badge && (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                          {o.badge}
+                        </span>
+                      )}
+                      {active && <Check className="size-4 text-brand-600" />}
+                    </span>
                   </button>
                 );
               })

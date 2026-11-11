@@ -47,6 +47,12 @@ namespace FintechApp.StaticModels
 
             // Legitimately upward-pointing references.
             ["ParentID"] = ScopeKind.Network,
+            // The destination of a re-parent (User Transfer, Userwise Bulk Action "Shift"). It was
+            // missing, so this generic gate saw nothing to check on the one payload whose whole
+            // purpose is to move an account somewhere else in the tree. Both services validate it
+            // precisely as well; this is the net underneath them, and it covers any future
+            // endpoint that reuses the name.
+            ["NewParentID"] = ScopeKind.Network,
             ["UplineUserID"] = ScopeKind.Network,
             ["FromUserID"] = ScopeKind.Network,
             ["DistributerUserID"] = ScopeKind.Network,

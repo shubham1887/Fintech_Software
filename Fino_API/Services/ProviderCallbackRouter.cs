@@ -73,7 +73,7 @@ namespace FintechApp.Services
                 return "No callback parser for this provider.";
             }
 
-            var parsed = parser.Parse(provider, values, rawBody);
+            var parsed = parser.Parse(provider, values, rawBody, CallbackValues.Headers(request));
             if (!parsed.Verified)
             {
                 await Drop(provider.ProviderID, $"REJECTED ({parsed.Message}) [{ipAddress}] {provider.ProviderName}: {push}");

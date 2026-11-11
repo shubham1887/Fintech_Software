@@ -23,5 +23,19 @@
         public int LowBalanceAmount { get; set; }
         public DateTime DateTime { get; set; }
         public DateTime UpdatedateTime { get; set; }
+
+        /// <summary>
+        /// This provider is a built-in (compiled) integration — Pay1, JaiJui — reached through its
+        /// own library rather than through endpoint templates. See Providers/CodedProviders.
+        ///
+        /// It changes what the admin has to fill in: no Request templates and no Response rules,
+        /// only the credentials on this row, the operator mapping, and the routing priority.
+        /// Without this flag the Setting page says "No endpoints yet — add the Transaction
+        /// endpoint first" on a provider that needs none, which reads as "not configured".
+        /// </summary>
+        public bool IsCodedIntegration { get; set; }
+
+        /// <summary>The rail a coded provider serves (BBPS / DMT). Empty for a template gateway.</summary>
+        public string CodedFamily { get; set; } = string.Empty;
     }
 }

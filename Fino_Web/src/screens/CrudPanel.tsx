@@ -1,6 +1,7 @@
 import { Download, Pencil, Plus, Power, Search, Trash2 } from 'lucide-react';
-import { exportToCsv } from '@/lib/csv';
-import { useClientSearch } from '@/lib/useClientSearch';
+import { fetchListPage } from '@/api/list.api';
+import { useCsvExport } from '@/lib/exportAll';
+import { useClientSearch, filterRows } from '@/lib/useClientSearch';
 import { getField } from '@/lib/row';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
@@ -23,6 +24,7 @@ export function CrudPanel({ label, crud, addLabel }: { label: string; crud: Crud
   const { rows, isFetching, adding, setAdding, editing, setEditing, createMut, updateMut, deleteMut, toggleMut, onDelete } =
     useCrud(crud);
   const { query, setQuery, filtered } = useClientSearch(rows);
+  const { exporting, runExport } = useCsvExport();
 
   const rowActions =
     crud.update || crud.remove
@@ -56,7 +58,18 @@ export function CrudPanel({ label, crud, addLabel }: { label: string; crud: Crud
         </div>
         <div className="flex-1" />
         <span className="hidden text-sm text-slate-400 sm:inline">{filtered.length} rows</span>
-        <Button variant="outline" size="sm" onClick={() => exportToCsv(filtered, label)} disabled={filtered.length === 0}>
+        <Button
+          variant="outline"
+          size="sm"
+          loading={exporting}
+          disabled={filtered.length === 0}
+          onClick={() => runExport({
+            filename: label,
+            onScreen: filtered,
+            fetchAll: (skip, take) => fetchListPage(crud.list.endpoint, crud.list.payload ?? {}, skip, take),
+            filter: (all) => filterRows(all, query),
+          })}
+        >
           <Download className="size-4" /> Export
         </Button>
         {crud.create && (

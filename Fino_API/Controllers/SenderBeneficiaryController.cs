@@ -30,20 +30,38 @@ namespace FintechApp.Controllers
             _beneficiaryService = beneficiaryService;
         }
 
-        // Returns all senders registered under the current user
+        /// <summary>
+        /// The Sender / Beneficiary report: registered DMT senders, who they belong to, and how many
+        /// beneficiaries each holds.
+        ///
+        /// This used to return only the senders registered under the CALLER. An admin never
+        /// registers DMT senders themselves, so the report was permanently empty for exactly the
+        /// role that opens it — which is why it "showed nothing". It also ignored the report's date
+        /// range, entity filter and paging, and never carried the beneficiary count the report is
+        /// named after. It is now scoped the way every other report is: admin and support see the
+        /// whole platform (or one chosen entity), an upline sees its own network, everyone else sees
+        /// their own senders.
+        /// </summary>
         [HttpPost("SelectSender")]
         public async Task<APIResponse> SelectSender([FromForm] APIRequest apiRequest)
         {
             KeyDataModel? keyDataModel;
-            try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); }
+            SelectSenderReportRequest? request;
+            try
+            {
+                keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData));
+                // The report screen always sends a filter body; older callers may not.
+                request = JsonConvert.DeserializeObject<SelectSenderReportRequest>(_encryptDecrypt.Decrypt(apiRequest.Request))
+                          ?? new SelectSenderReportRequest();
+            }
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
             if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
 
-            var list = await _senderService.GetByUserID(keyDataModel.UserID);
-            if (list == null || list.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.DataNotFound);
-            return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(list));
+            var (reportFail, data) = await _senderService.SelectReport(request, keyDataModel.UserID, keyDataModel.UserTypeID);
+            if (!reportFail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(reportFail);
+            return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(data));
         }
 
         // Returns all beneficiaries for a given user (by UserID in request, or current user as fallback)

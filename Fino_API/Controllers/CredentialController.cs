@@ -221,6 +221,70 @@ namespace FintechApp.Controllers
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 
+        // ─── MPIN (transaction / app-open PIN) ───────────────────────────────
+        [HttpPost("MpinStatus")]
+        public async Task<APIResponse> MpinStatus([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel;
+            try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+            try
+            {
+                var status = await _credentialService.GetMpinStatus(keyDataModel.UserID);
+                return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(status)));
+            }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
+
+        [HttpPost("SetMpin")]
+        public async Task<APIResponse> SetMpin([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel; SetMpinRequest? request;
+            try
+            {
+                keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData));
+                request = JsonConvert.DeserializeObject<SetMpinRequest>(_encryptDecrypt.Decrypt(apiRequest.Request));
+            }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+
+            string ipAddress = IPAddressHelper.GetClientIPAddress(HttpContext);
+            try
+            {
+                string result = await _credentialService.SetMpin(request, keyDataModel.UserID, ipAddress);
+                if (!result.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(result);
+                return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt("MPIN saved successfully."));
+            }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
+
+        [HttpPost("VerifyMpin")]
+        public async Task<APIResponse> VerifyMpin([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel; VerifyMpinRequest? request;
+            try
+            {
+                keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData));
+                request = JsonConvert.DeserializeObject<VerifyMpinRequest>(_encryptDecrypt.Decrypt(apiRequest.Request));
+            }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+            try
+            {
+                string result = await _credentialService.VerifyMpin(request, keyDataModel.UserID);
+                if (!result.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(result);
+                return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt("MPIN verified."));
+            }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
+
         [HttpPost("Logout")]
         public async Task<APIResponse> Logout([FromForm] APIRequest apiRequest)
         {

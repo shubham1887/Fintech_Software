@@ -17,5 +17,17 @@
         public int UserTypeID { get; set; }
         public string UserTypeName { get; set; } = string.Empty;
         public bool IsDelete { get; set; }
+
+        /// <summary>
+        /// When the ticket was raised.
+        ///
+        /// It was never sent, so the queue's "Raised" column showed a dash on every row and the
+        /// screen's date filter had nothing to filter on — a support queue you cannot sort or
+        /// date-range is not a queue, it is a list.
+        /// </summary>
+        public DateTime DateTime { get; set; }
+
+        /// <summary>Last change — set when the ticket is answered or its status moves.</summary>
+        public DateTime UpdatedateTime { get; set; }
     }
 }

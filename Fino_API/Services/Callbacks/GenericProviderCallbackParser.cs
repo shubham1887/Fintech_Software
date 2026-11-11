@@ -22,7 +22,8 @@ namespace FintechApp.Services.Callbacks
     {
         public bool CanHandle(ProviderMaster provider) => true;
 
-        public ProviderCallbackParseResult Parse(ProviderMaster provider, IDictionary<string, string> values, string rawBody)
+        public ProviderCallbackParseResult Parse(ProviderMaster provider, IDictionary<string, string> values, string rawBody,
+            IDictionary<string, string> headers)
         {
             string requestId = CallbackValues.First(values,
                 "RequestID", "request_id", "requestid", "client_req_id", "clientrequestid",

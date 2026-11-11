@@ -10,6 +10,11 @@ namespace FintechApp.Interfaces.Providers
         public JaiJuiCredentials Credentials { get; set; } = new();
         public int ProviderID { get; set; }                    // ProviderMaster id (0 = legacy DMT-row creds)
         public string ProviderName { get; set; } = string.Empty;
+
+        // Sequence of the gateway row this came from. Two coded rails now read the same list, so the
+        // dispatcher needs the number to answer "which active row is actually in force" rather than
+        // whichever resolver it happened to ask first.
+        public int Sequence { get; set; }
     }
 
     // Resolves the currently-active JaiJui DMT gateway: the active "DMT Settings" row (lowest Sequence

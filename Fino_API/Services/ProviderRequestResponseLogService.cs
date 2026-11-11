@@ -61,12 +61,80 @@ namespace FintechApp.Services
         };
 
         public async Task<List<ProviderRequestResponseLogResponse>> GetAll() { var list = await _repository.GetAll(); var rows = list.OrderByDescending(e => e.ProviderRequestResponseLogID).Select(MapToResponse).ToList(); await Enrich(rows); return rows; }
+
+        /// <summary>
+        /// Filtered, paged provider log — date range, provider, service, entity, call type, free text.
+        /// Only the requested page is mapped and enriched, so the screen no longer has to download the
+        /// whole request/response history to show 25 rows.
+        /// </summary>
+        public async Task<ProviderRequestResponseLogPage> Search(SearchProviderRequestResponseLogRequest request)
+        {
+            var all = await _repository.GetAll();
+            IEnumerable<Entities.ProviderRequestResponseLog> query = all;
+
+            if (DateTime.TryParse(request.FromDate, out var from))
+                query = query.Where(e => e.DateTime >= from.Date);
+            if (DateTime.TryParse(request.ToDate, out var to))
+                query = query.Where(e => e.DateTime < to.Date.AddDays(1));
+
+            if (request.ProviderID > 0) query = query.Where(e => e.ProviderID == request.ProviderID);
+            if (request.ServiceID > 0) query = query.Where(e => e.ServiceID == request.ServiceID);
+            if (request.UserID > 0) query = query.Where(e => e.UserID == request.UserID);
+            if (request.TransactionID > 0) query = query.Where(e => e.TransactionID == request.TransactionID);
+
+            string through = (request.Through ?? string.Empty).Trim();
+            if (through.Length > 0 && !through.Equals("ALL", StringComparison.OrdinalIgnoreCase))
+                query = query.Where(e => (e.Through ?? string.Empty).Equals(through, StringComparison.OrdinalIgnoreCase));
+
+            // The payloads are where an operator actually looks for a reference number or an error
+            // string, so free text searches them as well as the IP and the transaction id.
+            string search = (request.Search ?? string.Empty).Trim();
+            if (search.Length > 0)
+            {
+                query = query.Where(e =>
+                    (e.Request ?? string.Empty).Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || (e.Response ?? string.Empty).Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || (e.IPAddress ?? string.Empty).Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || e.TransactionID.ToString() == search);
+            }
+
+            var filtered = query.OrderByDescending(e => e.DateTime).ThenByDescending(e => e.ProviderRequestResponseLogID).ToList();
+
+            int take = request.TakeCount > 0 ? request.TakeCount : 25;
+            var page = filtered.Skip(Math.Max(request.SkipCount, 0)).Take(take).Select(MapToResponse).ToList();
+            await Enrich(page);
+
+            return new ProviderRequestResponseLogPage
+            {
+                Count = filtered.Count,
+                list = page,
+                // Offered by the screen's "Call type" filter — taken from the whole table rather than
+                // the filtered set so choosing one type does not remove every other option.
+                ThroughOptions = all
+                    .Select(e => (e.Through ?? string.Empty).Trim())
+                    .Where(t => t.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(t => t)
+                    .ToList(),
+            };
+        }
         public async Task<ProviderRequestResponseLogResponse?> GetByID(int id) { var e = await _repository.GetByID(id); return e == null ? null : MapToResponse(e); }
         public async Task<List<ProviderRequestResponseLogResponse>> GetByUserID(int userid) { var list = await _repository.GetByUserID(userid); return list.Select(MapToResponse).ToList(); }
-        // Status-check / dispatch logs for one transaction (newest first) — shows whether and when
-        // the recharge status was re-checked against the provider.
-        public async Task<List<ProviderRequestResponseLogResponse>> GetByTransaction(int transactionId)
+        /// <summary>
+        /// Status-check / dispatch logs for one transaction (newest first) — shows whether and when
+        /// the status was re-checked against the provider.
+        ///
+        /// Admin and support ONLY. These rows are our side of the wire: the upstream endpoint, the
+        /// vendor id, our own opening/closing balance and the margin we earn on the transfer. An
+        /// API user or a retailer opening "Log" on their own transaction must never be shown the
+        /// JaiJui (or any other provider's) exchange — they get their own API request/response from
+        /// APIUserInitialRequestResponseLog instead.
+        /// </summary>
+        public async Task<List<ProviderRequestResponseLogResponse>> GetByTransaction(int transactionId, int callerUserTypeID)
         {
+            if (callerUserTypeID != UserTypeCode.Admin && callerUserTypeID != UserTypeCode.SupportUser)
+                return new List<ProviderRequestResponseLogResponse>();
+
             var list = await _repository.GetAll();
             return list.Where(e => e.TransactionID == transactionId)
                 .OrderByDescending(e => e.DateTime)

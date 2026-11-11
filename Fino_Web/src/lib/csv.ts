@@ -5,10 +5,16 @@ function cell(value: unknown): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Download an array of objects as a CSV file (columns = union of keys). */
-export function exportToCsv(rows: Row[], filename: string): void {
+/**
+ * Download an array of objects as a CSV file.
+ *
+ * Columns default to the union of every key on every row. Pass `only` to export a fixed list
+ * instead — a caller whose screen hides fields by role has to, or the export hands back exactly
+ * the fields the screen withheld.
+ */
+export function exportToCsv(rows: Row[], filename: string, only?: string[]): void {
   if (!rows.length) return;
-  const keys = Array.from(
+  const keys = only ?? Array.from(
     rows.reduce<Set<string>>((set, r) => {
       Object.keys(r).forEach((k) => set.add(k));
       return set;

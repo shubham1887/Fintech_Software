@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Check, Copy, Eye, EyeOff, KeyRound, Link2, Plus, RefreshCw, ShieldCheck, Trash2, Webhook,
+  Check, Copy, Eye, EyeOff, Fingerprint, KeyRound, Link2, Plus, RefreshCw, ShieldCheck, Trash2, Webhook,
 } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
 import { fetchList } from '@/api/list.api';
@@ -167,6 +167,20 @@ export function ApiAccessScreen(_props: CustomScreenProps) {
     } catch { toast.error('Could not copy to clipboard.'); }
   };
 
+  // The registered mobile number goes on every API call as `mobile`. Shown here because this is
+  // the page the documentation sends integrators to, and so the value they must send is never
+  // in doubt — it is this account's login number, not some other one on file.
+  const apiMobile = String(user?.MobileNumber ?? '').trim();
+  const [idCopied, setIdCopied] = useState(false);
+  const copyApiMobile = async () => {
+    if (!isApiUser || !apiMobile) return;
+    try {
+      await navigator.clipboard.writeText(apiMobile);
+      setIdCopied(true);
+      setTimeout(() => setIdCopied(false), 1500);
+    } catch { toast.error('Could not copy to clipboard.'); }
+  };
+
   // ── IP security ────────────────────────────────────────────────────────────
   const [ipSecure, setIpSecure] = useState(false);
   const [ips, setIps] = useState('');
@@ -258,6 +272,23 @@ export function ApiAccessScreen(_props: CustomScreenProps) {
       )}
 
       <div className="space-y-5">
+        {/* API MOBILE NUMBER */}
+        <SectionCard
+          icon={Fingerprint}
+          title="API Mobile Number"
+          description="Send this as mobile (or the X-Api-Mobile header) on every API call. Not secret — it is your login number."
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm text-slate-800">
+              {isApiUser && apiMobile ? apiMobile : '—'}
+            </code>
+            <Button variant="ghost" size="sm" disabled={!isApiUser || !apiMobile} onClick={copyApiMobile}>
+              {idCopied ? <Check className="size-4 text-success-600" /> : <Copy className="size-4" />}
+              {idCopied ? 'Copied' : 'Copy'}
+            </Button>
+          </div>
+        </SectionCard>
+
         {/* API TOKEN */}
         <SectionCard
           icon={KeyRound}

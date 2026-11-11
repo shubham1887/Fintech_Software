@@ -58,6 +58,15 @@ namespace FintechApp.Entities
         [Column(TypeName = "int")]
         public int Mpin { get; set; }
 
+        // The transaction/app-open MPIN. Stored hashed (never the digits) — the legacy int Mpin
+        // above is left untouched for back-compat but is no longer the source of truth. A user
+        // opts in with IsMpinEnabled; the platform-wide requirement is the IsMpinEnabled key in
+        // SettingMaster (Key Setting), which the client reads to decide when to prompt.
+        [Column(TypeName = "varchar(128)")]
+        public string MpinHash { get; set; } = string.Empty;
+
+        public bool IsMpinEnabled { get; set; }
+
         [Required]
         [Column(TypeName = "varchar(50)")]
         public string UniqueReferenceNo { get; set; }= string.Empty;
@@ -156,5 +165,40 @@ namespace FintechApp.Entities
         /// user under them is effectively exempt too (evaluated by walking the ParentID chain).
         /// </summary>
         public bool IsSubscriptionExempt { get; set; } = false;
+
+        /// <summary>
+        /// The account this one is a second role of — see LinkedProfilePolicy.
+        ///
+        /// One person, one mobile number, two roles. A distributor who also runs a counter, or an
+        /// API client who also needs a retailer login to test with, used to need a second mobile
+        /// number, because this column did not exist and MobileNumber was unique on its own. The
+        /// primary account carries NULL; the second account points at it. Both sign in with the
+        /// primary's password and then choose which one to work as.
+        ///
+        /// This is NOT a hierarchy link — ParentID still places the account in the network, and
+        /// the two are separate users in every other respect: own wallet, own slab, own ledger,
+        /// own user code. Nothing is shared except the phone number and the credentials.
+        /// </summary>
+        public int? LinkedPrimaryUserID { get; set; }
+
+        /// <summary>
+        /// Generation number of this user's live sessions. Every access token carries the value
+        /// that was current when it was minted, and a token whose generation is older than this
+        /// one is refused (see JwtAuthorizationAttribute).
+        ///
+        /// Access tokens are self-contained JWTs, so until this existed the only thing signing out
+        /// revoked was the REFRESH token - the access token itself kept working for the rest of
+        /// its lifetime, in every tab and on every device holding a copy. Logging out of one tab
+        /// therefore left the other tab fully able to transact, which is the half of the
+        /// multi-tab problem the browser cannot fix on its own.
+        ///
+        /// That lifetime is a DAY under the shipped settings (JwtSettings:ExpiryInMinutes), not
+        /// the hour the code used to fall back to, so this is the only thing standing between a
+        /// copied token and a day of use.
+        ///
+        /// Bumping it ends every session the user has at once, which is what "log me out" has to
+        /// mean on a system that moves money. A password change bumps it for the same reason.
+        /// </summary>
+        public int SessionEpoch { get; set; } = 0;
     }
 }

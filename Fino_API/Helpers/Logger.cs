@@ -28,6 +28,28 @@ namespace FintechApp.Helpers
             }
             catch
             {
+                // The app-pool identity cannot always write next to the binaries (a published
+                // site under inetpub often cannot), and an error that leaves NO trace anywhere is
+                // how a 500 becomes "it just says something went wrong". Fall back to the
+                // process's temp directory, which it can always write, before giving up.
+                TryFallback(ex);
+            }
+        }
+
+        private static void TryFallback(Exception ex)
+        {
+            try
+            {
+                string dir = Path.Combine(Path.GetTempPath(), "FinoApiLogs");
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(
+                    Path.Combine(dir, $"Error_{DateTime.Now:yyyyMMdd}.log"),
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {ex.Message}\n{ex.StackTrace}\n"
+                    + (ex.InnerException != null ? $"Inner Exception: {ex.InnerException.Message}\n{ex.InnerException.StackTrace}\n" : string.Empty)
+                    + new string('-', 100) + "\n");
+            }
+            catch
+            {
                 // Fail silently - logging should not break the application
             }
         }

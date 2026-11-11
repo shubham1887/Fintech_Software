@@ -31,5 +31,12 @@ namespace FintechApp.Interfaces.Services
         Task<(string fail, AnalyticsWrapper<CommissionStructureViewModel> data)> CommissionStructure(TxnReportRequest request, int currentUserID, int currentUserTypeID);
         Task<(string fail, AnalyticsWrapper<DaybookViewModel> data)> Daybook(TxnReportRequest request, int currentUserID, int currentUserTypeID);
         Task<(string fail, AnalyticsWrapper<TdsViewModel> data)> Tds(TxnReportRequest request, int currentUserID, int currentUserTypeID);
+
+        /// <summary>
+        /// Profit and loss: opening, purchase, sale, closing, each commission tier, the GST on the
+        /// downline and provider sides, the margin between them and the net profit. GroupBy picks
+        /// the granularity - Date (default), Service, Operator or User.
+        /// </summary>
+        Task<(string fail, AnalyticsWrapper<ProfitLossViewModel> data)> ProfitLoss(TxnReportRequest request, int currentUserID, int currentUserTypeID);
     }
 }

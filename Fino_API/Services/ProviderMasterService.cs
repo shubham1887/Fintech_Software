@@ -1,4 +1,5 @@
 ﻿using FintechApp.Entities;
+using FintechApp.Interfaces.Providers;
 using FintechApp.Interfaces.Repositories;
 using FintechApp.Interfaces.Services;
 using FintechApp.Messages;
@@ -11,10 +12,12 @@ namespace FintechApp.Services
     public class ProviderMasterService : IProviderMasterService
     {
         private readonly IProviderMasterRepository _repository;
+        private readonly ICodedProviderRegistry _coded;
 
-        public ProviderMasterService(IProviderMasterRepository repository)
+        public ProviderMasterService(IProviderMasterRepository repository, ICodedProviderRegistry coded)
         {
             _repository = repository;
+            _coded = coded;
         }
 
         public async Task<List<ProviderMasterResponse>> GetAll(GetProviderMasterRequest request)
@@ -143,7 +146,7 @@ namespace FintechApp.Services
             return result > 0 ? StatusType.Ok : Messages.Common.Message.ExceptionOccured;
         }
 
-        private static ProviderMasterResponse MapToResponse(ProviderMaster x) => new()
+        private ProviderMasterResponse MapToResponse(ProviderMaster x) => new()
         {
             ProviderID = x.ProviderID,
             ProviderName = x.ProviderName,
@@ -161,6 +164,8 @@ namespace FintechApp.Services
             Token = x.Token,
             SupportNumber = x.SupportNumber,
             LowBalanceAmount = x.LowBalanceAmount,
+            IsCodedIntegration = _coded.IsCoded(x.ProviderName),
+            CodedFamily = _coded.FamilyOf(x.ProviderName),
             DateTime = x.DateTime,
             UpdatedateTime = x.UpdatedateTime
         };

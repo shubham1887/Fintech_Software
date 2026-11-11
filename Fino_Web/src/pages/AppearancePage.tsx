@@ -20,6 +20,7 @@ import { useAuth } from '@/features/auth/AuthContext';
 import { isAdminTier } from '@/lib/roles';
 import { useBrand } from '@/theme/BrandProvider';
 import { useUISettings, type Orientation } from '@/theme/UISettingsProvider';
+import { MobileLayoutCard } from '@/features/appearance/MobileLayoutCard';
 import { getTheme, isInSeason } from '@/theme/themes';
 import { isHexColor } from '@/theme/colorRamp';
 import {
@@ -330,6 +331,10 @@ export default function AppearancePage() {
               </div>
             </CardBody>
           </Card>
+
+          {/* The Android app is this console in a WebView, so its design is published from
+              here rather than built into the APK. Admin-only: it changes every phone. */}
+          {admin && <MobileLayoutCard />}
         </div>
 
         {/* ------------------------------------------------ right: preview + actions */}

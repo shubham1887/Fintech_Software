@@ -67,7 +67,8 @@ namespace FintechApp.Services
                 user.UserTypeID ?? 0,
                 user.UserType?.UserType ?? string.Empty,
                 user.MobileNumber,
-                user.EmailID
+                user.EmailID,
+                user.SessionEpoch
             );
 
             // Store new refresh token

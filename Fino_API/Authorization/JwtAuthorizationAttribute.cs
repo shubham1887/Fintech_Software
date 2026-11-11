@@ -1,4 +1,5 @@
 using FintechApp.Helpers;
+using FintechApp.Interfaces.Repositories;
 using FintechApp.Interfaces.Services;
 using FintechApp.Requests;
 using FintechApp.Responses;
@@ -80,6 +81,40 @@ namespace FintechApp.Authorization
                     return;
                 }
                 int.TryParse(userTypeIdClaim, out int tokenUserTypeId);
+
+                // Session generation. The token is signed and unexpired, but that only says it was
+                // issued - not that the session it belongs to is still open. Signing out (and
+                // changing a password) moves UserMaster.SessionEpoch on by one, so a token minted
+                // before that is refused here even though it would validate perfectly.
+                //
+                // Without this, "log out" revoked only the refresh token and the access token kept
+                // working for the rest of its hour: a second tab stayed able to transact after the
+                // first one signed out, and so did any copy of the token taken off the wire.
+                //
+                // A token with no generation claim at all predates this check, and is treated as
+                // generation 0 - so sessions already open when this shipped keep working until
+                // their holder signs out once, rather than every user being kicked out on deploy.
+                var users = context.HttpContext.RequestServices.GetService<IUserRepository>();
+                if (users != null)
+                {
+                    var tokenUser = await users.GetUserById(tokenUserId);
+                    if (tokenUser == null || !tokenUser.IsActive)
+                    {
+                        // Deleted or deactivated mid-session. The row is gone or switched off, so
+                        // the token is the only thing still saying this account may act.
+                        context.Result = Unauthorized(Messages.Common.Message.SessionExpired);
+                        return;
+                    }
+
+                    int.TryParse(
+                        principal.Claims.FirstOrDefault(c => c.Type == JwtTokenService.SessionEpochClaim)?.Value,
+                        out int tokenEpoch);
+                    if (tokenEpoch != tokenUser.SessionEpoch)
+                    {
+                        context.Result = Unauthorized(Messages.Common.Message.SessionExpired);
+                        return;
+                    }
+                }
 
                 // Role authorization (only when the attribute specifies allowed user-types)
                 if (_allowedUserTypeIds.Length > 0 && !_allowedUserTypeIds.Contains(tokenUserTypeId))
@@ -205,6 +240,11 @@ namespace FintechApp.Authorization
                     error = Messages.Common.Message.InvalidSession;
                     return false;
                 }
+
+                // Kept for the audit trail: the envelope has now been proved to belong to the
+                // signed-in identity, so the IP / channel it reports is safe to record alongside
+                // whatever change the request goes on to make (IAuditContextService reads it).
+                context.HttpContext.Items[Services.AuditContextKeys.KeyData] = keyData;
 
                 if (keyData.UserID != tokenUserId || (tokenUserTypeId > 0 && keyData.UserTypeID != tokenUserTypeId))
                 {

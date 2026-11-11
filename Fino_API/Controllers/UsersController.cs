@@ -3,6 +3,7 @@ using FintechApp.Helpers;
 using FintechApp.Interfaces.Repositories;
 using FintechApp.Interfaces.Services;
 using FintechApp.Requests;
+using FintechApp.Requests.AppNotification;
 using FintechApp.Requests.User;
 using FintechApp.Responses;
 using FintechApp.StaticModels;
@@ -21,8 +22,9 @@ namespace FintechApp.Controllers
         private readonly IUserService _userService;
         private readonly IUserRepository _userRepository;
         private readonly IReportAnalyticsService _analytics;
+        private readonly IAppNotificationService _appNotifications;
 
-        public UsersController(IConfiguration configuration, IUserService userService, IUserRepository userRepository, IReportAnalyticsService analytics)
+        public UsersController(IConfiguration configuration, IUserService userService, IUserRepository userRepository, IReportAnalyticsService analytics, IAppNotificationService appNotifications)
         {
             _logger = new Logger();
             _encryptDecrypt = new EncryptDecrypt(
@@ -31,6 +33,7 @@ namespace FintechApp.Controllers
             _userService = userService;
             _userRepository = userRepository;
             _analytics = analytics;
+            _appNotifications = appNotifications;
         }
 
         private const string AdminOnly = "Only an administrator can perform this action.";
@@ -315,9 +318,12 @@ namespace FintechApp.Controllers
             string fail = keyDataModel.IsValidModalState();
             if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
 
-            string result = await _userService.BulkUpdate(mainRequest, keyDataModel.UserID);
-            if (!result.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(result);
-            return ResponseProcess.GetSuccessResponse(Messages.Common.Message.UpdatedSuccessfully);
+            var (bulkFail, bulkSummary) = await _userService.BulkUpdate(mainRequest, keyDataModel.UserID);
+            if (!bulkFail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(bulkFail);
+            // The summary names how many were changed and which were skipped — more use to the
+            // operator than a flat "updated successfully".
+            return ResponseProcess.GetSuccessResponse(
+                string.IsNullOrWhiteSpace(bulkSummary) ? Messages.Common.Message.UpdatedSuccessfully : bulkSummary);
         }
 
         [HttpPost("SendPassword")]
@@ -359,7 +365,34 @@ namespace FintechApp.Controllers
 
             string result = await _userService.AddHoldBalance(mainRequest, keyDataModel.UserID);
             if (!result.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(result);
-            return ResponseProcess.GetSuccessResponse("Hold balance updated successfully.");
+            return ResponseProcess.GetSuccessResponse(mainRequest.IsRelease ? "Hold released." : "Balance held.");
+        }
+
+        /// <summary>
+        /// The hold report: every hold placed or released, on whose wallet, by whom and why.
+        /// A frozen balance the user can see but not spend has to be explainable — this is where
+        /// that explanation lives.
+        /// </summary>
+        [HttpPost("HoldHistory")]
+        public async Task<APIResponse> HoldHistory([FromForm] APIRequest apiRequest)
+        {
+            WalletHoldHistoryRequest? mainRequest;
+            KeyDataModel? keyDataModel;
+            try
+            {
+                mainRequest = JsonConvert.DeserializeObject<WalletHoldHistoryRequest>(_encryptDecrypt.Decrypt(apiRequest.Request));
+                keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData));
+            }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+
+            if (mainRequest == null || keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+
+            var (reportFail, data) = await _userService.HoldHistory(mainRequest, keyDataModel.UserID, keyDataModel.UserTypeID);
+            if (!reportFail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(reportFail);
+            if (data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound);
+            return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data)));
         }
 
         [HttpPost("Deactivate2FAWithOTP")]
@@ -559,7 +592,17 @@ namespace FintechApp.Controllers
                 var result = allUsers
                     .Where(u => downlineIds.Contains(u.UserMasterID) && u.IsActive && !u.IsDeleted)
                     .OrderBy(u => u.FirmName)
-                    .Select(u => new { UserID = u.UserMasterID, FirmName = u.FirmName })
+                    // UserType and the mobile number ride along so the picker can say WHICH
+                    // retailer or distributor each name is. A downline can hold two users with
+                    // the same firm name at different tiers, and a list of bare names cannot tell
+                    // them apart - which is how funds get reversed from the wrong account.
+                    .Select(u => new
+                    {
+                        UserID = u.UserMasterID,
+                        FirmName = u.FirmName,
+                        UserType = u.UserType?.UserType ?? string.Empty,
+                        MobileNumber = u.MobileNumber ?? string.Empty,
+                    })
                     .ToList();
                 if (result.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound);
                 return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(result));
@@ -598,6 +641,46 @@ namespace FintechApp.Controllers
                 return ResponseProcess.GetFailResponse(failureMessage);
 
             return ResponseProcess.GetSuccessResponse(JsonConvert.SerializeObject(data));
+        }
+
+        // ── One mobile number, two roles (StaticModels/LinkedProfilePolicy) ──────────────
+
+        /// <summary>
+        /// The logins this person holds, and whether they may add a second one.
+        ///
+        /// Every role may read this — the account switcher has to know whether to appear, and
+        /// that includes the secondary account, which needs the switcher to get back. Nothing
+        /// here names another person: the group is resolved from the session's own user.
+        /// </summary>
+        [HttpPost("LinkedProfiles")]
+        public async Task<APIResponse> LinkedProfiles([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel;
+            try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+            if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string fail = keyDataModel.IsValidModalState();
+            if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+
+            var (failureMessage, data) = await _userService.GetLinkedProfiles(keyDataModel.UserID);
+            if (!string.IsNullOrWhiteSpace(failureMessage)) return ResponseProcess.GetFailResponse(failureMessage);
+            return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data)));
+        }
+
+        /// <summary>
+        /// Set up the caller's second login. No target id — a second role is something you add
+        /// to your own account, and the service decides whether your type may have one.
+        /// </summary>
+        [HttpPost("LinkedProfileAdd")]
+        public async Task<APIResponse> LinkedProfileAdd([FromForm] APIRequest apiRequest)
+        {
+            var (keyDataModel, request, error) = Decode<CreateLinkedProfileRequest>(apiRequest);
+            if (error != null) return error;
+
+            var (failureMessage, data) = await _userService.CreateLinkedProfile(request!, keyDataModel!.UserID);
+            if (!string.IsNullOrWhiteSpace(failureMessage)) return ResponseProcess.GetFailResponse(failureMessage);
+            return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data)),
+                "Second login created. Use the account switcher to move between them.");
         }
 
         // Self-service profile edit (contact + address). No target id: the session decides who.
@@ -664,7 +747,29 @@ namespace FintechApp.Controllers
 
         [HttpPost("SelectSupportUserForDropDown")] public async Task<APIResponse> SelectSupportUserForDropDown([FromForm] APIRequest apiRequest) { KeyDataModel? keyDataModel; try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); } catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); } if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest); string fail = keyDataModel.IsValidModalState(); if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return await Task.FromResult(ResponseProcess.GetFailResponse("Feature under development.")); }
 
-        [HttpPost("UpdateFCMToken")] public async Task<APIResponse> UpdateFCMToken([FromForm] APIRequest apiRequest) { KeyDataModel? keyDataModel; try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); } catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); } if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest); string fail = keyDataModel.IsValidModalState(); if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return await Task.FromResult(ResponseProcess.GetFailResponse("Feature under development.")); }
+        /// <summary>
+        /// Register this device's FCM token.
+        ///
+        /// This used to answer "Feature under development." — so no token was ever stored, and
+        /// every push the admin panel sent had nowhere to go. It now writes a UserDevices row
+        /// (one per handset/browser) via the same service AppNotification/RegisterDevice uses;
+        /// that endpoint is the one new clients should call, this stays for older builds.
+        /// </summary>
+        [HttpPost("UpdateFCMToken")]
+        public async Task<APIResponse> UpdateFCMToken([FromForm] APIRequest apiRequest)
+        {
+            var (keyDataModel, request, error) = Decode<RegisterDeviceRequest>(apiRequest);
+            if (error != null) return error;
+            if (keyDataModel == null || request == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+
+            try
+            {
+                string result = await _appNotifications.RegisterDevice(request, keyDataModel);
+                if (!result.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(result);
+                return ResponseProcess.GetSuccessResponse("Device registered.");
+            }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
 
         [HttpPost("SelectUserForAdminDashborad")] public async Task<APIResponse> SelectUserForAdminDashborad([FromForm] APIRequest apiRequest) { KeyDataModel? keyDataModel; try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); } catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); } if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest); string fail = keyDataModel.IsValidModalState(); if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return await Task.FromResult(ResponseProcess.GetFailResponse("Feature under development.")); }
 
@@ -816,7 +921,55 @@ namespace FintechApp.Controllers
 
         [HttpPost("SelectSDAndDistForDropDownByOldUserID")] public async Task<APIResponse> SelectSDAndDistForDropDownByOldUserID([FromForm] APIRequest apiRequest) { KeyDataModel? keyDataModel; try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); } catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); } if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest); string fail = keyDataModel.IsValidModalState(); if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return await Task.FromResult(ResponseProcess.GetFailResponse("Feature under development.")); }
 
-        [HttpPost("TransferUsers")] public async Task<APIResponse> TransferUsers([FromForm] APIRequest apiRequest) { KeyDataModel? keyDataModel; try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); } catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); } if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest); string fail = keyDataModel.IsValidModalState(); if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return await Task.FromResult(ResponseProcess.GetFailResponse("Feature under development.")); }
+        /// <summary>
+        /// User Transfer: move one user, and the branch beneath them, under a new parent.
+        ///
+        /// The service applies the tree rules (no cycles, no equal-or-lower parent, nothing
+        /// outside the caller network) and records the move on the user change history with the
+        /// remark, so the screen can say what happened rather than just "saved".
+        /// </summary>
+        [HttpPost("TransferUsers")]
+        public async Task<APIResponse> TransferUsers([FromForm] APIRequest apiRequest)
+        {
+            var (keyDataModel, mainRequest, error) = Decode<UserTransferRequest>(apiRequest);
+            if (error != null) return error;
+
+            var (transferFail, summary) = await _userService.TransferUsers(mainRequest!, keyDataModel!.UserID);
+            if (!transferFail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(transferFail);
+            return ResponseProcess.GetSuccessResponse(
+                string.IsNullOrWhiteSpace(summary) ? "User transferred." : summary);
+        }
+
+        /// <summary>
+        /// The accounts a given user may legally be mapped under — drives the "New parent" picker
+        /// on User Transfer, so the form can only offer moves TransferUsers will accept.
+        /// </summary>
+        [HttpPost("SelectEligibleParents")]
+        public async Task<APIResponse> SelectEligibleParents([FromForm] APIRequest apiRequest)
+        {
+            var (keyDataModel, mainRequest, error) = Decode<UserSelectByIDRequest>(apiRequest);
+            if (error != null) return error;
+
+            var (fail, data) = await _userService.SelectEligibleParents(mainRequest!, keyDataModel!.UserID);
+            if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+            return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data)));
+        }
+
+        /// <summary>
+        /// The user change report: every change made to a user record — what changed, from what to
+        /// what, who did it, why, and from which IP / channel.
+        /// </summary>
+        [HttpPost("ChangeHistory")]
+        public async Task<APIResponse> ChangeHistory([FromForm] APIRequest apiRequest)
+        {
+            var (keyDataModel, mainRequest, error) = Decode<UserChangeHistoryRequest>(apiRequest);
+            if (error != null) return error;
+
+            var (reportFail, data) = await _userService.ChangeHistory(mainRequest!, keyDataModel!.UserID, keyDataModel.UserTypeID);
+            if (!reportFail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(reportFail);
+            if (data.Count == 0) return ResponseProcess.GetFailResponse(Messages.Common.Message.NoRecordFound);
+            return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data)));
+        }
 
         [HttpPost("SelectByRole")] public async Task<APIResponse> SelectByRole([FromForm] APIRequest apiRequest) { KeyDataModel? keyDataModel; try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); } catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); } if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest); string fail = keyDataModel.IsValidModalState(); if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail); return await Task.FromResult(ResponseProcess.GetFailResponse("Feature under development.")); }
 

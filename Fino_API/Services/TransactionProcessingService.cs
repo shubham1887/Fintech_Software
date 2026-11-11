@@ -23,6 +23,7 @@ namespace FintechApp.Services
         private readonly FintechApp.Interfaces.Providers.ITransactionProviderClient _provider;
         private readonly IProviderCallBackLogRepository _callbackLogRepository;
         private readonly ICallbackDispatchService _callbackDispatch;
+        private readonly IComplaintMasterRepository _complaintRepository;
         private readonly Logger _fileLogger = new();
 
         public TransactionProcessingService(
@@ -32,8 +33,10 @@ namespace FintechApp.Services
             IAccountCoreProcessingService accountCore,
             FintechApp.Interfaces.Providers.ITransactionProviderClient provider,
             IProviderCallBackLogRepository callbackLogRepository,
-            ICallbackDispatchService callbackDispatch)
+            ICallbackDispatchService callbackDispatch,
+            IComplaintMasterRepository complaintRepository)
         {
+            _complaintRepository = complaintRepository;
             _transactionRepository = transactionRepository;
             _manualUpdateRepository = manualUpdateRepository;
             _walletRepository = walletRepository;
@@ -126,7 +129,55 @@ namespace FintechApp.Services
             }
 
             await LogManualUpdate(request.TransactionID, currentUserID, request.TxnID, oldStatus, newStatus);
+
+            // A manual settlement is usually the answer to a complaint the customer raised on this
+            // very transaction, so close that complaint from the same decision instead of leaving it
+            // sitting in the queue for someone to notice and action twice.
+            await CloseComplaintsForSettlement(request.TransactionID, newStatus, remark, currentUserID);
             return StatusType.Ok;
+        }
+
+        /// <summary>
+        /// Settle every still-open complaint on a transaction that has just been settled by hand.
+        ///
+        /// Marking the transaction FAILED refunds the customer, which is exactly what accepting the
+        /// complaint would have done — so the complaint is recorded as ACCEPTED. Marking it SUCCESS
+        /// says the service was in fact delivered and no money is owed, so the complaint is recorded
+        /// as REJECTED. Either way the money has already moved (or not) through the settlement above;
+        /// this only records the outcome, and never calls the refund path again — which is what keeps
+        /// a manual refund plus a complaint accept from paying the customer twice.
+        ///
+        /// Best-effort: a complaint bookkeeping failure must never fail the settlement itself.
+        /// </summary>
+        private async Task CloseComplaintsForSettlement(int txnID, string newStatus, string remark, int byUserID)
+        {
+            try
+            {
+                var open = (await _complaintRepository.GetAll())
+                    .Where(c => c.TransactionMasterID == txnID && ComplaintStatus.IsOpen(c.ComplaintStatus))
+                    .ToList();
+                if (open.Count == 0) return;
+
+                bool refunded = newStatus == StatusFailure || newStatus == StatusRefund;
+                string outcome = refunded ? ComplaintStatus.Accept : ComplaintStatus.Reject;
+                string note = refunded
+                    ? $"[Auto] Transaction {txnID} was manually refunded by user {byUserID} — complaint accepted. {remark}".Trim()
+                    : $"[Auto] Transaction {txnID} was manually marked SUCCESS by user {byUserID} — complaint rejected. {remark}".Trim();
+
+                foreach (var complaint in open)
+                {
+                    complaint.ComplaintStatus = outcome;
+                    complaint.AdminRemark = string.IsNullOrWhiteSpace(complaint.AdminRemark)
+                        ? note
+                        : $"{complaint.AdminRemark}\n{note}";
+                    complaint.UpdatedateTime = DateTime.Now;
+                    await _complaintRepository.Update(complaint);
+                }
+            }
+            catch (Exception ex)
+            {
+                _fileLogger.Write(ex);
+            }
         }
 
         // Shared audit log helper for manual status changes.
@@ -161,6 +212,7 @@ namespace FintechApp.Services
             if (!r.EqualsIgnoreCase(StatusType.Ok)) return r;
 
             await LogManualUpdate(request.TransactionID, currentUserID, string.Empty, oldStatus, StatusFailure);
+            await CloseComplaintsForSettlement(request.TransactionID, StatusFailure, "DMT refund by admin", currentUserID);
             return StatusType.Ok;
         }
 
@@ -177,7 +229,13 @@ namespace FintechApp.Services
                 string oldStatus = entity.Status;
                 string r = await _accountCore.RefundTransaction(item.TransactionID, remark, DOCTypeConstants.Recharge);
                 if (r.EqualsIgnoreCase(StatusType.Ok))
+                {
                     await LogManualUpdate(item.TransactionID, currentUserID, string.Empty, oldStatus, StatusFailure);
+                    // Same rule as a one-off manual settlement: refunding answers the dispute, so
+                    // the complaint is closed here rather than left in the queue. Settling in bulk
+                    // must not behave differently from settling one row at a time.
+                    await CloseComplaintsForSettlement(item.TransactionID, StatusFailure, remark, currentUserID);
+                }
             }
 
             return StatusType.Ok;
@@ -219,7 +277,12 @@ namespace FintechApp.Services
                 string oldStatus = entity.Status;
                 int sr = await _accountCore.SuccessTransaction(item.TransactionID, string.Empty, remark);
                 if (sr > 0)
+                {
                     await LogManualUpdate(item.TransactionID, currentUserID, string.Empty, oldStatus, StatusSuccess);
+                    // Marking it SUCCESS says the service was delivered and nothing is owed, so any
+                    // complaint on it is recorded as rejected — same decision as the single-row path.
+                    await CloseComplaintsForSettlement(item.TransactionID, StatusSuccess, remark, currentUserID);
+                }
             }
 
             return StatusType.Ok;
@@ -377,32 +440,91 @@ namespace FintechApp.Services
             return SettleFromProvider(transactionID, serviceType, currentUserID, ipAddress, isResend: true, forceProviderID: providerID);
         }
 
-        public async Task<string> ShiftToProviderBatch(List<TxnShiftRequest> list, string serviceType, int currentUserID, string ipAddress)
+        public Task<string> ShiftToProviderBatch(List<TxnShiftRequest> list, string serviceType, int currentUserID, string ipAddress)
         {
-            if (list == null || list.Count == 0) return "No transactions provided.";
-            foreach (var item in list)
+            if (list == null || list.Count == 0) return Task.FromResult("No transactions provided.");
+            // A ProviderID of 0 is not "use the default" here - the whole point of a shift is the
+            // named provider - so those rows are reported as skipped rather than silently resent
+            // down the sequence they were already stuck in.
+            if (list.All(x => x.ProviderID <= 0)) return Task.FromResult("Select a provider to shift to.");
+
+            return RunBatch(
+                list.Where(x => x.ProviderID > 0).Select(x => (x.TransactionID, x.ProviderID)),
+                serviceType, currentUserID, ipAddress, isResend: true, verb: "sent");
+        }
+
+        public Task<string> CheckProviderStatusBatch(List<TxnBatchIDRequest> list, string serviceType, int currentUserID, string ipAddress)
+        {
+            if (list == null || list.Count == 0) return Task.FromResult("No transactions provided.");
+            return RunBatch(
+                list.Select(x => (x.TransactionID, ForceProviderID: 0)),
+                serviceType, currentUserID, ipAddress, isResend: false, verb: "checked");
+        }
+
+        public Task<string> ResendToProviderBatch(List<TxnBatchIDRequest> list, string serviceType, int currentUserID, string ipAddress)
+        {
+            if (list == null || list.Count == 0) return Task.FromResult("No transactions provided.");
+            return RunBatch(
+                list.Select(x => (x.TransactionID, ForceProviderID: 0)),
+                serviceType, currentUserID, ipAddress, isResend: true, verb: "sent");
+        }
+
+        /// <summary>
+        /// Run one provider call per transaction and report what actually happened.
+        ///
+        /// Every batch on the pending queue used to discard its per-item results and answer
+        /// StatusType.Ok unconditionally, so "Selected recharges shifted to the provider" was
+        /// printed whether all of them had shifted or none had. That is the worst answer this
+        /// screen can give: the operator moves on believing stuck money has been re-dispatched,
+        /// and the rows are still sitting there the next morning.
+        ///
+        /// A batch where every item succeeded still answers Ok and the screen says so. Anything
+        /// else answers with the counts and the distinct reasons, which the queue shows verbatim.
+        /// The usual cause - one provider applied to rows spanning several operators, where it is
+        /// only routed for some of them - is named exactly by the message that comes back.
+        /// </summary>
+        private async Task<string> RunBatch(
+            IEnumerable<(int TransactionID, int ForceProviderID)> items,
+            string serviceType, int currentUserID, string ipAddress, bool isResend, string verb)
+        {
+            // Materialised once: `items` arrives as a LINQ projection, and counting it after the
+            // loop would enumerate it a second time.
+            var work = items.ToList();
+            if (work.Count == 0) return "No transactions provided.";
+
+            int ok = 0;
+            var reasons = new List<string>();
+
+            foreach (var item in work)
             {
-                if (item.ProviderID <= 0) continue;
-                await SettleFromProvider(item.TransactionID, serviceType, currentUserID, ipAddress, isResend: true, forceProviderID: item.ProviderID);
+                string result;
+                try
+                {
+                    result = await SettleFromProvider(
+                        item.TransactionID, serviceType, currentUserID, ipAddress, isResend,
+                        forceProviderID: item.ForceProviderID);
+                }
+                catch (Exception ex)
+                {
+                    // One bad transaction must not abandon the rest of the batch half-done.
+                    _fileLogger.Write(ex);
+                    result = Messages.Common.Message.ExceptionOccured;
+                }
+
+                if (result.EqualsIgnoreCase(StatusType.Ok)) ok++;
+                else if (!reasons.Contains(result)) reasons.Add(result);
             }
-            return StatusType.Ok;
+
+            int failed = work.Count - ok;
+            if (failed == 0) return StatusType.Ok;
+
+            // Two reasons at most: the point is to name the cause, not to print a log.
+            string why = string.Join(" ", reasons.Take(2));
+            return ok == 0
+                ? $"None could be {verb}. {why}"
+                : $"{ok} {verb}, {failed} could not be. {why}";
         }
 
-        public async Task<string> CheckProviderStatusBatch(List<TxnBatchIDRequest> list, string serviceType, int currentUserID, string ipAddress)
-        {
-            if (list == null || list.Count == 0) return "No transactions provided.";
-            foreach (var item in list)
-                await SettleFromProvider(item.TransactionID, serviceType, currentUserID, ipAddress, isResend: false);
-            return StatusType.Ok;
-        }
-
-        public async Task<string> ResendToProviderBatch(List<TxnBatchIDRequest> list, string serviceType, int currentUserID, string ipAddress)
-        {
-            if (list == null || list.Count == 0) return "No transactions provided.";
-            foreach (var item in list)
-                await SettleFromProvider(item.TransactionID, serviceType, currentUserID, ipAddress, isResend: true);
-            return StatusType.Ok;
-        }
 
         // Shared provider status/resend → local settlement. Calls the provider seam, and if it
         // returns a definitive status, finalises (SUCCESS) or refunds (FAILED) the local transaction.

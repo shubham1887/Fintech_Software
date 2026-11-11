@@ -23,5 +23,11 @@
   "maintenanceMessage": "We are upgrading the system. Please try again in a few minutes.",
   "supportWhatsApp": "919920427176",
   "supportEmail": "support@ripay.co.in",
-  "supportPhone": "18001234567"
+  "supportPhone": "18001234567",
+
+  "_push": "Push notifications. Copy these four out of the client's google-services.json (Firebase Console -> Project settings -> Your apps -> Android). They are read at run time, so push is switched on for a client by editing this file - no APK rebuild. Leave them blank and the app still works: alerts show in the in-app bell, just not in the phone's tray. The SERVER side needs the matching service-account JSON in appsettings 'FCM'.",
+  "fcmProjectId": "",
+  "fcmAppId": "",
+  "fcmApiKey": "",
+  "fcmSenderId": ""
 }

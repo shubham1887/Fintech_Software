@@ -202,6 +202,50 @@ namespace FintechApp.Controllers
             }
         }
 
+        /// <summary>
+        /// Save the display order of the whole service grid. Admin-only by deny-by-default: the
+        /// action name starts with a write verb ("Update") and Service is a reference master, so
+        /// ApiAccessPolicy already restricts it without a special entry.
+        /// </summary>
+        [HttpPost("UpdateSequence")]
+        public async Task<APIResponse> UpdateSequence([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel;
+            UpdateServiceSequenceRequest? sequenceRequest;
+
+            try
+            {
+                keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData));
+                sequenceRequest = JsonConvert.DeserializeObject<UpdateServiceSequenceRequest>(_encryptDecrypt.Decrypt(apiRequest.Request));
+            }
+            catch (Exception ex)
+            {
+                _logger.Write(ex);
+                return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured);
+            }
+
+            if (keyDataModel == null || sequenceRequest == null)
+                return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+
+            string failureMessage = keyDataModel.IsValidModalState();
+            if (!failureMessage.EqualsIgnoreCase(StaticModels.StatusType.Ok))
+                return ResponseProcess.GetFailResponse(failureMessage);
+
+            try
+            {
+                failureMessage = await _serviceService.UpdateServiceSequence(sequenceRequest);
+                if (!failureMessage.EqualsIgnoreCase(StaticModels.StatusType.Ok))
+                    return ResponseProcess.GetFailResponse(failureMessage);
+
+                return ResponseProcess.GetSuccessResponse(Messages.ServiceMessages.ServiceUpdatedSuccessfully);
+            }
+            catch (Exception ex)
+            {
+                _logger.Write(ex);
+                return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured);
+            }
+        }
+
         [HttpPost("Delete")]
         public async Task<APIResponse> Delete([FromForm] APIRequest apiRequest)
         {

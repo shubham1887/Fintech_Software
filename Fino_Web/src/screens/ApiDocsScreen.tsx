@@ -20,7 +20,9 @@ import {
   Info,
   KeyRound,
   Landmark,
+  Lock,
   Search,
+  Send,
   ShieldCheck,
   Smartphone,
   TriangleAlert,
@@ -314,6 +316,191 @@ function requestSamples(url: string, params: Param[]): Record<Lang, string> {
   };
 }
 
+/**
+ * The same SIGNED request in six languages.
+ *
+ * DMT endpoints are POST-only with a JSON body and an HMAC signature, so a sample has to
+ * show the whole ritual rather than a bare form post: build the body once, hash exactly
+ * those bytes, sign method + path + timestamp + nonce + hash, then send the same string
+ * that was hashed. Re-serialising the body before sending is the one mistake that breaks
+ * every signature, so each sample deliberately builds it into a variable first.
+ */
+function signedSamples(base: string, path: string, body: Param[]): Record<Lang, string> {
+  const pad = Math.max(...body.map(([k]) => k.length));
+  const jsonBody = (indent: string) =>
+    `{${body.map(([k, v]) => `"${k}":"${v}"`).join(',')}}`.length < 72
+      ? `{${body.map(([k, v]) => `"${k}":"${v}"`).join(',')}}`
+      : '{\n' + body.map(([k, v]) => `${indent}  "${k}": "${v}"`).join(',\n') + `\n${indent}}`;
+
+  const pairs = (indent: string, sep: string, q: string) =>
+    body.map(([k, v]) => `${indent}${q}${k}${q}${' '.repeat(pad - k.length)}${sep} "${v}"`).join(',\n');
+
+  return {
+    curl:
+      `TOKEN="YOUR_API_TOKEN"\n` +
+      `PATH_="${path}"\n\n` +
+      `# 1. Build the body once. These exact bytes are hashed AND sent.\n` +
+      `BODY='${jsonBody('')}'\n\n` +
+      `# 2. Freshness: epoch SECONDS, and a nonce you never reuse.\n` +
+      `TS=$(date +%s)\n` +
+      `NONCE=$(uuidgen)\n\n` +
+      `# 3. Sign.\n` +
+      `BODY_SHA=$(printf '%s' "$BODY" | openssl dgst -sha256 -hex | sed 's/.*= //')\n` +
+      `SIG=$(printf 'POST\\n%s\\n%s\\n%s\\n%s' "$PATH_" "$TS" "$NONCE" "$BODY_SHA" \\\n` +
+      `  | openssl dgst -sha256 -hmac "$TOKEN" -hex | sed 's/.*= //')\n\n` +
+      `curl -X POST "${base}${path}" \\\n` +
+      `  -H "Content-Type: application/json" \\\n` +
+      `  -H "X-Api-Mobile: 9000012345" \\\n` +
+      `  -H "X-Api-Token: $TOKEN" \\\n` +
+      `  -H "X-Api-Timestamp: $TS" \\\n` +
+      `  -H "X-Api-Nonce: $NONCE" \\\n` +
+      `  -H "X-Api-Signature: $SIG" \\\n` +
+      `  --data-binary "$BODY"   # byte-exact: the bytes hashed are the bytes sent`,
+
+    node:
+      `import crypto from "node:crypto";\n\n` +
+      `const TOKEN = process.env.API_TOKEN;\n` +
+      `const PATH  = "${path}";\n\n` +
+      `// Build the body ONCE — this exact string is both hashed and sent.\n` +
+      `const body = JSON.stringify({\n` +
+      pairs('  ', ':', '') +
+      `,\n});\n\n` +
+      `const ts    = Math.floor(Date.now() / 1000).toString();  // SECONDS, not ms\n` +
+      `const nonce = crypto.randomUUID();\n\n` +
+      `const bodyHash  = crypto.createHash("sha256").update(body, "utf8").digest("hex");\n` +
+      `const canonical = ["POST", PATH, ts, nonce, bodyHash].join("\\n");\n` +
+      `const signature = crypto.createHmac("sha256", TOKEN).update(canonical, "utf8").digest("hex");\n\n` +
+      `const response = await fetch("${base}${path}", {\n` +
+      `  method: "POST",\n` +
+      `  headers: {\n` +
+      `    "Content-Type":    "application/json",\n` +
+      `    "X-Api-Mobile":    "9000012345",\n` +
+      `    "X-Api-Token":     TOKEN,\n` +
+      `    "X-Api-Timestamp": ts,\n` +
+      `    "X-Api-Nonce":     nonce,\n` +
+      `    "X-Api-Signature": signature,\n` +
+      `  },\n` +
+      `  body,  // the same string that was hashed — never re-serialise\n` +
+      `});\n\n` +
+      `const data = await response.json();`,
+
+    php:
+      `<?php\n` +
+      `$token = getenv("API_TOKEN");\n` +
+      `$path  = "${path}";\n\n` +
+      `// Build the body once — hashed and sent as the same bytes.\n` +
+      `$body = json_encode([\n` +
+      pairs('    ', ' =>', '"') +
+      `,\n]);\n\n` +
+      `$ts    = (string) time();                  // SECONDS\n` +
+      `$nonce = bin2hex(random_bytes(16));\n\n` +
+      `$canonical = "POST\\n" . $path . "\\n" . $ts . "\\n" . $nonce . "\\n" . hash("sha256", $body);\n` +
+      `$signature = hash_hmac("sha256", $canonical, $token);\n\n` +
+      `$ch = curl_init("${base}${path}");\n` +
+      `curl_setopt_array($ch, [\n` +
+      `    CURLOPT_RETURNTRANSFER => true,\n` +
+      `    CURLOPT_POST           => true,\n` +
+      `    CURLOPT_TIMEOUT        => 60,\n` +
+      `    CURLOPT_POSTFIELDS     => $body,\n` +
+      `    CURLOPT_HTTPHEADER     => [\n` +
+      `        "Content-Type: application/json",\n` +
+      `        "X-Api-Mobile: 9000012345",\n` +
+      `        "X-Api-Token: $token",\n` +
+      `        "X-Api-Timestamp: $ts",\n` +
+      `        "X-Api-Nonce: $nonce",\n` +
+      `        "X-Api-Signature: $signature",\n` +
+      `    ],\n]);\n\n` +
+      `$data = json_decode(curl_exec($ch), true);\n` +
+      `curl_close($ch);`,
+
+    python:
+      `import hashlib, hmac, json, os, time, uuid, requests\n\n` +
+      `token = os.environ["API_TOKEN"]\n` +
+      `path  = "${path}"\n\n` +
+      `# Build the body once; hash and send the identical bytes.\n` +
+      `body = json.dumps({\n` +
+      pairs('    ', ':', '"') +
+      `,\n})\n\n` +
+      `ts    = str(int(time.time()))          # SECONDS\n` +
+      `nonce = str(uuid.uuid4())\n\n` +
+      `body_hash = hashlib.sha256(body.encode()).hexdigest()\n` +
+      `canonical = "\\n".join(["POST", path, ts, nonce, body_hash])\n` +
+      `signature = hmac.new(token.encode(), canonical.encode(), hashlib.sha256).hexdigest()\n\n` +
+      `response = requests.post(\n` +
+      `    "${base}${path}",\n` +
+      `    data=body,                          # the signed string itself\n` +
+      `    headers={\n` +
+      `        "Content-Type":    "application/json",\n` +
+      `        "X-Api-Mobile":    "9000012345",\n` +
+      `        "X-Api-Token":     token,\n` +
+      `        "X-Api-Timestamp": ts,\n` +
+      `        "X-Api-Nonce":     nonce,\n` +
+      `        "X-Api-Signature": signature,\n` +
+      `    },\n` +
+      `    timeout=60,\n` +
+      `)\n\n` +
+      `data = response.json()`,
+
+    java:
+      `import java.net.URI;\n` +
+      `import java.net.http.*;\n` +
+      `import java.security.MessageDigest;\n` +
+      `import java.time.Instant;\n` +
+      `import java.util.*;\n` +
+      `import javax.crypto.Mac;\n` +
+      `import javax.crypto.spec.SecretKeySpec;\n\n` +
+      `String token = System.getenv("API_TOKEN");\n` +
+      `String path  = "${path}";\n\n` +
+      `String body  = """\n` +
+      `    ${jsonBody('    ')}""";\n\n` +
+      `String ts    = Long.toString(Instant.now().getEpochSecond());  // SECONDS\n` +
+      `String nonce = UUID.randomUUID().toString();\n\n` +
+      `String bodyHash = hex(MessageDigest.getInstance("SHA-256").digest(body.getBytes("UTF-8")));\n` +
+      `String canonical = String.join("\\n", "POST", path, ts, nonce, bodyHash);\n\n` +
+      `Mac mac = Mac.getInstance("HmacSHA256");\n` +
+      `mac.init(new SecretKeySpec(token.getBytes("UTF-8"), "HmacSHA256"));\n` +
+      `String signature = hex(mac.doFinal(canonical.getBytes("UTF-8")));\n\n` +
+      `HttpRequest request = HttpRequest.newBuilder()\n` +
+      `    .uri(URI.create("${base}${path}"))\n` +
+      `    .header("Content-Type",    "application/json")\n` +
+      `    .header("X-Api-Mobile",    "9000012345")\n` +
+      `    .header("X-Api-Token",     token)\n` +
+      `    .header("X-Api-Timestamp", ts)\n` +
+      `    .header("X-Api-Nonce",     nonce)\n` +
+      `    .header("X-Api-Signature", signature)\n` +
+      `    .POST(HttpRequest.BodyPublishers.ofString(body))\n` +
+      `    .build();\n\n` +
+      `// static String hex(byte[] b) { StringBuilder s = new StringBuilder();\n` +
+      `//   for (byte x : b) s.append(String.format("%02x", x)); return s.toString(); }`,
+
+    csharp:
+      `using System.Security.Cryptography;\n` +
+      `using System.Text;\n\n` +
+      `var token = Environment.GetEnvironmentVariable("API_TOKEN")!;\n` +
+      `var path  = "${path}";\n\n` +
+      `// Build the body once; the same string is hashed and sent.\n` +
+      `var body  = System.Text.Json.JsonSerializer.Serialize(new\n` +
+      `{\n` +
+      body.map(([k, v]) => `    ${k}${' '.repeat(pad - k.length)} = "${v}",`).join('\n') +
+      `\n});\n\n` +
+      `var ts    = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();  // SECONDS\n` +
+      `var nonce = Guid.NewGuid().ToString();\n\n` +
+      `var bodyHash  = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(body))).ToLowerInvariant();\n` +
+      `var canonical = string.Join("\\n", "POST", path, ts, nonce, bodyHash);\n\n` +
+      `using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(token));\n` +
+      `var signature  = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();\n\n` +
+      `using var client = new HttpClient();\n` +
+      `var content = new StringContent(body, Encoding.UTF8, "application/json");\n` +
+      `content.Headers.Add("X-Api-Mobile",    "9000012345");\n` +
+      `content.Headers.Add("X-Api-Token",     token);\n` +
+      `content.Headers.Add("X-Api-Timestamp", ts);\n` +
+      `content.Headers.Add("X-Api-Nonce",     nonce);\n` +
+      `content.Headers.Add("X-Api-Signature", signature);\n\n` +
+      `var response = await client.PostAsync("${base}${path}", content);\n` +
+      `var json = await response.Content.ReadAsStringAsync();`,
+  };
+}
+
 /* ─── Tables ─────────────────────────────────────────────────────────────── */
 
 type ParamRow = { name: string; type: string; required: 'Required' | 'Optional' | 'Conditional'; desc: ReactNode };
@@ -458,12 +645,54 @@ const SECTIONS = [
   { id: 'checklist', label: 'Go-live checklist' },
 ];
 
+/**
+ * DMT has its own table of contents. It is a multi-step flow — a remitter is onboarded
+ * and verified, a beneficiary is attached and verified, and only then does money move —
+ * so the document is ordered the way an integrator actually builds it, and signing gets a
+ * section of its own because it applies to every call.
+ */
+const DMT_SECTIONS = [
+  { id: 'dmt-overview', label: 'Overview' },
+  { id: 'dmt-auth', label: 'Authentication' },
+  { id: 'dmt-signing', label: 'Request signing' },
+  { id: 'dmt-envelope', label: 'Response envelope' },
+  { id: 'dmt-sender', label: 'Sender registration' },
+  { id: 'dmt-beneficiary', label: 'Beneficiary' },
+  { id: 'dmt-transfer', label: 'Transfer' },
+  { id: 'dmt-status', label: 'Status check' },
+  { id: 'dmt-balance', label: 'Balance' },
+  { id: 'dmt-reference', label: 'Banks & IFSC' },
+  { id: 'dmt-callbacks', label: 'Callbacks' },
+  { id: 'dmt-codes', label: 'Status & error codes' },
+  { id: 'dmt-checklist', label: 'Go-live checklist' },
+];
+
+const PAYOUT_SECTIONS = [
+  { id: 'payout-overview', label: 'Overview' },
+  { id: 'payout-auth', label: 'Authentication & signing' },
+  { id: 'payout-transfer', label: 'Transfer' },
+  { id: 'payout-status', label: 'Status check' },
+  { id: 'payout-balance', label: 'Balance' },
+  { id: 'payout-ifsc', label: 'IFSC lookup' },
+  { id: 'payout-callbacks', label: 'Callbacks' },
+  { id: 'payout-codes', label: 'Status & error codes' },
+  { id: 'payout-checklist', label: 'Go-live checklist' },
+];
+
 const PRODUCTS = [
   { key: 'recharge', label: 'Recharge & Bill Payment', icon: Smartphone, available: true },
   { key: 'aeps', label: 'AEPS', icon: Fingerprint, available: false },
-  { key: 'dmt', label: 'DMT / Money Transfer', icon: Landmark, available: false },
+  { key: 'dmt', label: 'DMT / Money Transfer', icon: Landmark, available: true },
+  { key: 'payout', label: 'Payout / Bank Transfer', icon: Send, available: true },
   { key: 'microatm', label: 'Micro ATM', icon: Banknote, available: false },
 ];
+
+/** The table of contents for whichever product is being read. */
+function sectionsFor(product: string) {
+  if (product === 'dmt') return DMT_SECTIONS;
+  if (product === 'payout') return PAYOUT_SECTIONS;
+  return SECTIONS;
+}
 
 const STATUS_VALUES: string[][] = [
   ['SUCCESS', '0', 'Final. Consumer served, wallet debited.'],
@@ -473,7 +702,7 @@ const STATUS_VALUES: string[][] = [
 ];
 
 const ERROR_CODES: string[][] = [
-  ['AUTH_USERID_REQUIRED', 'userid missing, or not a positive number.'],
+  ['AUTH_MOBILE_REQUIRED', 'mobile missing, or not the account’s registered 10-digit number.'],
   ['AUTH_TOKEN_REQUIRED', 'token was not sent.'],
   ['AUTH_USER_NOT_FOUND', 'No such account.'],
   ['AUTH_NOT_API_USER', 'The account is not an API user.'],
@@ -621,7 +850,7 @@ function RechargeDoc({ appName, v1 }: { appName: string; v1: string }) {
   const rechargeSamples = useMemo(
     () =>
       requestSamples(`${v1}/recharge`, [
-        ['userid', '14'],
+        ['mobile', '9000012345'],
         ['token', 'YOUR_API_TOKEN'],
         ['requestid', 'REF001'],
         ['operator', 'AIRT'],
@@ -634,7 +863,7 @@ function RechargeDoc({ appName, v1 }: { appName: string; v1: string }) {
   const statusSamples = useMemo(
     () =>
       requestSamples(`${v1}/status`, [
-        ['userid', '14'],
+        ['mobile', '9000012345'],
         ['token', 'YOUR_API_TOKEN'],
         ['requestid', 'REF001'],
       ]),
@@ -644,7 +873,7 @@ function RechargeDoc({ appName, v1 }: { appName: string; v1: string }) {
   const balanceSamples = useMemo(
     () =>
       requestSamples(`${v1}/balance`, [
-        ['userid', '14'],
+        ['mobile', '9000012345'],
         ['token', 'YOUR_API_TOKEN'],
       ]),
     [v1],
@@ -653,7 +882,7 @@ function RechargeDoc({ appName, v1 }: { appName: string; v1: string }) {
   const operatorSamples = useMemo(
     () =>
       requestSamples(`${v1}/operators`, [
-        ['userid', '14'],
+        ['mobile', '9000012345'],
         ['token', 'YOUR_API_TOKEN'],
       ]),
     [v1],
@@ -665,7 +894,7 @@ function RechargeDoc({ appName, v1 }: { appName: string; v1: string }) {
       <Section id="overview" n={1} title="Overview">
         <p>
           Recharge and bill-payment integration for {appName}. A plain HTTP API — no encryption envelope, no login
-          flow, no SDK. Send <C>userid</C> and <C>token</C> as ordinary parameters and receive JSON.
+          flow, no SDK. Send <C>mobile</C> and <C>token</C> as ordinary parameters and receive JSON.
         </p>
 
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -678,7 +907,7 @@ function RechargeDoc({ appName, v1 }: { appName: string; v1: string }) {
           </div>
           <div className="grid gap-px border-t border-slate-100 bg-slate-100 sm:grid-cols-2">
             {[
-              { k: 'Auth', v: 'userid + token · optional IP allowlist' },
+              { k: 'Auth', v: 'mobile + token · optional IP allowlist' },
               { k: 'Contract', v: 'v1 · stable, additive changes only' },
             ].map((x) => (
               <div key={x.k} className="bg-white px-4 py-3">
@@ -702,7 +931,7 @@ function RechargeDoc({ appName, v1 }: { appName: string; v1: string }) {
           <ol className="space-y-2.5">
             {[
               <>
-                Collect your <C>userid</C> and <C>token</C> from{' '}
+                Collect your <C>mobile</C> and <C>token</C> from{' '}
                 <Link to="/s/ApiAccess" className="font-medium text-brand-600 hover:underline">
                   API Access
                 </Link>
@@ -745,7 +974,7 @@ function RechargeDoc({ appName, v1 }: { appName: string; v1: string }) {
         </p>
         <ParamTable
           rows={[
-            { name: 'userid', type: 'integer', required: 'Required', desc: 'Your numeric account id.' },
+            { name: 'mobile', type: 'string', required: 'Required', desc: 'Your account’s registered 10-digit mobile number.' },
             {
               name: 'token',
               type: 'string',
@@ -821,7 +1050,7 @@ function RechargeDoc({ appName, v1 }: { appName: string; v1: string }) {
 
         <ParamTable
           rows={[
-            { name: 'userid', type: 'integer', required: 'Required', desc: 'Your account id.' },
+            { name: 'mobile', type: 'string', required: 'Required', desc: 'Your registered mobile number.' },
             { name: 'token', type: 'string', required: 'Required', desc: 'Your API token.' },
             {
               name: 'requestid',
@@ -915,7 +1144,7 @@ function RechargeDoc({ appName, v1 }: { appName: string; v1: string }) {
         <Endpoint path="/status" v1={v1} />
         <ParamTable
           rows={[
-            { name: 'userid', type: 'integer', required: 'Required', desc: 'Your account id.' },
+            { name: 'mobile', type: 'string', required: 'Required', desc: 'Your registered mobile number.' },
             { name: 'token', type: 'string', required: 'Required', desc: 'Your API token.' },
             {
               name: 'requestid',
@@ -1116,6 +1345,1274 @@ X-Signature: 9f2b8c1d...c41e
   );
 }
 
+/* ─── DMT document ───────────────────────────────────────────────────────── */
+
+/**
+ * A DMT endpoint header. Unlike the recharge one this shows a SINGLE method, because the
+ * distinction is load-bearing here: everything that moves money or reads customer data is
+ * POST, and a GET to it is refused rather than honoured.
+ */
+function DmtEndpoint({ path, v1, method = 'POST' }: { path: string; v1: string; method?: 'GET' | 'POST' }) {
+  const full = `${v1}${path}`;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2.5">
+      <MethodChip method={method} />
+      <code className="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-slate-700">{full}</code>
+      <CopyButton value={full} />
+    </div>
+  );
+}
+
+/** One beneficiary/sender step in the onboarding sequence. */
+function FlowStep({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+  return (
+    <li className="flex gap-3">
+      <span className="mt-px grid size-5 shrink-0 place-items-center rounded-full bg-brand-50 font-mono text-[10px] font-bold text-brand-600">
+        {n}
+      </span>
+      <span className="text-[13.5px] leading-relaxed text-slate-600">
+        <span className="font-medium text-slate-700">{title}</span> — {children}
+      </span>
+    </li>
+  );
+}
+
+const DMT_STATUS_VALUES: string[][] = [
+  ['SUCCESS', '0', 'Final. Money reached the beneficiary; a UTR is present.'],
+  ['PENDING', '1', 'Not final. Accepted and debited; settles later.'],
+  ['FAILED', '2', 'Final. Declined — the amount is refunded to your wallet.'],
+  ['ERROR', '3 · 4 · 5 · 9', 'No transaction was created. Nothing was debited.'],
+];
+
+const DMT_SECURITY_CODES: string[][] = [
+  ['SEC_SIGNATURE_REQUIRED', 'Send the three signing headers.'],
+  ['SEC_SIGNATURE_INVALID', 'Re-check the canonical string; hash the bytes you actually send.'],
+  ['SEC_TIMESTAMP_INVALID', 'Use epoch seconds, not milliseconds. Sync your clock (NTP).'],
+  ['SEC_NONCE_INVALID', 'Generate a fresh nonce for every request.'],
+  ['SEC_METHOD_NOT_ALLOWED', 'Use POST. Only /dmt/balance accepts GET.'],
+];
+
+const DMT_FLOW_CODES: string[][] = [
+  ['VAL_REQUESTID_REQUIRED', 'Send a unique requestid on /dmt/transfer.'],
+  ['VAL_SENDER_MOBILE_REQUIRED', 'sendermobile must be exactly 10 digits.'],
+  ['VAL_SENDER_NAME_REQUIRED', 'sendername is missing.'],
+  ['VAL_BENEFICIARY_REQUIRED', 'beneficiaryid / beneficiaryname is missing.'],
+  ['VAL_ACCOUNT_REQUIRED', 'accountno is missing.'],
+  ['VAL_IFSC_REQUIRED', 'ifsc is missing.'],
+  ['VAL_IFSC_INVALID', 'Must be 11 characters, e.g. HDFC0000123.'],
+  ['VAL_PAYMENT_TYPE_INVALID', 'paymenttype must be IMPS or NEFT.'],
+  ['VAL_LOCATION_INVALID', 'Send latitude and longitude together, and as real coordinates.'],
+  ['VAL_OTP_REQUIRED', 'otp is missing.'],
+  ['VAL_AMOUNT_INVALID', 'amount must be a number greater than zero.'],
+  ['VAL_AMOUNT_BELOW_LIMIT', 'Below the per-transfer floor.'],
+  ['VAL_AMOUNT_ABOVE_LIMIT', 'Above the per-transfer ceiling, or past the sender’s monthly headroom.'],
+  ['DMT_SENDER_NOT_FOUND', 'Register the sender first.'],
+  ['DMT_SENDER_NOT_VERIFIED', 'Clear the sender OTP.'],
+  ['DMT_BENEFICIARY_NOT_FOUND', 'Unknown id, or not registered under this sender.'],
+  ['DMT_BENEFICIARY_NOT_VERIFIED', 'Clear the beneficiary OTP.'],
+  ['DMT_REJECTED', 'The flow declined the step — message carries the reason.'],
+  ['TXN_REJECTED', 'Declined before a transaction existed, usually balance or a limit.'],
+  ['TXN_NOT_FOUND', 'No transfer for that requestid / txnid.'],
+  ['SYS_ERROR', 'Our fault. Do not re-send — call /dmt/status with the same requestid.'],
+];
+
+function DmtDoc({ appName, v1 }: { appName: string; v1: string }) {
+  const transferSamples = useMemo(
+    () =>
+      signedSamples(v1.replace(/\/v1$/, ''), '/api/v1/dmt/transfer', [
+        ['requestid', 'DMT-1001'],
+        ['sendermobile', '9876543210'],
+        ['beneficiaryid', 'b4f1c2a0-7e21-4a19-9f3d-2c8e5d6a1b77'],
+        ['amount', '5000'],
+        ['paymenttype', 'IMPS'],
+        ['latitude', '22.7196'],
+        ['longitude', '75.8577'],
+      ]),
+    [v1],
+  );
+
+  const senderSamples = useMemo(
+    () =>
+      signedSamples(v1.replace(/\/v1$/, ''), '/api/v1/dmt/sender/register', [
+        ['sendermobile', '9876543210'],
+        ['sendername', 'Ramesh Kumar'],
+        ['pincode', '452001'],
+      ]),
+    [v1],
+  );
+
+  const beneSamples = useMemo(
+    () =>
+      signedSamples(v1.replace(/\/v1$/, ''), '/api/v1/dmt/beneficiary/register', [
+        ['sendermobile', '9876543210'],
+        ['beneficiaryname', 'Sunita Devi'],
+        ['accountno', '50100234567890'],
+        ['ifsc', 'HDFC0000123'],
+      ]),
+    [v1],
+  );
+
+  const statusSamples = useMemo(
+    () =>
+      signedSamples(v1.replace(/\/v1$/, ''), '/api/v1/dmt/status', [['requestid', 'DMT-1001']]),
+    [v1],
+  );
+
+  return (
+    <div className="space-y-10">
+      {/* ── 01 Overview ───────────────────────────────────────────────── */}
+      <Section id="dmt-overview" n={1} title="Overview">
+        <p>
+          Domestic Money Transfer for {appName}. Send money from a walk-in customer to any Indian bank account over
+          IMPS or NEFT. Plain HTTP and JSON — no SDK — but unlike the recharge API, every request is{' '}
+          <span className="font-medium text-slate-700">POST-only and signed</span>, because DMT tickets are large
+          enough that a leaked or replayed request is a material loss.
+        </p>
+
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="flex items-center gap-3 px-4 py-2.5">
+            <span className="shrink-0 text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">
+              Base URL
+            </span>
+            <code className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-slate-700">{v1}/dmt/</code>
+            <CopyButton value={`${v1}/dmt/`} />
+          </div>
+          <div className="grid gap-px border-t border-slate-100 bg-slate-100 sm:grid-cols-2">
+            {[
+              { k: 'Auth', v: 'mobile + token + HMAC signature · optional IP allowlist' },
+              { k: 'Methods', v: 'POST everywhere · GET only for /dmt/balance' },
+              { k: 'Rails', v: 'IMPS · NEFT' },
+              { k: 'Contract', v: 'v1 · stable, additive changes only' },
+            ].map((x) => (
+              <div key={x.k} className="bg-white px-4 py-3">
+                <div className="text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">{x.k}</div>
+                <div className="mt-1 text-[13px] text-slate-700">{x.v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <Callout tone="info" title="One response shape, everywhere.">
+          The reply to <C>/dmt/transfer</C>, the reply to <C>/dmt/status</C> and the callback we push are the
+          identical object — only <C>event</C> differs. It also extends the recharge transaction shape, so if you
+          already consume <C>/recharge</C> the same parser works here; DMT only adds a beneficiary block.
+        </Callout>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="mb-3 text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">
+            The flow — steps 1–4 are once per customer, step 5 repeats
+          </div>
+          <ol className="space-y-2.5">
+            <FlowStep n={1} title="Register the sender">
+              <C>/dmt/sender/register</C> with the customer’s mobile and name. Replies <C>otprequired: true</C> when
+              an OTP has gone to them.
+            </FlowStep>
+            <FlowStep n={2} title="Verify the sender">
+              <C>/dmt/sender/otp/verify</C>. Until this clears, the sender holds no beneficiaries and sends no money.
+            </FlowStep>
+            <FlowStep n={3} title="Attach a beneficiary">
+              <C>/dmt/beneficiary/register</C> returns a <C>beneficiaryid</C> — store it against the customer.
+            </FlowStep>
+            <FlowStep n={4} title="Verify the beneficiary">
+              <C>/dmt/beneficiary/otp/verify</C>. An unverified beneficiary cannot receive a transfer.
+            </FlowStep>
+            <FlowStep n={5} title="Send, then settle">
+              <C>/dmt/transfer</C> with a fresh <C>requestid</C>, then wait for the callback or poll{' '}
+              <C>/dmt/status</C> until <C>final: true</C>.
+            </FlowStep>
+          </ol>
+        </div>
+
+        <Callout tone="warn" title="Never retry a transfer with a new requestid.">
+          If <C>/dmt/transfer</C> times out, the transfer may already be in flight. Resolve it by calling{' '}
+          <C>/dmt/status</C> with the <span className="font-medium text-slate-700">same</span> requestid. A fresh
+          requestid creates a second, independent transfer — and the money leaves twice.
+        </Callout>
+
+        <Callout tone="info" title="Two rails run this contract. Ask which one you are on.">
+          <span className="font-medium text-slate-700">Pure DMT</span> is the five-step flow above: the remitter
+          and each beneficiary are registered and OTP-verified before money moves.{' '}
+          <span className="font-medium text-slate-700">Payout DMT</span> is the same contract with steps 1–4
+          removed — that rail keeps no remitter, so nothing is pre-registered. On a payout platform:
+          <ul className="mt-2 space-y-1 pl-4">
+            <li>
+              • <C>beneficiaryid</C> can be replaced by <C>accountno</C> + <C>ifsc</C> +{' '}
+              <C>beneficiaryname</C> sent inline. One call, nothing to register or look up.{' '}
+              <C>sendermobile</C> stays required, but the number does not have to be registered —
+              send the customer’s.
+            </li>
+            <li>
+              • The registration endpoints still work and still return a <C>beneficiaryid</C>, so an integration
+              written for pure DMT keeps running unchanged — they simply reply <C>otprequired: false</C>, and the
+              OTP-verify calls succeed without an OTP.
+            </li>
+            <li>
+              • An inline destination on a <span className="font-medium text-slate-700">pure</span> platform is
+              refused, not ignored — that rail can only send where it has registered.
+            </li>
+          </ul>
+        </Callout>
+      </Section>
+
+      {/* ── 02 Authentication ─────────────────────────────────────────── */}
+      <Section id="dmt-auth" n={2} title="Authentication">
+        <p>
+          Your <C>mobile</C> and <C>token</C> go on every request. Send them as headers — that keeps them out of
+          bodies you might log wholesale, and out of the URL on the one GET endpoint.
+        </p>
+        <ParamTable
+          rows={[
+            { name: 'X-Api-Mobile', type: 'header', required: 'Required', desc: 'Your account’s registered 10-digit mobile number.' },
+            {
+              name: 'X-Api-Token',
+              type: 'header',
+              required: 'Required',
+              desc: (
+                <>
+                  Your API token from{' '}
+                  <Link to="/s/ApiAccess" className="font-medium text-brand-600 hover:underline">
+                    API Access
+                  </Link>
+                  . It is also the HMAC signing key.
+                </>
+              ),
+            },
+            { name: 'X-Api-Timestamp', type: 'header', required: 'Required', desc: 'Unix epoch SECONDS, UTC.' },
+            {
+              name: 'X-Api-Nonce',
+              type: 'header',
+              required: 'Required',
+              desc: 'Unique per request, 8–128 characters. A UUID is a good choice.',
+            },
+            {
+              name: 'X-Api-Signature',
+              type: 'header',
+              required: 'Required',
+              desc: 'Lowercase hex HMAC-SHA256 over the canonical string — see the next section.',
+            },
+          ]}
+        />
+        <Callout tone="info" title="No custom headers in your stack?">
+          All five may instead be sent as body fields named <C>mobile</C>, <C>token</C>, <C>timestamp</C>,{' '}
+          <C>nonce</C> and <C>signature</C>. Headers win where both are present, and the signature is computed the
+          same way either way.
+        </Callout>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Callout tone="good" icon={ShieldCheck} title="IP allowlist.">
+            Turn on IP Security and list only your server IPs. A call from anywhere else is rejected with{' '}
+            <C>AUTH_IP_NOT_WHITELISTED</C>, even with a valid token and a valid signature.
+          </Callout>
+          <Callout tone="warn" title="Keep the token server-side.">
+            It authorises spending from your wallet and signs your requests. Never ship it in a mobile app or browser
+            bundle. If it leaks, regenerate immediately.
+          </Callout>
+        </div>
+      </Section>
+
+      {/* ── 03 Request signing ────────────────────────────────────────── */}
+      <Section id="dmt-signing" n={3} title="Request signing">
+        <p>
+          A token on its own is a bearer credential: anything that can read one request can replay it. So each DMT
+          request must also <span className="font-medium text-slate-700">prove</span> possession of the token. You
+          build a canonical string, HMAC it with your token, and send the result.
+        </p>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            { t: 'Tamper-evident', d: 'Change one rupee of the body and the signature no longer matches.' },
+            { t: 'Endpoint-bound', d: 'A captured /beneficiary/list call cannot be re-pointed at /transfer.' },
+            { t: 'Replay-resistant', d: 'The timestamp ages out and the nonce is single-use.' },
+          ].map((x) => (
+            <div key={x.t} className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2">
+                <Lock className="size-3.5 shrink-0 text-brand-500" />
+                <span className="text-[12.5px] font-semibold text-slate-800">{x.t}</span>
+              </div>
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-slate-500">{x.d}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            The canonical string — five lines joined by \n
+          </div>
+          <Code label="canonical">{`POST                                  ← HTTP method, uppercase
+/api/v1/dmt/transfer                  ← path, lowercase, no query string
+1757923200                            ← timestamp, exactly as sent
+9f1c4a2e-6b8d-4f30-a1e7-5c9d2b3a8e64  ← nonce, exactly as sent
+583280e9d8432e1c2840…                 ← SHA-256 of the RAW body, lowercase hex
+
+signature = HMAC-SHA256(canonical, your_api_token)  →  lowercase hex`}</Code>
+        </div>
+
+        <Callout tone="warn" title="Hash the bytes you actually send.">
+          Line 5 is a SHA-256 of your request body exactly as it goes on the wire — not of a re-serialised copy. You
+          never have to match our key order, spacing or number formatting. Build the JSON string once, hash{' '}
+          <span className="font-medium text-slate-700">that</span> string, and send the same string. Re-serialising
+          before sending is the single most common cause of <C>SEC_SIGNATURE_INVALID</C>.
+        </Callout>
+
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Worked example · reproduce this before you go live
+          </div>
+          <Code label="verify your implementation">{`Token (signing key)   TESTTOKEN123456
+
+Body, sent verbatim
+{"mobile":"9000012345","requestid":"ORD-77001","sendermobile":"9876543210","beneficiaryid":"b4f1c2a0-7e21-4a19-9f3d-2c8e5d6a1b77","amount":"5000","paymenttype":"IMPS"}
+
+SHA-256 of that body
+583280e9d8432e1c2840853bcf29657ef94cb98a085afd42a738978598724944
+
+Canonical string (\\n shown escaped)
+POST\\n/api/v1/dmt/transfer\\n1757923200\\n9f1c4a2e-6b8d-4f30-a1e7-5c9d2b3a8e64\\n583280e9d8432e1c2840853bcf29657ef94cb98a085afd42a738978598724944
+
+X-Api-Signature
+19ca0fbfdf6cbe9363cc855aa85bdbd9bafbea407fc2150f401fa31d753876e6`}</Code>
+        </div>
+
+        <Callout tone="good" icon={ShieldCheck} title="Signing GET /dmt/balance.">
+          There is no body, so line 5 is the SHA-256 of the empty string:{' '}
+          <C>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</C>. Everything else is unchanged.
+        </Callout>
+
+        <ParamTable
+          rows={[
+            {
+              name: 'Clock window',
+              type: 'rule',
+              required: 'Required',
+              desc: '±300 seconds from server time. Run NTP — a drifted clock fails every request.',
+            },
+            {
+              name: 'Units',
+              type: 'rule',
+              required: 'Required',
+              desc: 'Epoch SECONDS. Sending milliseconds is the most common integration error — it reads as ~55,000 years in the future.',
+            },
+            {
+              name: 'Nonce reuse',
+              type: 'rule',
+              required: 'Required',
+              desc: 'Single-use inside the replay window. Generate one per request, never per session.',
+            },
+            {
+              name: 'Retries',
+              type: 'rule',
+              required: 'Required',
+              desc: 'A retry needs a NEW timestamp, nonce and signature — but the SAME requestid. That combination is what makes a retry safe instead of a second transfer.',
+            },
+          ]}
+        />
+      </Section>
+
+      {/* ── 04 Envelope ───────────────────────────────────────────────── */}
+      <Section id="dmt-envelope" n={4} title="Response envelope">
+        <p>
+          Every reply — and every callback — opens with the same six fields. Parse them once; only the payload block
+          below them changes per endpoint. Every endpoint replies <C>200 OK</C>, declines included.
+        </p>
+        <Code label="every response">{`{
+  "status":     "PENDING",   // SUCCESS | PENDING | FAILED | ERROR
+  "statuscode": 1,           // numeric mirror of status
+  "errorcode":  "",          // stable machine code, "" when there is no error
+  "message":    "...",       // human text — display it, never parse it
+  "requestid":  "DMT-1001",  // your reference, echoed on EVERY reply
+
+  ...                        // the endpoint's own payload
+
+  "timestamp":  "2026-09-15T14:20:11+05:30",
+  "version":    "1.0"
+}`}</Code>
+        <RefTable head={['status', 'code', 'Meaning']} rows={DMT_STATUS_VALUES} />
+        <Callout tone="warn" title="Never branch on the HTTP status.">
+          A bad signature, a declined transfer and a successful one all return <C>200 OK</C>. Branch on{' '}
+          <C>status</C> and <C>errorcode</C> in the body.
+        </Callout>
+      </Section>
+
+      {/* ── 05 Sender ─────────────────────────────────────────────────── */}
+      <Section id="dmt-sender" n={5} title="Sender registration">
+        <p>
+          The sender is the walk-in customer remitting the money, identified by their mobile number. Register them
+          once, verify once.
+        </p>
+
+        <DmtEndpoint path="/dmt/sender/register" v1={v1} />
+        <ParamTable
+          rows={[
+            { name: 'sendermobile', type: 'string', required: 'Required', desc: 'Exactly 10 digits. This is the sender’s identity.' },
+            { name: 'sendername', type: 'string', required: 'Required', desc: 'Name as per the customer’s KYC.' },
+            { name: 'address', type: 'string', required: 'Optional', desc: 'Customer address.' },
+            { name: 'pincode', type: 'string', required: 'Optional', desc: '6-digit postal code.' },
+          ]}
+        />
+
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Request</div>
+          <CodeTabs samples={senderSamples} />
+        </div>
+
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Response</div>
+          <Code label="200 OK">{`{
+  "status":      "SUCCESS",
+  "statuscode":  0,
+  "errorcode":   "",
+  "message":     "Sender registered. An OTP has been sent to the sender's mobile — verify it to activate.",
+  "otprequired": true,
+  "reference":   ""
+}`}</Code>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <DmtEndpoint path="/dmt/sender/otp/verify" v1={v1} />
+            <p className="mt-2 text-[13px] text-slate-500">
+              Takes <C>sendermobile</C> and <C>otp</C>. Activates the sender.
+            </p>
+          </div>
+          <div>
+            <DmtEndpoint path="/dmt/sender/otp/resend" v1={v1} />
+            <p className="mt-2 text-[13px] text-slate-500">
+              Takes <C>sendermobile</C>. Sends a fresh OTP.
+            </p>
+          </div>
+        </div>
+
+        <DmtEndpoint path="/dmt/sender/fetch" v1={v1} />
+        <p>
+          The sender’s profile and — the reason to call it before quoting a price — how much they may still send
+          this month.
+        </p>
+        <Code label="200 OK">{`{
+  "status":           "SUCCESS",
+  "statuscode":       0,
+  "sendermobile":     "9876543210",
+  "sendername":       "Ramesh Kumar",
+  "address":          "12 MG Road, Indore",
+  "verified":         true,
+  "consumedlimit":    18000.00,   // already sent this calendar month
+  "remaininglimit":   7000.00,    // what is still available
+  "pertransferlimit": 5000.00     // 0 means no extra per-transfer cap
+}`}</Code>
+        <Callout tone="info" title="The limit follows the customer, not your outlet.">
+          <C>consumedlimit</C> counts every transfer that sender made across the platform this calendar month, so the
+          same customer cannot be spread across two retailers to exceed the cap. Check{' '}
+          <C>remaininglimit</C> before you quote.
+        </Callout>
+      </Section>
+
+      {/* ── 06 Beneficiary ────────────────────────────────────────────── */}
+      <Section id="dmt-beneficiary" n={6} title="Beneficiary">
+        <p>A beneficiary is a destination bank account attached to one verified sender.</p>
+
+        <DmtEndpoint path="/dmt/beneficiary/register" v1={v1} />
+        <ParamTable
+          rows={[
+            { name: 'sendermobile', type: 'string', required: 'Required', desc: 'Must be a verified sender.' },
+            { name: 'beneficiaryname', type: 'string', required: 'Required', desc: 'Account holder’s name.' },
+            { name: 'accountno', type: 'string', required: 'Required', desc: 'Destination account number.' },
+            { name: 'ifsc', type: 'string', required: 'Required', desc: '11 characters, e.g. HDFC0000123.' },
+            { name: 'bankname', type: 'string', required: 'Optional', desc: 'Resolved from the IFSC when omitted.' },
+          ]}
+        />
+
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Request</div>
+          <CodeTabs samples={beneSamples} />
+        </div>
+
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Response</div>
+          <Code label="200 OK">{`{
+  "status":      "SUCCESS",
+  "statuscode":  0,
+  "message":     "Verify OTP to activate beneficiary.",
+  "otprequired": true,
+  "beneficiary": {
+    "beneficiaryid":   "b4f1c2a0-7e21-4a19-9f3d-2c8e5d6a1b77",
+    "beneficiaryname": "Sunita Devi",
+    "accountno":       "50100234567890",
+    "ifsc":            "HDFC0000123",
+    "bankname":        "HDFC Bank",
+    "verified":        false,
+    "nameverified":    false
+  }
+}`}</Code>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <DmtEndpoint path="/dmt/beneficiary/otp/verify" v1={v1} />
+            <p className="mt-2 text-[13px] text-slate-500">
+              Takes <C>beneficiaryid</C> and <C>otp</C>.
+            </p>
+          </div>
+          <div>
+            <DmtEndpoint path="/dmt/beneficiary/otp/resend" v1={v1} />
+            <p className="mt-2 text-[13px] text-slate-500">
+              Takes <C>beneficiaryid</C>.
+            </p>
+          </div>
+          <div>
+            <DmtEndpoint path="/dmt/beneficiary/list" v1={v1} />
+            <p className="mt-2 text-[13px] text-slate-500">
+              Takes <C>sendermobile</C>. Returns <C>count</C> and a <C>beneficiaries</C> array.
+            </p>
+          </div>
+          <div>
+            <DmtEndpoint path="/dmt/beneficiary/delete" v1={v1} />
+            <p className="mt-2 text-[13px] text-slate-500">
+              Takes <C>beneficiaryid</C>. Past transfers stay queryable.
+            </p>
+          </div>
+        </div>
+
+        <DmtEndpoint path="/dmt/beneficiary/verify" v1={v1} />
+        <p>
+          Penny-drop name enquiry: asks the destination bank who actually holds the account, so your customer can
+          confirm before sending a large amount to a mistyped digit. Takes <C>sendermobile</C>, <C>accountno</C>,{' '}
+          <C>ifsc</C> and optionally <C>bankname</C>.
+        </p>
+        <Code label="200 OK">{`{
+  "status":       "SUCCESS",
+  "verifiedname": "SUNITA DEVI",   // the name the BANK holds
+  "bankname":     "HDFC Bank",
+  "charge":       4.00,
+  "balance":      18420.50
+}`}</Code>
+        <Callout tone="warn" title="This call costs money.">
+          A fee is debited from your DMT wallet for the enquiry, including when the bank declines to confirm a name
+          (<C>status: "FAILED"</C>, with the bank’s reason in <C>message</C>). Call it deliberately — never on every
+          page load.
+        </Callout>
+      </Section>
+
+      {/* ── 07 Transfer ───────────────────────────────────────────────── */}
+      <Section id="dmt-transfer" n={7} title="Transfer">
+        <p>The money-moving call. Both the sender and the beneficiary must already be verified.</p>
+        <DmtEndpoint path="/dmt/transfer" v1={v1} />
+
+        <ParamTable
+          rows={[
+            {
+              name: 'requestid',
+              type: 'string',
+              required: 'Required',
+              desc: 'Your own unique reference. This is the idempotency key — see the note below.',
+            },
+            {
+              name: 'sendermobile',
+              type: 'string',
+              required: 'Required',
+              desc: 'Customer’s 10-digit mobile. On pure DMT it must be a verified sender; on a payout-DMT platform any valid number is accepted, but it is still required.',
+            },
+            {
+              name: 'beneficiaryid',
+              type: 'string',
+              required: 'Required',
+              desc: 'Verified beneficiary, registered under this sender. On a payout-DMT platform you may instead send accountno + ifsc + beneficiaryname inline and skip registration.',
+            },
+            {
+              name: 'accountno · ifsc · beneficiaryname',
+              type: 'string',
+              required: 'Conditional',
+              desc: 'The destination named inline, in place of beneficiaryid. Accepted only on a payout-DMT platform; a pure DMT platform refuses them.',
+            },
+            { name: 'amount', type: 'decimal', required: 'Required', desc: 'Rupees. Default bounds ₹100 – ₹25,000 per transfer.' },
+            { name: 'paymenttype', type: 'string', required: 'Optional', desc: 'IMPS (default) or NEFT.' },
+            { name: 'remark', type: 'string', required: 'Optional', desc: 'Narration, where the bank carries it.' },
+            { name: 'latitude / longitude', type: 'string', required: 'Optional', desc: 'Outlet coordinates, stored against the transaction for audit. Send both or neither; each is validated as a real coordinate.' },
+          ]}
+        />
+
+        <Callout tone="good" icon={ShieldCheck} title="Idempotent by requestid.">
+          A <C>requestid</C> you have already used is never debited twice — we return the original transfer’s current
+          result with <C>"duplicate": true</C>. So a timeout is safe to resolve:{' '}
+          <span className="font-medium text-slate-700">retry with the same requestid</span>, never a new one.
+        </Callout>
+
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Request</div>
+          <CodeTabs samples={transferSamples} />
+        </div>
+
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Response · shared by /dmt/transfer, /dmt/status and callbacks
+          </div>
+          <Code label="200 OK">{`{
+  "status":       "PENDING",
+  "statuscode":   1,
+  "errorcode":    "",
+  "message":      "Transfer initiated.",
+  "requestid":    "DMT-1001",
+  "event":        "INITIAL",     // INITIAL | STATUS | CALLBACK
+  "final":        false,         // true once status can no longer change
+  "duplicate":    false,         // true when replaying a used requestid
+  "txnid":        884512,        // our transaction id
+  "providerref":  "IMP1234567",
+  "amount":       5000.00,
+  "debitamount":  5015.00,       // principal + charges
+  "balance":      13405.50,      // your DMT wallet afterwards
+  "date":         "2026-09-15 14:20:11",
+
+  "sendermobile":    "9876543210",
+  "beneficiaryid":   "b4f1c2a0-7e21-4a19-9f3d-2c8e5d6a1b77",
+  "beneficiaryname": "Sunita Devi",
+  "accountno":       "50100234567890",
+  "ifsc":            "HDFC0000123",
+  "bankname":        "HDFC Bank",
+  "paymenttype":     "IMPS",
+  "utr":             "",          // bank UTR — populated once SUCCESS
+  "charge":          15.00
+}`}</Code>
+        </div>
+
+        <Callout tone="info" title="utr is the number that settles disputes.">
+          It is the reference the beneficiary’s own bank recognises, and it appears only once the transfer reaches{' '}
+          <C>SUCCESS</C>. While <C>PENDING</C> it is deliberately empty — quoting <C>providerref</C> to a customer’s
+          bank will not help them.
+        </Callout>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="mb-3 text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">
+            What is checked before anything is debited
+          </div>
+          <RefTable
+            head={['Check', 'On failure']}
+            rows={[
+              ['Credentials, account active, IP allowed', 'AUTH_*'],
+              ['Signature, timestamp, nonce', 'SEC_*'],
+              ['requestid present', 'VAL_REQUESTID_REQUIRED'],
+              ['requestid already used', 'Original result, duplicate: true'],
+              ['Amount within bounds', 'VAL_AMOUNT_BELOW_LIMIT / VAL_AMOUNT_ABOVE_LIMIT'],
+              ['Sender exists, is yours, is verified', 'DMT_SENDER_NOT_FOUND / DMT_SENDER_NOT_VERIFIED'],
+              ['Beneficiary is yours and belongs to this sender', 'DMT_BENEFICIARY_NOT_FOUND'],
+              ['Beneficiary verified', 'DMT_BENEFICIARY_NOT_VERIFIED'],
+              ['Sender’s monthly headroom covers the amount', 'VAL_AMOUNT_ABOVE_LIMIT'],
+              ['Wallet covers principal + charges', 'TXN_REJECTED'],
+            ]}
+          />
+          <p className="mt-3 text-[13px] leading-relaxed text-slate-500">
+            All of it happens before a rupee moves. Any failure returns <C>ERROR</C> or <C>FAILED</C> with nothing
+            debited and no transaction to reconcile.
+          </p>
+        </div>
+      </Section>
+
+      {/* ── 08 Status ─────────────────────────────────────────────────── */}
+      <Section id="dmt-status" n={8} title="Status check">
+        <p>
+          Resolve a transfer by your own <C>requestid</C>, or by our <C>txnid</C>. The reply is byte-for-byte the
+          same shape as <C>/dmt/transfer</C> with <C>event: "STATUS"</C> — one parser handles both.
+        </p>
+        <DmtEndpoint path="/dmt/status" v1={v1} />
+        <ParamTable
+          rows={[
+            {
+              name: 'requestid',
+              type: 'string',
+              required: 'Conditional',
+              desc: 'Your reference. Send this or txnid.',
+            },
+            { name: 'txnid', type: 'integer', required: 'Conditional', desc: 'Our transaction id. Send this or requestid.' },
+          ]}
+        />
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Request</div>
+          <CodeTabs samples={statusSamples} />
+        </div>
+        <Callout tone="info" title="Poll sensibly.">
+          A still-pending transfer is re-enquired with the bank before we answer, so the result reflects the rail and
+          not just our record. Wait ~60 seconds after initiating, then poll at most every 30 seconds, and stop as
+          soon as <C>final: true</C>. If you consume callbacks, polling is your fallback for missed deliveries — not
+          the primary path.
+        </Callout>
+      </Section>
+
+      {/* ── 09 Balance ────────────────────────────────────────────────── */}
+      <Section id="dmt-balance" n={9} title="Balance">
+        <p>
+          The only <C>GET</C> in the DMT contract — it exposes no customer data and changes nothing. It is still
+          signed; sign the empty body.
+        </p>
+        <DmtEndpoint path="/dmt/balance" v1={v1} method="GET" />
+        <Code label="200 OK">{`{
+  "status":     "SUCCESS",
+  "statuscode": 0,
+  "balance":    31826.00,          // total spendable across wallets
+  "wallets": [
+    { "walletid": 2, "wallet": "DMT Wallet", "balance": 13405.50, "hold": 0.00, "available": 13405.50 }
+  ]
+}`}</Code>
+        <Callout tone="info" title="Watch available, not balance.">
+          DMT transfers draw on the DMT wallet — <C>walletid: 2</C>. A held amount is included in{' '}
+          <C>balance</C> but cannot be spent; <C>available</C> is what transfers actually draw on.
+        </Callout>
+      </Section>
+
+      {/* ── 10 Reference ──────────────────────────────────────────────── */}
+      <Section id="dmt-reference" n={10} title="Banks & IFSC">
+        <DmtEndpoint path="/dmt/banks" v1={v1} />
+        <p>
+          The supported bank catalogue: <C>bankid</C>, <C>bankname</C>, <C>defaultifsc</C>, and <C>imps</C> — which
+          is <C>false</C> for banks that accept NEFT only. Cache it; it changes rarely.
+        </p>
+
+        <DmtEndpoint path="/dmt/ifsc" v1={v1} />
+        <p>
+          Branch details behind an IFSC. Takes <C>ifsc</C>; returns <C>bankname</C>, <C>branch</C> and{' '}
+          <C>address</C>. Use it to confirm a branch with the customer before registering the beneficiary.
+        </p>
+        <Code label="200 OK">{`{
+  "status":   "SUCCESS",
+  "ifsc":     "HDFC0000123",
+  "bankname": "HDFC Bank",
+  "branch":   "INDORE MG ROAD",
+  "address":  "MG Road, Indore, Madhya Pradesh"
+}`}</Code>
+      </Section>
+
+      {/* ── 11 Callbacks ──────────────────────────────────────────────── */}
+      <Section id="dmt-callbacks" n={11} title="Callbacks">
+        <p>
+          When a transfer reaches a final status we POST the result to the callback URL configured on your account.
+          The body is the same transaction payload with <C>event: "CALLBACK"</C>.
+        </p>
+        <Code label="POST to your callback URL">{`POST https://your-host/dmt-callback
+Content-Type: application/json
+X-Event: CALLBACK
+X-Request-Id: DMT-1001
+X-Transaction-Id: 884512
+X-Signature-Algorithm: HMAC-SHA256
+X-Signature: <HMAC-SHA256 of the raw body, keyed by your API token>
+
+{ ...the same payload /dmt/transfer returns, with "event":"CALLBACK"... }`}</Code>
+        <ParamTable
+          rows={[
+            {
+              name: 'Verify X-Signature',
+              type: 'rule',
+              required: 'Required',
+              desc: 'HMAC-SHA256 of the raw body with your API token — the same algorithm you use outbound. An unverified callback endpoint accepts anyone’s idea of “settled”.',
+            },
+            {
+              name: 'Reply 2xx quickly',
+              type: 'rule',
+              required: 'Required',
+              desc: 'A non-2xx or a timeout is retried with backoff. Acknowledge first, process after.',
+            },
+            {
+              name: 'Be idempotent',
+              type: 'rule',
+              required: 'Required',
+              desc: 'Retries mean the same callback can arrive more than once. Key your handler on requestid and ignore repeats.',
+            },
+            {
+              name: 'Trust status, not arrival',
+              type: 'rule',
+              required: 'Required',
+              desc: 'A callback can report FAILED. Its arrival is not confirmation of success.',
+            },
+          ]}
+        />
+      </Section>
+
+      {/* ── 12 Codes ──────────────────────────────────────────────────── */}
+      <Section id="dmt-codes" n={12} title="Status & error codes">
+        <p>
+          <C>errorcode</C> is stable and safe to switch on. <C>message</C> is human-readable and may be reworded at
+          any time — never match on it.
+        </p>
+
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Request security
+          </div>
+          <RefTable head={['Code', 'Fix']} rows={DMT_SECURITY_CODES} />
+        </div>
+
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Authentication
+          </div>
+          <RefTable
+            head={['Code', 'Fix']}
+            rows={[
+              ['AUTH_MOBILE_REQUIRED', 'Send X-Api-Mobile.'],
+              ['AUTH_TOKEN_REQUIRED', 'Send X-Api-Token.'],
+              ['AUTH_USER_NOT_FOUND', 'No account is registered with that mobile number.'],
+              ['AUTH_NOT_API_USER', 'The account is not an API-user account.'],
+              ['AUTH_ACCOUNT_INACTIVE', 'Contact support.'],
+              ['AUTH_INVALID_TOKEN', 'Token is wrong or was regenerated.'],
+              ['AUTH_IP_NOT_WHITELISTED', 'Add the calling IP on API Access.'],
+            ]}
+          />
+        </div>
+
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Validation, flow & transaction
+          </div>
+          <RefTable head={['Code', 'Fix']} rows={DMT_FLOW_CODES} filterable filterLabel="Filter error codes" />
+        </div>
+      </Section>
+
+      {/* ── 13 Checklist ──────────────────────────────────────────────── */}
+      <Section id="dmt-checklist" n={13} title="Go-live checklist">
+        <RefTable
+          head={['Item', 'Confirm']}
+          rows={[
+            ['Signature reproduced', 'Your code produces 19ca0fbf…76e6 for the worked example.'],
+            ['Clock synced', 'NTP running; timestamps in SECONDS.'],
+            ['Nonce per request', 'Fresh UUID every call, never cached.'],
+            ['requestid persisted', 'Written to your database BEFORE the transfer call.'],
+            ['Timeout path', 'On timeout you call /dmt/status with the same requestid — never re-send.'],
+            ['Callback verified', 'You check X-Signature and handle repeats.'],
+            ['PENDING handled', 'Your UI shows “processing”, not “failed”.'],
+            ['Limits surfaced', 'You call /dmt/sender/fetch and show remaininglimit before quoting.'],
+            ['IPs whitelisted', 'Every production egress IP is registered.'],
+            ['Token stored safely', 'Environment or secret store — never in source control.'],
+          ]}
+        />
+        <Callout tone="good" icon={ShieldCheck} title="Ready.">
+          Once every row above is true, ask your account manager to enable DMT on your API user. Amount bounds and
+          the clock-skew window are deployment settings — confirm the values in force before go-live.
+        </Callout>
+      </Section>
+    </div>
+  );
+}
+
+const PAYOUT_FLOW_CODES: string[][] = [
+  ['VAL_REQUESTID_REQUIRED', 'Send a unique requestid on /payout/transfer.'],
+  ['VAL_ACCOUNT_REQUIRED', 'accountno is missing, or is not 5–25 alphanumeric characters.'],
+  ['VAL_IFSC_REQUIRED', 'ifsc is missing.'],
+  ['VAL_IFSC_INVALID', 'Must be 11 characters, e.g. HDFC0000123.'],
+  ['VAL_BENEFICIARY_NAME_REQUIRED', 'beneficiaryname is missing — payout names the holder inline.'],
+  ['VAL_AMOUNT_INVALID', 'amount must be a number greater than zero.'],
+  ['VAL_AMOUNT_BELOW_LIMIT', 'Below the per-transfer floor.'],
+  ['VAL_AMOUNT_ABOVE_LIMIT', 'Above the per-transfer ceiling.'],
+  ['VAL_LOCATION_INVALID', 'Send latitude and longitude together, and as real coordinates.'],
+  ['PAYOUT_UNAVAILABLE', 'Payout is not enabled on this platform. Contact support — not a parameter error.'],
+  ['TXN_REJECTED', 'Declined before a transaction existed, usually balance or a limit.'],
+  ['TXN_NOT_FOUND', 'No payout for that requestid / txnid.'],
+  ['SYS_ERROR', 'Our fault. Do not re-send — call /payout/status with the same requestid.'],
+];
+
+function PayoutDoc({ appName, v1 }: { appName: string; v1: string }) {
+  const transferSamples = useMemo(
+    () =>
+      signedSamples(v1.replace(/\/v1$/, ''), '/api/v1/payout/transfer', [
+        ['requestid', 'PO-1001'],
+        ['accountno', '50100234567890'],
+        ['ifsc', 'HDFC0000123'],
+        ['beneficiaryname', 'Sunita Devi'],
+        ['amount', '5000'],
+        ['paymenttype', 'IMPS'],
+        ['latitude', '22.7196'],
+        ['longitude', '75.8577'],
+      ]),
+    [v1],
+  );
+
+  const statusSamples = useMemo(
+    () => signedSamples(v1.replace(/\/v1$/, ''), '/api/v1/payout/status', [['requestid', 'PO-1001']]),
+    [v1],
+  );
+
+  return (
+    <div className="space-y-10">
+      {/* ── 01 Overview ───────────────────────────────────────────────── */}
+      <Section id="payout-overview" n={1} title="Overview">
+        <p>
+          Payout moves money out of <span className="font-medium text-slate-700">your own</span> {appName} wallet to
+          any Indian bank account over IMPS, NEFT or RTGS. It is{' '}
+          <span className="font-medium text-slate-700">one request</span> — the destination account travels on the
+          transfer call itself.
+        </p>
+
+        <Callout tone="warn" title="Payout does not take a beneficiaryid, and never will.">
+          <C>beneficiaryid</C> belongs to <C>/api/v1/dmt</C>, where the money is a walk-in customer’s cash and the
+          regulator requires a registered, OTP-verified remitter and beneficiary. Payout moves your own funds, so
+          there is nothing to pre-register: send <C>accountno</C>, <C>ifsc</C> and <C>beneficiaryname</C> inline on{' '}
+          <C>/payout/transfer</C>. There is no sender, no OTP, and no id to fetch from anywhere.
+        </Callout>
+
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="flex items-center gap-3 px-4 py-2.5">
+            <span className="shrink-0 text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">
+              Base URL
+            </span>
+            <code className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-slate-700">{v1}/payout/</code>
+            <CopyButton value={`${v1}/payout/`} />
+          </div>
+          <div className="grid gap-px border-t border-slate-100 bg-slate-100 sm:grid-cols-2">
+            {[
+              { k: 'Auth', v: 'mobile + token + HMAC signature · optional IP allowlist' },
+              { k: 'Methods', v: 'POST everywhere · GET only for /payout/balance' },
+              { k: 'Rails', v: 'IMPS · NEFT · RTGS' },
+              { k: 'Steps', v: 'One call. No registration, no OTP' },
+            ].map((x) => (
+              <div key={x.k} className="bg-white px-4 py-3">
+                <div className="text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">{x.k}</div>
+                <div className="mt-1 text-[13px] text-slate-700">{x.v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="mb-3 text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">
+            The whole flow
+          </div>
+          <ol className="space-y-2.5">
+            <FlowStep n={1} title="Optional: confirm the IFSC">
+              <C>/payout/ifsc</C> returns the bank and branch. Free, and it catches a mistyped IFSC before money
+              moves.
+            </FlowStep>
+            <FlowStep n={2} title="Send">
+              <C>/payout/transfer</C> with a fresh <C>requestid</C> and the destination account.
+            </FlowStep>
+            <FlowStep n={3} title="Settle">
+              Wait for the callback, or poll <C>/payout/status</C> until <C>final: true</C>.
+            </FlowStep>
+          </ol>
+        </div>
+
+        <Callout tone="warn" title="Never retry a payout with a new requestid.">
+          If <C>/payout/transfer</C> times out, the transfer may already be in flight. Resolve it by calling{' '}
+          <C>/payout/status</C> with the <span className="font-medium text-slate-700">same</span> requestid. A fresh
+          requestid creates a second, independent payout — and the money leaves twice.
+        </Callout>
+      </Section>
+
+      {/* ── 02 Auth & signing ─────────────────────────────────────────── */}
+      <Section id="payout-auth" n={2} title="Authentication & signing">
+        <p>
+          Identical to the DMT contract: five headers, and an HMAC-SHA256 signature over the raw body. If you have
+          already integrated DMT, your signing code works here unchanged — only the path on line 2 of the canonical
+          string differs.
+        </p>
+        <ParamTable
+          rows={[
+            {
+              name: 'X-Api-Mobile',
+              type: 'header',
+              required: 'Required',
+              desc: (
+                <>
+                  Your account’s registered 10-digit mobile number — shown as{' '}
+                  <span className="font-medium text-slate-700">API Mobile Number</span> on{' '}
+                  <Link to="/s/ApiAccess" className="font-medium text-brand-600 hover:underline">
+                    API Access
+                  </Link>
+                  , next to the token. It is not secret.
+                </>
+              ),
+            },
+            {
+              name: 'X-Api-Token',
+              type: 'header',
+              required: 'Required',
+              desc: 'Your API token from the same page. It is also the HMAC signing key.',
+            },
+            { name: 'X-Api-Timestamp', type: 'header', required: 'Required', desc: 'Unix epoch SECONDS, UTC.' },
+            {
+              name: 'X-Api-Nonce',
+              type: 'header',
+              required: 'Required',
+              desc: 'Unique per request, 8–128 characters. A UUID is a good choice.',
+            },
+            {
+              name: 'X-Api-Signature',
+              type: 'header',
+              required: 'Required',
+              desc: 'Lowercase hex HMAC-SHA256 over the canonical string below.',
+            },
+          ]}
+        />
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            The canonical string — five lines joined by \n
+          </div>
+          <Code label="canonical">{`POST                                  ← HTTP method, uppercase
+/api/v1/payout/transfer               ← path, lowercase, no query string
+1757923200                            ← timestamp, exactly as sent
+9f1c4a2e-6b8d-4f30-a1e7-5c9d2b3a8e64  ← nonce, exactly as sent
+583280e9d8432e1c2840…                 ← SHA-256 of the RAW body, lowercase hex
+
+signature = HMAC-SHA256(canonical, your_api_token)  →  lowercase hex`}</Code>
+        </div>
+        <Callout tone="warn" title="Hash the bytes you actually send.">
+          Line 5 is a SHA-256 of your request body exactly as it goes on the wire — not of a re-serialised copy.
+          Build the JSON string once, hash <span className="font-medium text-slate-700">that</span> string, and send
+          the same string. Re-serialising before sending is the most common cause of <C>SEC_SIGNATURE_INVALID</C>.
+          The worked example in the DMT docs reproduces the whole calculation end to end.
+        </Callout>
+        <Callout tone="info" title="No custom headers in your stack?">
+          All five may instead be sent as body fields named <C>mobile</C>, <C>token</C>, <C>timestamp</C>,{' '}
+          <C>nonce</C> and <C>signature</C>. Headers win where both are present.
+        </Callout>
+      </Section>
+
+      {/* ── 03 Transfer ───────────────────────────────────────────────── */}
+      <Section id="payout-transfer" n={3} title="Transfer">
+        <p>The money-moving call, and the entire contract in one request.</p>
+        <DmtEndpoint path="/payout/transfer" v1={v1} />
+
+        <ParamTable
+          rows={[
+            {
+              name: 'requestid',
+              type: 'string',
+              required: 'Required',
+              desc: 'Your own unique reference. This is the idempotency key — see the note below.',
+            },
+            { name: 'accountno', type: 'string', required: 'Required', desc: 'Destination account number. Digits and letters only — no spaces or dashes.' },
+            { name: 'ifsc', type: 'string', required: 'Required', desc: 'Destination IFSC, 11 characters.' },
+            { name: 'beneficiaryname', type: 'string', required: 'Required', desc: 'Account holder’s name.' },
+            { name: 'amount', type: 'decimal', required: 'Required', desc: 'Rupees. Per-transfer bounds are a deployment setting — confirm yours.' },
+            { name: 'paymenttype', type: 'string', required: 'Optional', desc: 'IMPS (default), NEFT or RTGS.' },
+            { name: 'bankname', type: 'string', required: 'Optional', desc: 'Resolved from the IFSC when you omit it.' },
+            { name: 'remark', type: 'string', required: 'Optional', desc: 'Narration, where the bank carries it.' },
+            { name: 'mobile', type: 'string', required: 'Optional', desc: 'A contact number stored against the payout for your own reconciliation.' },
+            { name: 'latitude / longitude', type: 'string', required: 'Optional', desc: 'Outlet coordinates, stored against the transaction for audit. Send both or neither; each is validated as a real coordinate.' },
+          ]}
+        />
+
+        <Callout tone="good" icon={ShieldCheck} title="Idempotent by requestid.">
+          A <C>requestid</C> you have already used is never debited twice — we return the original payout’s current
+          result with <C>"duplicate": true</C>. So a timeout is safe to resolve:{' '}
+          <span className="font-medium text-slate-700">retry with the same requestid</span>, never a new one.
+        </Callout>
+
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Request</div>
+          <CodeTabs samples={transferSamples} />
+        </div>
+
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Response · shared by /payout/transfer, /payout/status and callbacks
+          </div>
+          <Code label="200 OK">{`{
+  "status":       "PENDING",
+  "statuscode":   1,
+  "errorcode":    "",
+  "message":      "Payout initiated.",
+  "requestid":    "PO-1001",
+  "event":        "INITIAL",     // INITIAL | STATUS | CALLBACK
+  "final":        false,         // true once status can no longer change
+  "duplicate":    false,         // true when replaying a used requestid
+  "txnid":        884512,        // our transaction id
+  "providerref":  "IMP1234567",
+  "amount":       5000.00,
+  "debitamount":  5015.00,       // principal + charges
+  "balance":      13405.50,      // your wallet afterwards
+  "date":         "2026-10-12 14:20:11",
+
+  "accountno":       "50100234567890",
+  "ifsc":            "HDFC0000123",
+  "beneficiaryname": "Sunita Devi",
+  "bankname":        "HDFC Bank",
+  "paymenttype":     "IMPS",
+  "utr":             "",          // bank UTR — populated once SUCCESS
+  "charge":          15.00
+}`}</Code>
+        </div>
+
+        <Callout tone="info" title="utr is the number that settles disputes.">
+          It is the reference the beneficiary’s own bank recognises, and it appears only once the payout reaches{' '}
+          <C>SUCCESS</C>. While <C>PENDING</C> it is deliberately empty.
+        </Callout>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="mb-3 text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">
+            What is checked before anything is debited
+          </div>
+          <RefTable
+            head={['Check', 'On failure']}
+            rows={[
+              ['Credentials, account active, IP allowed', 'AUTH_*'],
+              ['Signature, timestamp, nonce', 'SEC_*'],
+              ['requestid present', 'VAL_REQUESTID_REQUIRED'],
+              ['requestid already used', 'Original result, duplicate: true'],
+              ['Account number shape', 'VAL_ACCOUNT_REQUIRED'],
+              ['IFSC shape', 'VAL_IFSC_REQUIRED / VAL_IFSC_INVALID'],
+              ['Holder name present', 'VAL_BENEFICIARY_NAME_REQUIRED'],
+              ['Amount within bounds', 'VAL_AMOUNT_BELOW_LIMIT / VAL_AMOUNT_ABOVE_LIMIT'],
+              ['Payout service enabled on the platform', 'PAYOUT_UNAVAILABLE'],
+              ['Wallet covers principal + charges', 'TXN_REJECTED'],
+            ]}
+          />
+          <p className="mt-3 text-[13px] leading-relaxed text-slate-500">
+            All of it happens before a rupee moves. Any failure returns <C>ERROR</C> or <C>FAILED</C> with nothing
+            debited and no transaction to reconcile.
+          </p>
+        </div>
+      </Section>
+
+      {/* ── 04 Status ─────────────────────────────────────────────────── */}
+      <Section id="payout-status" n={4} title="Status check">
+        <p>
+          Resolve a payout by your own <C>requestid</C>, or by our <C>txnid</C>. The reply is the same shape as{' '}
+          <C>/payout/transfer</C> with <C>event: "STATUS"</C> — one parser handles both.
+        </p>
+        <DmtEndpoint path="/payout/status" v1={v1} />
+        <ParamTable
+          rows={[
+            { name: 'requestid', type: 'string', required: 'Conditional', desc: 'Your reference. Send this or txnid.' },
+            { name: 'txnid', type: 'integer', required: 'Conditional', desc: 'Our transaction id. Send this or requestid.' },
+          ]}
+        />
+        <div className="pt-1">
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Request</div>
+          <CodeTabs samples={statusSamples} />
+        </div>
+        <Callout tone="info" title="Poll sensibly.">
+          A still-pending payout is re-enquired with the bank before we answer. Wait ~60 seconds after initiating,
+          then poll at most every 30 seconds, and stop as soon as <C>final: true</C>.
+        </Callout>
+      </Section>
+
+      {/* ── 05 Balance ────────────────────────────────────────────────── */}
+      <Section id="payout-balance" n={5} title="Balance">
+        <p>
+          The only <C>GET</C> in the payout contract — it exposes no customer data and changes nothing. It is still
+          signed; sign the empty body.
+        </p>
+        <DmtEndpoint path="/payout/balance" v1={v1} method="GET" />
+        <Callout tone="good" icon={ShieldCheck} title="Signing a GET.">
+          There is no body, so line 5 of the canonical string is the SHA-256 of the empty string:{' '}
+          <C>e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</C>.
+        </Callout>
+        <Callout tone="info" title="Watch available, not balance.">
+          A held amount is included in <C>balance</C> but cannot be spent; <C>available</C> is what a payout
+          actually draws on.
+        </Callout>
+      </Section>
+
+      {/* ── 06 IFSC ───────────────────────────────────────────────────── */}
+      <Section id="payout-ifsc" n={6} title="IFSC lookup">
+        <DmtEndpoint path="/payout/ifsc" v1={v1} />
+        <p>
+          Branch details behind an IFSC. Takes <C>ifsc</C>; returns <C>bankname</C>, <C>branch</C> and{' '}
+          <C>address</C>. Free — call it to confirm the destination before you move money.
+        </p>
+        <Code label="200 OK">{`{
+  "status":   "SUCCESS",
+  "ifsc":     "HDFC0000123",
+  "bankname": "HDFC Bank",
+  "branch":   "INDORE MG ROAD",
+  "address":  "MG Road, Indore, Madhya Pradesh"
+}`}</Code>
+      </Section>
+
+      {/* ── 07 Callbacks ──────────────────────────────────────────────── */}
+      <Section id="payout-callbacks" n={7} title="Callbacks">
+        <p>
+          When a payout reaches a final status we POST the result to the callback URL configured on your account for
+          the payout service. The body is the same transaction payload with <C>event: "CALLBACK"</C>.
+        </p>
+        <Code label="POST to your callback URL">{`POST https://your-host/payout-callback
+Content-Type: application/json
+X-Event: CALLBACK
+X-Request-Id: PO-1001
+X-Transaction-Id: 884512
+X-Signature-Algorithm: HMAC-SHA256
+X-Signature: <HMAC-SHA256 of the raw body, keyed by your API token>
+
+{ ...the same payload /payout/transfer returns, with "event":"CALLBACK"... }`}</Code>
+        <ParamTable
+          rows={[
+            {
+              name: 'Verify X-Signature',
+              type: 'rule',
+              required: 'Required',
+              desc: 'HMAC-SHA256 of the raw body with your API token. An unverified callback endpoint accepts anyone’s idea of “settled”.',
+            },
+            {
+              name: 'Reply 2xx quickly',
+              type: 'rule',
+              required: 'Required',
+              desc: 'A non-2xx or a timeout is retried with backoff. Acknowledge first, process after.',
+            },
+            {
+              name: 'Be idempotent',
+              type: 'rule',
+              required: 'Required',
+              desc: 'The same callback can arrive more than once. Key your handler on requestid and ignore repeats.',
+            },
+            {
+              name: 'Trust status, not arrival',
+              type: 'rule',
+              required: 'Required',
+              desc: 'A callback can report FAILED. Its arrival is not confirmation of success.',
+            },
+          ]}
+        />
+      </Section>
+
+      {/* ── 08 Codes ──────────────────────────────────────────────────── */}
+      <Section id="payout-codes" n={8} title="Status & error codes">
+        <p>
+          <C>errorcode</C> is stable and safe to switch on. <C>message</C> is human-readable and may be reworded at
+          any time — never match on it.
+        </p>
+        <RefTable head={['status', 'code', 'Meaning']} rows={DMT_STATUS_VALUES} />
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Request security
+          </div>
+          <RefTable
+            head={['Code', 'Fix']}
+            rows={[
+              ['SEC_SIGNATURE_REQUIRED', 'Send the three signing headers.'],
+              ['SEC_SIGNATURE_INVALID', 'Re-check the canonical string; hash the bytes you actually send.'],
+              ['SEC_TIMESTAMP_INVALID', 'Use epoch seconds, not milliseconds. Sync your clock (NTP).'],
+              ['SEC_NONCE_INVALID', 'Generate a fresh nonce for every request.'],
+              ['SEC_METHOD_NOT_ALLOWED', 'Use POST. Only /payout/balance accepts GET.'],
+            ]}
+          />
+        </div>
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Validation & transaction
+          </div>
+          <RefTable head={['Code', 'Fix']} rows={PAYOUT_FLOW_CODES} filterable filterLabel="Filter error codes" />
+        </div>
+      </Section>
+
+      {/* ── 09 Checklist ──────────────────────────────────────────────── */}
+      <Section id="payout-checklist" n={9} title="Go-live checklist">
+        <RefTable
+          head={['Item', 'Confirm']}
+          rows={[
+            ['Signature reproduced', 'Your code reproduces the worked example in the DMT signing section.'],
+            ['Clock synced', 'NTP running; timestamps in SECONDS.'],
+            ['Nonce per request', 'Fresh UUID every call, never cached.'],
+            ['requestid persisted', 'Written to your database BEFORE the transfer call.'],
+            ['Timeout path', 'On timeout you call /payout/status with the same requestid — never re-send.'],
+            ['Callback verified', 'You check X-Signature and handle repeats.'],
+            ['PENDING handled', 'Your UI shows “processing”, not “failed”.'],
+            ['Account validated', 'You confirm the IFSC via /payout/ifsc and strip spaces from account numbers.'],
+            ['IPs whitelisted', 'Every production egress IP is registered.'],
+            ['Token stored safely', 'Environment or secret store — never in source control.'],
+          ]}
+        />
+        <Callout tone="good" icon={ShieldCheck} title="Ready.">
+          Once every row above is true, ask your account manager to enable payout on your API user. Amount bounds
+          and the clock-skew window are deployment settings — confirm the values in force before go-live.
+        </Callout>
+      </Section>
+    </div>
+  );
+}
+
 /* ─── Screen ─────────────────────────────────────────────────────────────── */
 
 export function ApiDocsScreen(_props: CustomScreenProps) {
@@ -1123,15 +2620,21 @@ export function ApiDocsScreen(_props: CustomScreenProps) {
   const v1 = apiV1();
   const [product, setProduct] = useState('recharge');
   const [lang, setLang] = useState<Lang>('curl');
-  const [active, setActive] = useState(SECTIONS[0].id);
   const current = PRODUCTS.find((d) => d.key === product) ?? PRODUCTS[0];
+  const sections = sectionsFor(product);
+  const [active, setActive] = useState(sections[0].id);
+  const documented = product === 'recharge' || product === 'dmt' || product === 'payout';
 
   // Highlight the section the reader is actually looking at. Only a narrow band near the
   // top of the viewport counts as "reading here". The observer reports CHANGES, not the
   // full picture, so visibility is accumulated in a set — otherwise scrolling past several
   // sections at once leaves the highlight on whichever one last fired an event.
   useEffect(() => {
-    if (product !== 'recharge') return;
+    if (!documented) return;
+
+    // Switching products swaps the whole table of contents, so reset the highlight to the
+    // new document's first section rather than leaving it on an id that no longer exists.
+    setActive(sections[0].id);
 
     const visible = new Set<string>();
     const observer = new IntersectionObserver(
@@ -1140,18 +2643,18 @@ export function ApiDocsScreen(_props: CustomScreenProps) {
           if (e.isIntersecting) visible.add(e.target.id);
           else visible.delete(e.target.id);
         }
-        const first = SECTIONS.find((s) => visible.has(s.id));
+        const first = sections.find((s) => visible.has(s.id));
         if (first) setActive(first.id);
       },
       { rootMargin: '-8% 0px -75% 0px', threshold: 0 },
     );
 
-    SECTIONS.forEach((s) => {
+    sections.forEach((s) => {
       const el = document.getElementById(s.id);
       if (el) observer.observe(el);
     });
     return () => observer.disconnect();
-  }, [product]);
+  }, [documented, sections]);
 
   const langValue = useMemo(() => ({ lang, setLang }), [lang]);
 
@@ -1199,13 +2702,13 @@ export function ApiDocsScreen(_props: CustomScreenProps) {
             ))}
           </nav>
 
-          {product === 'recharge' && (
+          {documented && (
             <div className="mt-4 hidden lg:block">
               <div className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
                 On this page
               </div>
               <nav className="space-y-px border-l border-slate-200">
-                {SECTIONS.map((s) => (
+                {sections.map((s) => (
                   <a
                     key={s.id}
                     href={`#${s.id}`}
@@ -1256,10 +2759,26 @@ export function ApiDocsScreen(_props: CustomScreenProps) {
                   are added within a version, never renamed or removed.
                 </p>
               )}
+              {product === 'dmt' && (
+                <p className="mt-2 max-w-2xl text-[14px] leading-relaxed text-slate-500">
+                  Sender, beneficiary, transfer — one response shape across all three, plus the callback. Every
+                  endpoint is POST-only and signed; only the balance read is a GET.
+                </p>
+              )}
+              {product === 'payout' && (
+                <p className="mt-2 max-w-2xl text-[14px] leading-relaxed text-slate-500">
+                  One signed call moves money from your wallet to any bank account. No sender, no beneficiary
+                  registration, no OTP — and no beneficiaryid.
+                </p>
+              )}
             </header>
 
             {product === 'recharge' ? (
               <RechargeDoc appName={appName} v1={v1} />
+            ) : product === 'dmt' ? (
+              <DmtDoc appName={appName} v1={v1} />
+            ) : product === 'payout' ? (
+              <PayoutDoc appName={appName} v1={v1} />
             ) : (
               <div className="py-16 text-center">
                 <current.icon className="mx-auto size-8 text-slate-300" />

@@ -68,6 +68,18 @@ namespace FintechApp.Entities
         [DefaultValue(false)]
         public bool IsAllowedWithoutKYC { get; set; }
 
+        /// <summary>
+        /// Stays open during a scheduled system-down window. While the platform is down (Key
+        /// Settings "System Down", from/to clock times) every financial transaction is refused
+        /// EXCEPT on services flagged here - the "a few services may still run" decision the
+        /// operator makes per service, set from the Service Catalog.
+        ///
+        /// Default false, so turning maintenance on stops everything until the operator says
+        /// otherwise. A window that silently let a service through would be worse than no window.
+        /// </summary>
+        [DefaultValue(false)]
+        public bool IsAllowedWhenSystemDown { get; set; }
+
         // Which report this service's transactions belong to (ServiceKinds constant:
         // RECHARGE / DMT / BBPS / PAYOUT / AEPS / MATM / CASHDEPOSIT, or NONE = no report).
         // Empty = auto-detect from Name/Category keywords. Admin sets it from the Service Catalog.

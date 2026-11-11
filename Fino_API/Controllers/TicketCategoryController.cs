@@ -28,6 +28,9 @@ namespace FintechApp.Controllers
             _encryptDecrypt = new EncryptDecrypt(encryptionKey, encryptionIV);
         }
 
+        // Everyone raising a ticket needs to read the category list; only the admin defines it.
+        private static bool IsAdmin(KeyDataModel k) => k.UserTypeID == StaticModels.UserTypeCode.Admin;
+
         [HttpPost("GetById")]
         public async Task<APIResponse> GetById([FromForm] APIRequest apiRequest)
         {
@@ -142,6 +145,7 @@ namespace FintechApp.Controllers
 
             try
             {
+                if (!IsAdmin(keyDataModel)) return ResponseProcess.GetFailResponse(Messages.Common.Message.Unauthorized);
                 failureMessage = await _ticketCategoryService.CreateTicketCategory(createRequest);
 
                 if (!failureMessage.EqualsIgnoreCase(StaticModels.StatusType.Ok))
@@ -184,6 +188,7 @@ namespace FintechApp.Controllers
 
             try
             {
+                if (!IsAdmin(keyDataModel)) return ResponseProcess.GetFailResponse(Messages.Common.Message.Unauthorized);
                 failureMessage = await _ticketCategoryService.UpdateTicketCategory(updateRequest);
 
                 if (!failureMessage.EqualsIgnoreCase(StaticModels.StatusType.Ok))
@@ -226,6 +231,7 @@ namespace FintechApp.Controllers
 
             try
             {
+                if (!IsAdmin(keyDataModel)) return ResponseProcess.GetFailResponse(Messages.Common.Message.Unauthorized);
                 failureMessage = await _ticketCategoryService.DeleteTicketCategory(deleteRequest.TicketCategoryID);
 
                 if (!failureMessage.EqualsIgnoreCase(StaticModels.StatusType.Ok))

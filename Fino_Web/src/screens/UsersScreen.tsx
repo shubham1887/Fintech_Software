@@ -11,7 +11,7 @@ import { fetchList } from '@/api/list.api';
 import { deleteUser } from '@/api/users.api';
 import { useAuth } from '@/features/auth/AuthContext';
 import { UserTypeCode } from '@/lib/roles';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvDownload } from '@/lib/exportAll';
 import { useClientSearch } from '@/lib/useClientSearch';
 import { roleLabel } from '@/lib/roles';
 import { cn } from '@/lib/cn';
@@ -20,13 +20,15 @@ import { inr, dateOnly } from '@/lib/format';
 import { useToast } from '@/components/ui/Toast';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { TableToolbar } from '@/components/ui/TableToolbar';
 import { Modal } from '@/components/ui/Modal';
+import { Input } from '@/components/ui/Input';
+import { StatRow } from '@/components/report/StatRow';
+import { HoldBalanceDialog } from './HoldBalanceDialog';
 
 type Row = Record<string, unknown>;
 
@@ -83,22 +85,9 @@ const kycTone = (status: string): 'success' | 'danger' | 'warning' | 'neutral' =
   return 'neutral';
 };
 
-/** One flat KPI in the summary strip — label over value, no card chrome. */
-function Kpi({ label, value, tone = 'text-slate-800', icon }: { label: string; value: string; tone?: string; icon: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-3 px-4 py-3.5">
-      <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-slate-50 text-slate-400 ring-1 ring-inset ring-slate-200/70">
-        {icon}
-      </div>
-      <div className="min-w-0">
-        <div className="truncate text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
-        <div className={cn('mt-0.5 font-display text-lg font-bold tabular-nums', tone)}>{value}</div>
-      </div>
-    </div>
-  );
-}
 
 export function UsersScreen() {
+  const downloadCsv = useCsvDownload();
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -108,15 +97,21 @@ export function UsersScreen() {
   const isAdmin = me?.UserTypeID === UserTypeCode.Admin || me?.UserTypeID === UserTypeCode.SupportUser;
   const [deleteTarget, setDeleteTarget] = useState<Row | null>(null);
   const [holdTarget, setHoldTarget] = useState<Row | null>(null);
-  const [holdAmount, setHoldAmount] = useState('');
-  const [holdRemark, setHoldRemark] = useState('');
+  // Why a change was made. Both of these land in the user's change history next to who made it
+  // and from which IP — a deactivation nobody can explain a month later is the whole reason that
+  // report exists, so the reason is captured at the point of the decision rather than inferred.
+  const [deleteReason, setDeleteReason] = useState('');
+  const [activateTarget, setActivateTarget] = useState<{ row: Row; next: boolean } | null>(null);
+  const [activateReason, setActivateReason] = useState('');
   const [tab, setTab] = useState('all');
   const [status, setStatus] = useState<StatusKey>('all');
 
   // ShowDeleted so IsDeleted can be surfaced; admin sees the whole chain (scoped server-side).
   const { data: rows = [], isFetching, refetch } = useQuery({
     queryKey: ['users-screen'],
-    queryFn: () => fetchList('Users/Select', { TakeCount: 1000, SkipCount: 0, ShowDeleted: true }),
+    // TakeCount 0 = every user: the table filters and exports client-side, so a page-sized
+    // fetch would quietly limit both.
+    queryFn: () => fetchList('Users/Select', { TakeCount: 0, SkipCount: 0, ShowDeleted: true }),
   });
 
   // Wallets are dynamic (WalletMaster) — one balance column per active wallet, in display order.
@@ -142,11 +137,15 @@ export function UsersScreen() {
   const { query, setQuery, filtered } = useClientSearch(statusRows);
 
   const activateMut = useMutation({
-    mutationFn: (v: { id: unknown; next: boolean }) => apiPost('Users/Activate', { TargetUserID: v.id, IsActive: v.next }),
+    mutationFn: (v: { id: unknown; next: boolean; reason: string }) =>
+      apiPost('Users/Activate', { TargetUserID: v.id, IsActive: v.next, Reason: v.reason }),
     onSuccess: (res) => {
       if (res.ok) {
         toast.success('User status updated.');
+        setActivateTarget(null);
+        setActivateReason('');
         qc.invalidateQueries({ queryKey: ['users-screen'] });
+        qc.invalidateQueries({ queryKey: ['inactive-users'] });
       } else toast.error(res.message);
     },
     onError: (e: Error) => toast.error(e.message),
@@ -155,11 +154,12 @@ export function UsersScreen() {
   // Soft delete — the row is kept so history still resolves; it moves to Deleted Users. The API
   // refuses it while the user holds a balance or still has a downline mapped under them.
   const deleteMut = useMutation({
-    mutationFn: (id: number) => deleteUser(id),
+    mutationFn: (v: { id: number; reason: string }) => deleteUser(v.id, v.reason),
     onSuccess: (res) => {
       if (!res.ok) { toast.error(res.message); return; }
       toast.success('User deleted. You can restore them from Deleted Users.');
       setDeleteTarget(null);
+      setDeleteReason('');
       qc.invalidateQueries({ queryKey: ['users-screen'] });
       qc.invalidateQueries({ queryKey: ['deleted-users'] });
       qc.invalidateQueries({ queryKey: ['inactive-users'] });
@@ -174,27 +174,6 @@ export function UsersScreen() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Add hold balance — freezes an amount of the user's wallet so it can't be spent.
-  const holdMut = useMutation({
-    mutationFn: (v: { id: unknown; amount: number; remark: string }) =>
-      apiPost('Users/AddHoldBalance', { TargetUserID: v.id, Amount: v.amount, Remark: v.remark }),
-    onSuccess: (res) => {
-      if (res.ok) {
-        toast.success('Hold balance updated.');
-        closeHold();
-        qc.invalidateQueries({ queryKey: ['users-screen'] });
-      } else toast.error(res.message);
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const closeHold = () => { setHoldTarget(null); setHoldAmount(''); setHoldRemark(''); };
-  const submitHold = () => {
-    if (!holdTarget) return;
-    const amount = Number(holdAmount);
-    if (!amount || amount <= 0) { toast.error('Enter a hold amount greater than zero.'); return; }
-    holdMut.mutate({ id: get(holdTarget, 'UserMasterID', 'UserID'), amount, remark: holdRemark.trim() });
-  };
 
   // KPI strip reflects the selected role tab (the network segment you're looking at).
   // Count-only overview — no summed wallet balances (per-user balances stay in the table).
@@ -210,7 +189,7 @@ export function UsersScreen() {
   const statusCount = (s: StatusKey) => (s === 'all' ? tabRows.length : tabRows.filter((r) => matchesStatus(r, s)).length);
 
   // Flattened export — one column per wallet (not the raw WalletBalances array).
-  const exportRows = () => exportToCsv(filtered.map((r) => {
+  const exportRows = () => downloadCsv(filtered.map((r) => {
     const wmap = walletMapOf(r);
     const wcols: Record<string, unknown> = {};
     walletCols.forEach((w) => { wcols[w.name] = wmap.get(w.id)?.balance ?? 0; });
@@ -248,15 +227,17 @@ export function UsersScreen() {
           </div>
         }
       />
-
-      {/* Flat KPI strip — count-only overview for the selected role segment. */}
-      <div className="mb-5 grid grid-cols-2 divide-x divide-y divide-slate-200/70 overflow-hidden rounded-card border border-slate-200/70 bg-white shadow-card sm:grid-cols-3 lg:grid-cols-5 lg:divide-y-0">
-        <Kpi label="Total users" value={String(stats.total)} icon={<Users className="size-4" />} />
-        <Kpi label="Active" value={String(stats.active)} tone="text-success-600" icon={<UserCheck className="size-4" />} />
-        <Kpi label="Inactive" value={String(stats.inactive)} tone="text-danger-600" icon={<UserX className="size-4" />} />
-        <Kpi label="KYC approved" value={String(stats.kyc)} tone="text-info-600" icon={<ShieldCheck className="size-4" />} />
-        <Kpi label="Deleted" value={String(stats.deleted)} tone="text-slate-500" icon={<UserX className="size-4" />} />
-      </div>
+      {/* Count-only overview for the selected role segment — compact bar, same figures. */}
+      <StatRow
+        columns={5}
+        items={[
+          { label: 'Total users', value: String(stats.total), icon: <Users /> },
+          { label: 'Active', value: String(stats.active), tone: 'text-success-600', icon: <UserCheck /> },
+          { label: 'Inactive', value: String(stats.inactive), tone: 'text-danger-600', icon: <UserX /> },
+          { label: 'KYC approved', value: String(stats.kyc), tone: 'text-info-600', icon: <ShieldCheck /> },
+          { label: 'Deleted', value: String(stats.deleted), tone: 'text-slate-500', icon: <UserX /> },
+        ]}
+      />
 
       {/* Role tabs */}
       <div className="mb-3 flex flex-wrap gap-1 border-b border-slate-200">
@@ -366,7 +347,14 @@ export function UsersScreen() {
                         {email && <p className="truncate text-xs text-slate-400">{email}</p>}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge tone="brand">{roleName}</Badge>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge tone="brand">{roleName}</Badge>
+                          {/* Two rows with the same mobile number is a feature, not a data
+                              error — say which one is the second login so it reads that way. */}
+                          {Number(get(r, 'LinkedPrimaryUserID') ?? 0) > 0 && (
+                            <Badge tone="info">2nd login</Badge>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         {parentName ? (
@@ -422,8 +410,8 @@ export function UsersScreen() {
                           isAdmin={isAdmin}
                           onView={() => navigate(`/s/Users/Profile?id=${id}`)}
                           onEdit={() => navigate(`/s/Users/Edit?id=${id}`)}
-                          onToggleActive={() => activateMut.mutate({ id, next: !active })}
-                          onHold={() => { setHoldTarget(r); setHoldAmount(''); setHoldRemark(''); }}
+                          onToggleActive={() => { setActivateReason(''); setActivateTarget({ row: r, next: !active }); }}
+                          onHold={() => setHoldTarget(r)}
                           onResetPwd={() => pwdMut.mutate(id)}
                           onDelete={() => setDeleteTarget(r)}
                         />
@@ -438,6 +426,55 @@ export function UsersScreen() {
       </Card>
 
       {/* Delete confirmation. Soft delete, so the wording says exactly what survives. */}
+      {/* Activate / deactivate. Deactivating cuts a live account off from every service, so it is
+          confirmed and explained rather than fired straight off the row menu. */}
+      <Modal
+        open={Boolean(activateTarget)}
+        onClose={() => setActivateTarget(null)}
+        title={activateTarget?.next ? 'Activate user' : 'Deactivate user'}
+        size="sm"
+      >
+        {activateTarget && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              {activateTarget.next ? 'Activate' : 'Deactivate'}{' '}
+              <span className="font-medium text-slate-900">
+                {String(get(activateTarget.row, 'FirmName') || get(activateTarget.row, 'PersonName') || '—')}
+              </span>{' '}
+              ({String(get(activateTarget.row, 'MobileNumber') ?? '—')})?
+            </p>
+            {!activateTarget.next && (
+              <div className="rounded-lg border border-warning-500/25 bg-warning-50 px-3 py-2.5 text-xs text-warning-800">
+                A deactivated user cannot sign in or transact. Their balance, downline and history
+                are untouched, and you can activate them again from Inactive Users.
+              </div>
+            )}
+            <Input
+              label="Reason *"
+              placeholder={activateTarget.next ? 'Why is this account being activated?' : 'Why is this account being deactivated?'}
+              value={activateReason}
+              onChange={(e) => setActivateReason(e.target.value)}
+              hint="Recorded in User Change History with your name, the time and your IP"
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setActivateTarget(null)}>Cancel</Button>
+              <Button
+                variant={activateTarget.next ? 'primary' : 'danger'}
+                loading={activateMut.isPending}
+                disabled={!activateReason.trim()}
+                onClick={() => activateMut.mutate({
+                  id: Number(get(activateTarget.row, 'UserMasterID', 'UserID')),
+                  next: activateTarget.next,
+                  reason: activateReason.trim(),
+                })}
+              >
+                {activateTarget.next ? 'Activate' : 'Deactivate'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <Modal open={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)} title="Delete user" size="sm">
         {deleteTarget && (
           <div className="space-y-4">
@@ -457,12 +494,23 @@ export function UsersScreen() {
               This is refused while the user holds a wallet balance or still has users mapped beneath them —
               move those first.
             </div>
+            <Input
+              label="Reason *"
+              placeholder="Why is this account being deleted?"
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              hint="Recorded in User Change History with your name, the time and your IP"
+            />
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setDeleteTarget(null)}>Cancel</Button>
               <Button
                 variant="danger"
                 loading={deleteMut.isPending}
-                onClick={() => deleteMut.mutate(Number(get(deleteTarget, 'UserMasterID', 'UserID')))}
+                disabled={!deleteReason.trim()}
+                onClick={() => deleteMut.mutate({
+                  id: Number(get(deleteTarget, 'UserMasterID', 'UserID')),
+                  reason: deleteReason.trim(),
+                })}
               >
                 <Trash2 className="size-4" />
                 Delete user
@@ -472,33 +520,12 @@ export function UsersScreen() {
         )}
       </Modal>
 
-      <Modal open={Boolean(holdTarget)} onClose={closeHold} title="Add hold balance">
-        {holdTarget && (
-          <div className="space-y-4">
-            <p className="text-sm text-slate-500">
-              Freeze part of{' '}
-              <span className="font-medium text-slate-700">{String(get(holdTarget, 'FirmName') || get(holdTarget, 'PersonName') || '—')}</span>’s
-              wallet. Held funds stay in the balance but can’t be spent.
-            </p>
-            <div className="flex gap-4 rounded-lg bg-slate-50 p-3 text-sm">
-              <div>
-                <p className="text-xs text-slate-400">Balance</p>
-                <p className="font-medium tabular-nums text-slate-800">{inr(Number(get(holdTarget, 'Balance')) || 0)}</p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-400">Currently on hold</p>
-                <p className="font-medium tabular-nums text-slate-800">{inr(Number(get(holdTarget, 'HoldBalance')) || 0)}</p>
-              </div>
-            </div>
-            <Input label="Hold amount (₹)" type="number" min="0" placeholder="0.00" value={holdAmount} onChange={(e) => setHoldAmount(e.target.value)} />
-            <Input label="Remark (optional)" placeholder="Why is this being held?" value={holdRemark} onChange={(e) => setHoldRemark(e.target.value)} />
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={closeHold}>Cancel</Button>
-              <Button size="sm" loading={holdMut.isPending} onClick={submitHold}>Add hold</Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      {/* Hold / release — shared with the user profile so the two can never disagree. */}
+      <HoldBalanceDialog
+        target={holdTarget}
+        onClose={() => setHoldTarget(null)}
+        onDone={() => qc.invalidateQueries({ queryKey: ['users-screen'] })}
+      />
     </>
   );
 }

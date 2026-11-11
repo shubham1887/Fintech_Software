@@ -34,10 +34,12 @@ namespace FintechApp.Repositories
             return all.FirstOrDefault(x => x.MessageSettingID == messageSettingId);
         }
 
+        // Matched the way MessageService matches — case, spaces and punctuation ignored — so a row
+        // the admin named "Sender Registration" is found by code asking for "SenderRegistration".
         public async Task<MessageSetting?> GetByType(string type)
         {
             var all = await GetAll();
-            return all.FirstOrDefault(x => x.Type.Equals(type, StringComparison.OrdinalIgnoreCase));
+            return all.FirstOrDefault(x => MessageEventKey.Matches(x.Type, type));
         }
 
         public async Task<int> Insert(MessageSetting entity)

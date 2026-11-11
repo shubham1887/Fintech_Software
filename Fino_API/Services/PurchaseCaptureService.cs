@@ -11,7 +11,7 @@ using Newtonsoft.Json.Linq;
 namespace FintechApp.Services
 {
     /// <inheritdoc cref="IPurchaseCaptureService" />
-    public class PurchaseCaptureService : IPurchaseCaptureService
+    public partial class PurchaseCaptureService : IPurchaseCaptureService
     {
         private readonly ApplicationDbContext _context;
         private readonly Logger _logger = new();
@@ -49,6 +49,12 @@ namespace FintechApp.Services
 
             string documentNo = request.DocumentNo.Trim();
 
+            // Our own registration, from the company profile when the caller did not send it. The
+            // 2B reconciliation matches purchases on it, so a bill stored with a blank one would
+            // sit outside every reconciliation without anybody being told.
+            if (string.IsNullOrWhiteSpace(request.CompanyGSTIN))
+                request.CompanyGSTIN = await CompanyGstin();
+
             // Idempotent: the same supplier bill is never captured twice. The DB enforces this with
             // a unique index on (PartyUserID, DocumentNo) filtered to purchases; we check first so a
             // re-send returns the existing document instead of surfacing a constraint violation.
@@ -71,7 +77,11 @@ namespace FintechApp.Services
             decimal igst = request.Lines.Sum(l => l.IGSTAmount);
             decimal cess = request.Lines.Sum(l => l.CessAmount);
             decimal tax = cgst + sgst + igst + cess;
-            decimal grand = Math.Round(taxable + tax, 2);
+            // The supplier's round-off, as they wrote it. Left at 0 when the bill has none, so a
+            // document with no round-off line is unchanged; where there is one, the captured
+            // grand total equals the supplier's figure exactly rather than being a paisa out.
+            decimal roundOff = Math.Round(request.RoundOff, 2);
+            decimal grand = Math.Round(taxable + tax + roundOff, 2);
             // Inter-state when any IGST was charged. The supplier already decided the split; we
             // record it rather than recomputing it, so our books match their document to the paisa.
             string supplyNature = igst > 0 ? SupplyNature.Interstate : SupplyNature.Intrastate;
@@ -100,7 +110,7 @@ namespace FintechApp.Services
                 SGSTTotal = sgst,
                 IGSTTotal = igst,
                 CessTotal = cess,
-                RoundOff = 0m,
+                RoundOff = roundOff,
                 GrandTotal = grand,
                 Status = TaxDocumentStatus.Issued,
                 PeriodKey = Phase3Dates.PeriodKey(request.DocumentDate),
@@ -117,30 +127,7 @@ namespace FintechApp.Services
 
             int lineNo = 1;
             foreach (var l in request.Lines)
-            {
-                _context.TaxInvoiceLines.Add(new TaxInvoiceLine
-                {
-                    TaxInvoiceHeaderID = header.TaxInvoiceHeaderID,
-                    LineNo = lineNo++,
-                    ServiceID = l.ServiceID,
-                    Description = l.Description.Trim(),
-                    SACCode = l.SACCode.Trim(),
-                    Quantity = l.Quantity <= 0 ? 1 : l.Quantity,
-                    BillingBasis = string.Empty,
-                    GrossValue = Math.Round(l.TaxableValue + l.CGSTAmount + l.SGSTAmount + l.IGSTAmount + l.CessAmount, 2),
-                    TaxableValue = l.TaxableValue,
-                    CGSTRate = l.CGSTRate, CGSTAmount = l.CGSTAmount,
-                    SGSTRate = l.SGSTRate, SGSTAmount = l.SGSTAmount,
-                    IGSTRate = l.IGSTRate, IGSTAmount = l.IGSTAmount,
-                    CessAmount = l.CessAmount,
-                    LineTotal = Math.Round(l.TaxableValue + l.CGSTAmount + l.SGSTAmount + l.IGSTAmount + l.CessAmount, 2),
-                    TaxRuleMasterID = 0,
-                    ITCEligible = l.ITCEligible,
-                    ReverseCharge = l.ReverseCharge,
-                    DateTime = DateTime.UtcNow,
-                    UpdatedateTime = DateTime.UtcNow,
-                });
-            }
+                _context.TaxInvoiceLines.Add(BuildLine(header.TaxInvoiceHeaderID, lineNo++, l));
             await _context.SaveChangesAsync();
 
             return await Describe(header, alreadyExisted: false);

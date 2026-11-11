@@ -1,4 +1,5 @@
 using FintechApp.Requests.Credential;
+using FintechApp.Responses.Credential;
 using FintechApp.Responses.Login;
 
 namespace FintechApp.Interfaces.Services
@@ -16,5 +17,10 @@ namespace FintechApp.Interfaces.Services
         Task<bool> Logout(int userId);
         Task<string> ChangePasswordAfterExpiry(ChangePasswordAfterExpiryRequest request, string ipAddress);
         Task<(string failureMessage, FetchDetailsForPincodeResponse? response)> FetchDetailsForPincode(string pincode);
+
+        // MPIN (transaction / app-open PIN).
+        Task<MpinStatusResponse> GetMpinStatus(int userId);
+        Task<string> SetMpin(SetMpinRequest request, int userId, string ipAddress);
+        Task<string> VerifyMpin(VerifyMpinRequest request, int userId);
     }
 }

@@ -15,6 +15,7 @@ import {
   reapplyTheme,
   readLocalTheme,
   resolveTheme,
+  setConfigColors,
   setConfigPreset,
   writeLocalTheme,
 } from './themeEngine';
@@ -23,6 +24,8 @@ interface BrandConfig {
   appName: string;
   tagline: string;
   logoUrl: string;
+  /** The square app artwork, shown instead of the wide logo inside the phone app. */
+  appIconUrl: string;
   loginHeadline: string;
   loginSubtext: string;
 }
@@ -31,6 +34,7 @@ const DEFAULT_BRAND: BrandConfig = {
   appName: 'Fino',
   tagline: 'Console',
   logoUrl: '',
+  appIconUrl: '',
   loginHeadline: 'The control room for your fintech network.',
   loginSubtext:
     'Recharges, money transfer, AEPS, wallets and settlements — one secure console for every role in your distribution chain.',
@@ -66,10 +70,16 @@ export function BrandProvider({ children }: { children: ReactNode }) {
       appName: cfg.appName || DEFAULT_BRAND.appName,
       tagline: cfg.tagline || DEFAULT_BRAND.tagline,
       logoUrl: cfg.logoUrl || '',
+      appIconUrl: cfg.appIconUrl || '',
       loginHeadline: cfg.loginHeadline || DEFAULT_BRAND.loginHeadline,
       loginSubtext: cfg.loginSubtext || DEFAULT_BRAND.loginSubtext,
     });
     if (cfg.theme) setConfigPreset(cfg.theme);
+    setConfigColors({
+      primary: cfg.brandColor,
+      navbar: cfg.navbarColor,
+      appbar: cfg.appbarColor,
+    });
   }, []);
 
   useEffect(() => {

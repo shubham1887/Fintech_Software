@@ -215,7 +215,7 @@ namespace FintechApp.Controllers
 
             try
             {
-                failureMessage = await _service.Create(request);
+                failureMessage = await _service.Create(request, keyDataModel.UserID, keyDataModel.IPAddress);
                 if (!failureMessage.EqualsIgnoreCase(StaticModels.StatusType.Ok))
                     return ResponseProcess.GetFailResponse(failureMessage);
 
@@ -255,7 +255,7 @@ namespace FintechApp.Controllers
 
             try
             {
-                failureMessage = await _service.Update(request);
+                failureMessage = await _service.Update(request, keyDataModel.UserID, keyDataModel.IPAddress);
                 if (!failureMessage.EqualsIgnoreCase(StaticModels.StatusType.Ok))
                     return ResponseProcess.GetFailResponse(failureMessage);
 
@@ -295,7 +295,7 @@ namespace FintechApp.Controllers
 
             try
             {
-                failureMessage = await _service.Delete(request.SlabDetailID);
+                failureMessage = await _service.Delete(request.SlabDetailID, keyDataModel.UserID, keyDataModel.IPAddress);
                 if (!failureMessage.EqualsIgnoreCase(StaticModels.StatusType.Ok))
                     return ResponseProcess.GetFailResponse(failureMessage);
 

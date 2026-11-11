@@ -236,7 +236,7 @@ export function ModeMasterScreen() {
     <div className="space-y-5">
       <PageHeader title="Modes & Sub Modes" subtitle="Fund-request transfer methods and their sources / destinations" />
 {/* 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className={cn(STAT_STRIP, "grid-cols-1 sm:grid-cols-3")}>
         <StatTile label="Modes" value={String(modes.length)} icon={Layers} tone="bg-brand-50 text-brand-600" />
         <StatTile label="Active modes" value={String(activeModes)} icon={Power} tone="bg-success-50 text-success-600" />
         <StatTile label="Sub modes" value={String(subs.length)} icon={ChevronRight} tone="bg-slate-100 text-slate-600" />

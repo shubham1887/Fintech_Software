@@ -7,6 +7,7 @@ import {
   Wallet, XCircle,
 } from 'lucide-react';
 import { apiPost } from '@/lib/apiClient';
+import { clearTwoFactorForUser } from '@/api/twoFactor.api';
 import { roleLabel } from '@/lib/roles';
 import { getField as get } from '@/lib/row';
 import { inr, dateOnly } from '@/lib/format';
@@ -16,8 +17,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { Modal } from '@/components/ui/Modal';
+import { HoldBalanceDialog } from './HoldBalanceDialog';
 import { Spinner } from '@/components/ui/Spinner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { CustomScreenProps } from './registry';
@@ -89,8 +89,6 @@ export function UserProfileScreen(_props: CustomScreenProps) {
   const targetId = new URLSearchParams(useLocation().search).get('id') ?? '';
 
   const [holdOpen, setHoldOpen] = useState(false);
-  const [holdAmount, setHoldAmount] = useState('');
-  const [holdRemark, setHoldRemark] = useState('');
 
   const { data: res, isLoading, refetch } = useQuery({
     queryKey: ['user-profile', targetId],
@@ -116,25 +114,15 @@ export function UserProfileScreen(_props: CustomScreenProps) {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const holdMut = useMutation({
-    mutationFn: (v: { amount: number; remark: string }) =>
-      apiPost('Users/AddHoldBalance', { TargetUserID: Number(targetId), Amount: v.amount, Remark: v.remark }),
-    onSuccess: (r) => {
-      if (!r.ok) return toast.error(r.message);
-      toast.success('Hold balance updated.');
-      setHoldOpen(false);
-      setHoldAmount('');
-      setHoldRemark('');
-      invalidate();
-    },
+  // The "lost the phone and the recovery codes" path. Clearing the enrolment drops the stored
+  // secret as well as the flag, so this user signs in with their password alone until they enrol
+  // a new device — it is not a way to read their codes, only to stop demanding them.
+  const clearTwoFaMut = useMutation({
+    mutationFn: () => clearTwoFactorForUser(Number(targetId)),
+    onSuccess: (r) => (r.ok ? (toast.success('Two-step verification reset.'), invalidate()) : toast.error(r.message)),
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const submitHold = () => {
-    const amount = Number(holdAmount);
-    if (!amount || amount <= 0) return toast.error('Enter a hold amount greater than zero.');
-    holdMut.mutate({ amount, remark: holdRemark.trim() });
-  };
 
   if (!targetId) {
     return (
@@ -315,39 +303,42 @@ export function UserProfileScreen(_props: CustomScreenProps) {
         </InfoCard>
 
         <InfoCard title="Access & flags">
-          <Flag label="Two-factor authentication" on={Boolean(get(u, 'IsTwoFA'))} />
+          <div className="flex items-center justify-between border-b border-slate-100 py-2.5">
+            <span className="text-sm text-slate-500">Two-factor authentication</span>
+            <div className="flex items-center gap-3">
+              {Boolean(get(u, 'IsTwoFA')) ? (
+                <span className="flex items-center gap-1 text-sm font-medium text-success-600">
+                  <CheckCircle2 className="size-4" /> Enabled
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-sm text-slate-400">
+                  <XCircle className="size-4" /> Disabled
+                </span>
+              )}
+              {Boolean(get(u, 'IsTwoFA')) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  loading={clearTwoFaMut.isPending}
+                  onClick={() => clearTwoFaMut.mutate()}
+                >
+                  Reset
+                </Button>
+              )}
+            </div>
+          </div>
           <Flag label="Login OTP" on={Boolean(get(u, 'IsLoginOTP'))} />
           <Flag label="Login PIN set" on={Boolean(get(u, 'IsPin'))} />
           <Flag label="Invoice applicable" on={Boolean(get(u, 'IsInvoiceApplicable'))} />
           <Flag label="Commission hold" on={commHold} />
         </InfoCard>
       </div>
-
-      {/* Add hold balance */}
-      <Modal open={holdOpen} onClose={() => setHoldOpen(false)} title="Add hold balance">
-        <div className="space-y-4">
-          <p className="text-sm text-slate-500">
-            Freeze part of <span className="font-medium text-slate-700">{firm || name}</span>&rsquo;s wallet.
-            Held funds stay in the balance but can&rsquo;t be spent.
-          </p>
-          <div className="flex gap-4 rounded-lg bg-slate-50 p-3 text-sm">
-            <div>
-              <p className="text-xs text-slate-400">Balance</p>
-              <p className="font-medium tabular-nums text-slate-800">{inr(balance)}</p>
-            </div>
-            <div>
-              <p className="text-xs text-slate-400">Currently on hold</p>
-              <p className="font-medium tabular-nums text-slate-800">{inr(hold)}</p>
-            </div>
-          </div>
-          <Input label="Hold amount (₹)" type="number" min="0" placeholder="0.00" value={holdAmount} onChange={(e) => setHoldAmount(e.target.value)} />
-          <Input label="Remark (optional)" placeholder="Why is this being held?" value={holdRemark} onChange={(e) => setHoldRemark(e.target.value)} />
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setHoldOpen(false)}>Cancel</Button>
-            <Button size="sm" loading={holdMut.isPending} onClick={submitHold}>Add hold</Button>
-          </div>
-        </div>
-      </Modal>
+      {/* Hold / release — the same dialog as All Users, wallet-aware and with a reason required. */}
+      <HoldBalanceDialog
+        target={holdOpen ? u : null}
+        onClose={() => setHoldOpen(false)}
+        onDone={invalidate}
+      />
     </>
   );
 }

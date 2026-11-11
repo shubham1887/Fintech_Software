@@ -17,7 +17,7 @@ import {
   signUpVerifyOtp,
   type RegisterPayload,
 } from '@/api/registration.api';
-import { BrandGlyph } from '@/components/ui/BrandMark';
+import { BrandLockup } from '@/components/ui/BrandMark';
 
 /** Roles a self-service applicant may pick — Admin (1) is never offered via public signup. */
 const HIDDEN_ROLE_IDS = new Set([1]);
@@ -179,10 +179,7 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen bg-canvas px-6 py-10">
       <div className="mx-auto w-full max-w-2xl animate-rise">
-        <div className="mb-8 flex items-center gap-3">
-          <BrandGlyph className="size-11 rounded-2xl" />
-          <span className="font-display text-lg font-bold text-slate-900">{appName}</span>
-        </div>
+        <BrandLockup tone="light" size="lg" className="mb-8" />
 
         <h1 className="font-display text-2xl font-bold text-slate-900">Create your account</h1>
         <p className="mt-1 text-sm text-slate-500">

@@ -82,6 +82,30 @@
             </intent-filter>
         </activity>
 
+        <!--
+          Push. Firebase is configured at run time from app-config.json (see
+          push/PushManager.kt), so there is no google-services.json and no google-services
+          Gradle plugin — one APK serves every client.
+        -->
+        <service
+            android:name=".push.PortalMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Silhouette icon + brand tint for notifications the system posts itself. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/brand_primary" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="fino_alerts" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

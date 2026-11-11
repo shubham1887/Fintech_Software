@@ -53,6 +53,31 @@ namespace FintechApp.Controllers
             catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
         }
 
+        // Re-enquire every active provider's balance in one call and return the per-provider outcome.
+        // The dashboard's refresh button uses this: "Provider Stock" reads the stored balance on each
+        // provider row, which is only as fresh as the last enquiry, so a refresh that only re-read the
+        // database showed the same stale figures back. One enquiry per provider takes a moment, which
+        // is why this is a deliberate button rather than something the 30-second poll does.
+        [HttpPost("RefreshAllBalances")]
+        public async Task<APIResponse> RefreshAllBalances([FromForm] APIRequest apiRequest)
+        {
+            KeyDataModel? keyDataModel;
+            try { keyDataModel = JsonConvert.DeserializeObject<KeyDataModel>(_encryptDecrypt.Decrypt(apiRequest.KeyData)); }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetFailResponse(Messages.Common.Message.ExceptionOccured); }
+
+            if (keyDataModel == null) return ResponseProcess.GetFailResponse(Messages.Common.Message.InvalidRequest);
+            string failureMessage = keyDataModel.IsValidModalState();
+            if (!failureMessage.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(failureMessage);
+
+            try
+            {
+                var (fail, data) = await _service.CheckAllBalances();
+                if (!fail.EqualsIgnoreCase(StatusType.Ok)) return ResponseProcess.GetFailResponse(fail);
+                return ResponseProcess.GetSuccessResponse(_encryptDecrypt.Encrypt(JsonConvert.SerializeObject(data)));
+            }
+            catch (Exception ex) { _logger.Write(ex); return ResponseProcess.GetErrorResponse(Messages.Common.Message.ExceptionOccured); }
+        }
+
         [HttpPost("TestResponse")]
         public async Task<APIResponse> TestResponse([FromForm] APIRequest apiRequest)
         {

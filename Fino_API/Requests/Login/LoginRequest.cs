@@ -8,6 +8,23 @@ namespace FintechApp.Requests.Login
         public string Password { get; set; } = string.Empty;
         public string DeviceType { get; set; } = string.Empty; // Web, Android, API
         public string IPAddress { get; set; } = string.Empty;
+
+        // ── Where the sign-in happened ─────────────────────────────────────────────────────
+        // All three are optional and none is validated: a client that cannot or will not supply
+        // them still signs in exactly as before. The login history recorded an empty Location on
+        // every single row because nothing was ever sent for it, which is why "where did this
+        // person log in from" had no answer on a report built to give one.
+
+        /// <summary>Decimal degrees, as the device reported them. Blank when unavailable.</summary>
+        public string Latitude { get; set; } = string.Empty;
+
+        public string Longitude { get; set; } = string.Empty;
+
+        /// <summary>
+        /// A human-readable place, where the client has one (the Android build resolves the
+        /// coordinates to an address). Falls back to the coordinates themselves.
+        /// </summary>
+        public string Location { get; set; } = string.Empty;
     }
     public class LoginRequestValidator : AbstractValidator<LoginRequest>
     {

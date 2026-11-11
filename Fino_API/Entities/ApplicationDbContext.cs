@@ -227,6 +227,8 @@ namespace FintechApp.Data
         public DbSet<TrustableDevice> TrustableDevices { get; set; }
         public DbSet<UserQuickService> UserQuickServices { get; set; }
         public DbSet<UserTwoFactor> UserTwoFactors { get; set; }
+        // Every commission figure that moved, on any slab, by anybody. Append-only: see the entity.
+        public DbSet<SlabCommissionAudit> SlabCommissionAudits { get; set; }
 
         // ── Dynamic tax engine (GST / TDS) ──────────────────────────────────────────────
         // Masters are effective-dated: a rate or rule is never edited in place, the old row is
@@ -249,9 +251,55 @@ namespace FintechApp.Data
         public DbSet<TaxDocumentSeries> TaxDocumentSeries { get; set; }
         public DbSet<TaxInvoiceHeader> TaxInvoiceHeaders { get; set; }
         public DbSet<TaxInvoiceLine> TaxInvoiceLines { get; set; }
+        // What a supplier bills us for (E-Topup, Money Transfer, Bill Payment…) with its SAC,
+        // GST rate and usual rate — the dropdown behind a Purchase Invoice line.
+        public DbSet<PurchaseItemMaster> PurchaseItemMasters { get; set; }
         public DbSet<TaxInvoiceAnnexureLine> TaxInvoiceAnnexureLines { get; set; }
         public DbSet<EInvoiceLog> EInvoiceLogs { get; set; }
         public DbSet<ExchangePartnerLeg> ExchangePartnerLegs { get; set; }
+        // Phase 3 — purchase reconciliation. A purchase document is a TaxInvoiceHeader
+        // (Direction=PURCHASE); these three add the government's view (2B), the match result, and
+        // the credit ledger with its Rule-37 / 16(4) deadlines.
+        public DbSet<Gstr2bImport> Gstr2bImports { get; set; }
+        public DbSet<Gstr2bLine> Gstr2bLines { get; set; }
+        public DbSet<ItcRegisterEntry> ItcRegisterEntries { get; set; }
+        // Phase 4 — the double-entry ledger: the chart, the event→Dr/Cr rules, the posting outbox
+        // (a failed posting is a visible row, never silent), the balanced vouchers, and the
+        // period lock a closed month is sealed with.
+        public DbSet<AcctAccount> AcctAccounts { get; set; }
+        public DbSet<AcctPostingRule> AcctPostingRules { get; set; }
+        public DbSet<AcctPostingOutbox> AcctPostingOutbox { get; set; }
+        public DbSet<AcctVoucher> AcctVouchers { get; set; }
+        public DbSet<AcctVoucherLine> AcctVoucherLines { get; set; }
+        public DbSet<AcctPeriodLock> AcctPeriodLocks { get; set; }
+        // Phase 5 — bank reconciliation. The statement the bank gave us, beside the ledger's own
+        // Bank lines. The match is its own table so a ledger line stays known-reconciled across
+        // later statements, rather than reappearing as unreconciled every month.
+        public DbSet<BankAccount> BankAccounts { get; set; }
+        public DbSet<BankStatementImport> BankStatementImports { get; set; }
+        public DbSet<BankStatementLine> BankStatementLines { get; set; }
+        public DbSet<BankReconMatch> BankReconMatches { get; set; }
+        // How each bank lays its statement out — saved once per bank, PDF included, so an upload is
+        // just picking the file — and the rules that say what a statement line IS: stock bought, a
+        // retailer's deposit, an expense. Matching proves a line happened; these say what it was.
+        public DbSet<BankStatementFormat> BankStatementFormats { get; set; }
+        public DbSet<BankLineCategoryRule> BankLineCategoryRules { get; set; }
+        // Phase 6 — the returns. Every figure is derived, so only the SNAPSHOT of a return that was
+        // generated or filed is stored: GSTR-9 has to report the year as the books say AND as the
+        // returns filed said, and recomputing the second answers the first question twice.
+        public DbSet<GstReturnFiling> GstReturnFilings { get; set; }
+        // How a commission is taxed — inclusive or exclusive, on the commission or on the whole
+        // amount, and whether TDS is deducted. These answers used to be literals in the code.
+        public DbSet<CommissionTaxProfile> CommissionTaxProfiles { get; set; }
+        // Which menu entries this install hides. Exceptions only - no row means the shipped
+        // menu definition stands, which is what makes it safe on an install already running.
+        public DbSet<MenuVisibilitySetting> MenuVisibilitySettings { get; set; }
+        public DbSet<TransactionTDSDetail> TransactionTDSDetails { get; set; }
+        // How much TDS comes off a commission and whose: one rule per decision, matched most
+        // specific first (user+service → user → role+service → role → service → house), as a
+        // percentage or a flat figure. And what was done with a month of it per party.
+        public DbSet<TdsRule> TdsRules { get; set; }
+        public DbSet<TdsSettlement> TdsSettlements { get; set; }
         public DbSet<UserMerchantMaster> UserMerchantMasters { get; set; }
         public DbSet<UserWisePayementGatewaySetting> UserWisePayementGatewaySettings { get; set; }
         public DbSet<OnboardingUser> OnboardingUsers { get; set; }
@@ -608,6 +656,18 @@ namespace FintechApp.Data
                 .WithMany()
                 .HasForeignKey(u => u.SlabMasterID)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            // ── Hierarchy slab delegation ──────────────────────────────────────────────
+            // The two lookups every delegation screen and the parent-change re-check make:
+            // "which slabs does this user own" and "which slabs hang off this parent".
+            modelBuilder.Entity<SlabMaster>().HasIndex(x => x.OwnerUserID);
+            modelBuilder.Entity<SlabMaster>().HasIndex(x => x.ParentSlabID);
+            // The commission engine's band match, and the parent-row lookup behind validation.
+            modelBuilder.Entity<SlabDetail>()
+                .HasIndex(x => new { x.SlabMasterID, x.ServiceID, x.OperatorID, x.FromAmount });
+            modelBuilder.Entity<SlabDetail>().HasIndex(x => x.ParentSlabDetailID);
+            modelBuilder.Entity<SlabCommissionAudit>().HasIndex(x => new { x.SlabMasterID, x.DateTime });
+            modelBuilder.Entity<SlabCommissionAudit>().HasIndex(x => new { x.OwnerUserID, x.DateTime });
 
             modelBuilder.Entity<UserChannelSlabMapping>()
                 .HasOne(u => u.UserMaster)
@@ -1108,6 +1168,15 @@ namespace FintechApp.Data
             // sequence may never hand the same code to two users. Blank aliases (legacy rows that
             // predate auto-generation) are excluded from the unique index by the filter.
             modelBuilder.Entity<UserCodeFormat>().HasIndex(x => x.UserTypeID).IsUnique();
+            // A month is settled once per party. Settling twice either pays the government the
+            // same money twice or credits the same wallet twice, so the database refuses it
+            // rather than trusting every caller to check first. Soft-deleted rows are excluded,
+            // so a cancelled settlement can be replaced.
+            modelBuilder.Entity<TdsSettlement>()
+                .HasIndex(x => new { x.PeriodKey, x.PartyUserID }).IsUnique()
+                .HasFilter("[IsDeleted] = 0");
+            // Resolving a rule reads by scope and date on every settled transaction.
+            modelBuilder.Entity<TdsRule>().HasIndex(x => new { x.Scope, x.IsActive, x.EffectiveFrom });
             modelBuilder.Entity<UserMaster>().HasIndex(x => x.AliasName).IsUnique()
                 .HasFilter("[AliasName] IS NOT NULL AND [AliasName] <> ''");
             modelBuilder.Entity<ServiceSubscriptionPlanDetails>().HasOne(x => x.ServiceSubscriptionCreatePlanMaster).WithMany().HasForeignKey(x => x.ServiceSubscriptionCreatePlanMasterID).OnDelete(DeleteBehavior.Restrict);

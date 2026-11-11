@@ -78,7 +78,11 @@ namespace FintechApp.Controllers
         /// <summary>Fills the parameters every endpoint shares.</summary>
         private T Bind<T>(T request) where T : ApiUserRequestBase
         {
-            request.UserId = P("userid");
+            // The account's registered mobile. 'userid' is the legacy spelling, still accepted so
+            // an integration built before this change keeps working; the auth service resolves
+            // either value.
+            request.Mobile = P("mobile");
+            if (request.Mobile.Length == 0) request.Mobile = P("userid");
             request.Token = P("token");
             request.RequestId = P("requestid");
             request.ClientIp = IPAddressHelper.GetClientIPAddress(HttpContext);

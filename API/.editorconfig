@@ -1,4 +1,0 @@
-﻿[*.cs]
-
-# IDE0100: Remove redundant equality
-dotnet_diagnostic.IDE0100.severity = none

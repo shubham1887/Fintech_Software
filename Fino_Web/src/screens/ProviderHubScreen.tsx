@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  IndianRupee, Network, Pencil, Plus, RefreshCw, ServerCog, Settings2,
+  IndianRupee, Pencil, Plus, RefreshCw, ServerCog, Settings2,
   ShieldCheck, Trash2, TriangleAlert,
 } from 'lucide-react';
 import { apiBaseUrl, apiPost } from '@/lib/apiClient';
@@ -13,7 +13,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
-import { StatTile } from '@/components/ui/StatTile';
+import { cn } from '@/lib/cn';
+import { StatTile, STAT_STRIP } from '@/components/ui/StatTile';
 import { Spinner } from '@/components/ui/Spinner';
 import { Pill, ToggleDot, type Row } from './providerShared';
 
@@ -35,9 +36,61 @@ const EMPTY_FORM: ProviderForm = {
   SupportNumber: '', LowBalanceAmount: '0',
 };
 
-/** A provider whose name contains "jaijui" is the coded JaiJui DMT integration — its three
- *  credentials map onto LoginID (mobile), Token (API token) and ProviderUniqueID (auth code). */
-const isJaiJui = (name: string) => name.replace(/\s+/g, '').toLowerCase().includes('jaijui');
+/**
+ * Coded gateways keep their credentials on this row, but each one means something different by
+ * "login", "token" and "auth code" — JaiJui's auth code is a third credential it sends in every
+ * body, Nexmint's is the webhook secret, which is a DIFFERENT key from the one its API calls are
+ * signed with. Three generic labels and an operator pasting a secret into the wrong box is a
+ * provider that silently rejects every call, or a webhook that verifies nothing.
+ *
+ * So the labels come from here, one entry per gateway, matched on the provider name exactly the
+ * way the API matches it (JaiJuiProviderResolver / NexmintProviderResolver). Adding the next
+ * coded provider is one entry, not another ternary on every Input.
+ */
+interface GatewayHint {
+  marker: string;
+  note: React.ReactNode;
+  login: { label: string; placeholder: string };
+  token: { label: string; placeholder: string };
+  unique: { label: string; placeholder: string };
+}
+
+const GATEWAY_HINTS: GatewayHint[] = [
+  {
+    marker: 'jaijui',
+    note: (
+      <>
+        JaiJui DMT gateway — credentials live here. Map: <b>Login</b> = registered mobile,
+        <b> API token</b> = APIToken, <b>Auth code</b> = AuthCode. Link this provider from
+        Settings → DMT Settings to use it for money transfer.
+      </>
+    ),
+    login: { label: 'Login / member ID (JaiJui: registered mobile)', placeholder: 'Registered mobile number' },
+    token: { label: 'API token / key (JaiJui: APIToken)', placeholder: 'JaiJui APIToken' },
+    unique: { label: 'Auth code (JaiJui: AuthCode)', placeholder: 'JaiJui AuthCode' },
+  },
+  {
+    marker: 'nexmint',
+    note: (
+      <>
+        Nexmint payout gateway — credentials live here. Map: <b>Login</b> = client_id,
+        <b> API token</b> = client_secret, <b>Auth code</b> = the <b>webhook secret</b> (a
+        different key — it signs the callbacks, not the API calls). Leave <b>Base URL</b> blank for
+        live, or end it with <code>/sandbox</code> to test without moving money. Set the
+        <b> whitelisted IP</b> to Nexmint&apos;s, give them the callback URL below, and link this
+        provider from Settings → DMT Settings with <b>Payout DMT</b> ticked.
+      </>
+    ),
+    login: { label: 'Login / member ID (Nexmint: client_id)', placeholder: 'Nexmint client_id' },
+    token: { label: 'API token / key (Nexmint: client_secret)', placeholder: 'Nexmint client_secret' },
+    unique: { label: 'Auth code (Nexmint: webhook secret)', placeholder: 'Nexmint webhook secret' },
+  },
+];
+
+const hintFor = (name: string): GatewayHint | null => {
+  const normalised = name.replace(/\s+/g, '').toLowerCase();
+  return GATEWAY_HINTS.find((hint) => normalised.includes(hint.marker)) ?? null;
+};
 
 const money = (v: unknown) =>
   `₹${Number(v ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -51,6 +104,44 @@ interface BalanceResult {
   DMTBalance?: number | null;
   ExtractedValues?: Record<string, string>;
   RawResponse?: string;
+}
+
+/**
+ * Every balance a provider reported, as [label, amount] pairs.
+ *
+ * A provider is not one pot of money. Most keep a separate float per product — recharge, payout,
+ * AEPS — and some name more than that. The response carries the two we model on the provider row
+ * plus anything else the response rules extracted, so both are read: the known two first, then any
+ * further "…Balance" key the provider sent, which is how a third or fourth wallet shows up without
+ * needing a code change here.
+ */
+function reportedBalances(data: BalanceResult | null | undefined): [string, number][] {
+  if (!data) return [];
+  const out: [string, number][] = [];
+  const seen = new Set<string>();
+
+  const push = (label: string, value: unknown) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const key = label.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push([label, n]);
+  };
+
+  if (data.RechargeBalance !== null && data.RechargeBalance !== undefined) push('Recharge', data.RechargeBalance);
+  if (data.DMTBalance !== null && data.DMTBalance !== undefined) push('Payout', data.DMTBalance);
+
+  // Anything else the rules pulled out: "AEPSBalance" → "AEPS", "WalletBalance" → "Wallet".
+  for (const [rawKey, rawValue] of Object.entries(data.ExtractedValues ?? {})) {
+    if (!/balance$/i.test(rawKey)) continue;
+    const label = rawKey.replace(/balance$/i, '').trim() || 'Balance';
+    if (/^(recharge|main)$/i.test(label)) { push('Recharge', rawValue); continue; }
+    if (/^(dmt|payout)$/i.test(label)) { push('Payout', rawValue); continue; }
+    push(label.toUpperCase() === label ? label : label.replace(/^\w/, (c) => c.toUpperCase()), rawValue);
+  }
+
+  return out;
 }
 
 /**
@@ -171,19 +262,36 @@ export function ProviderHubScreen() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const [balanceOpen, setBalanceOpen] = useState(false);
-  const [balance, setBalance] = useState<BalanceResult | null>(null);
   const [balanceBusy, setBalanceBusy] = useState<number | null>(null);
 
+  /**
+   * Refresh one provider's balance.
+   *
+   * The answer arrives as a toast, not a dialog. Checking a balance is a glance, and a modal made
+   * it a three-step interruption — open, read one number, close — before you could check the next
+   * provider. The refreshed figures land in the row itself, which is where you were already looking.
+   */
   const checkBalance = async (row: Row) => {
     const id = Number(getField(row, 'ProviderID'));
+    const name = String(getField(row, 'ProviderName') ?? 'Provider');
     setBalanceBusy(id);
     try {
       const res = await apiPost<BalanceResult>('ProviderGateway/CheckBalance', { ProviderID: id });
-      if (!res.ok) return toast.error(res.message);
-      setBalance(res.data);
-      setBalanceOpen(true);
+      if (!res.ok) return toast.error(`${name}: ${res.message}`);
+
       refresh(); // stored balances were updated by the check
+
+      const reported = reportedBalances(res.data);
+      if (reported.length === 0) {
+        // The call went through but the provider named no balance — usually a BALANCE endpoint or
+        // response rule that has not been configured. Say that rather than showing "₹0".
+        toast.info(`${name}: ${res.data?.Message || 'no balance reported. Check its BALANCE endpoint and response rules.'}`);
+        return;
+      }
+
+      const summary = reported.map(([label, value]) => `${label} ${money(value)}`).join(' · ');
+      if (String(res.data?.Status ?? '').toUpperCase() === 'SUCCESS') toast.success(`${name} — ${summary}`);
+      else toast.info(`${name} — ${summary}. ${res.data?.Message ?? ''}`.trim());
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -200,6 +308,11 @@ export function ProviderHubScreen() {
   const setField = (name: keyof ProviderForm) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((p) => ({ ...p, [name]: e.target.value }));
 
+  // Relabels the three credential fields as soon as the name names a coded gateway, so the
+  // operator is told what goes in each box while they are filling it in — not after the first
+  // call fails.
+  const gatewayHint = useMemo(() => hintFor(form.ProviderName), [form.ProviderName]);
+
   return (
     <>
       <PageHeader
@@ -208,7 +321,7 @@ export function ProviderHubScreen() {
       />
 
       {/* ── KPI strip ─────────────────────────────────────────────────────────── */}
-      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className={cn(STAT_STRIP, "grid-cols-2 lg:grid-cols-4")}>
         <StatTile label="Providers" value={stats.total} icon={ServerCog} tone="bg-brand-50 text-brand-600" loading={providers.isLoading} />
         <StatTile label="Active" value={stats.active} icon={ShieldCheck} tone="bg-emerald-50 text-emerald-600" loading={providers.isLoading} />
         <StatTile label="Recharge float" value={money(stats.totalBal)} icon={IndianRupee} tone="bg-sky-50 text-sky-600" loading={providers.isLoading} />
@@ -259,16 +372,36 @@ export function ProviderHubScreen() {
                   return (
                     <tr key={id || i} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/50">
                       <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-800">{String(getField(row, 'ProviderName') ?? '—')}</p>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <p className="font-semibold text-slate-800">{String(getField(row, 'ProviderName') ?? '—')}</p>
+                          {/* A compiled integration (Pay1, JaiJui) needs no endpoint templates.
+                              "No base URL" on one of these is normal, not a missing setting. */}
+                          {Boolean(getField(row, 'IsCodedIntegration')) && (
+                            <Pill
+                              text={`Built-in${getField(row, 'CodedFamily') ? ` · ${String(getField(row, 'CodedFamily'))}` : ''}`}
+                              tone="bg-info-50 text-info-600"
+                            />
+                          )}
+                        </div>
                         <p className="max-w-[260px] truncate text-xs text-slate-400" title={String(getField(row, 'ProviderUrl') ?? '')}>
-                          {String(getField(row, 'ProviderUrl') ?? '') || 'No base URL'}
+                          {Boolean(getField(row, 'IsCodedIntegration')) && !String(getField(row, 'ProviderUrl') ?? '')
+                            ? 'Library integration — no base URL needed'
+                            : String(getField(row, 'ProviderUrl') ?? '') || 'No base URL'}
                         </p>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <div>
-                            <p className="font-semibold tabular-nums text-slate-800">{money(rechargeBal)}</p>
-                            <p className="tabular-nums text-xs text-slate-500">Payout {money(getField(row, 'DMTBalance'))}</p>
+                            {/* A provider keeps a separate float per product. Both are labelled, so
+                                a payout figure is never mistaken for a recharge one. */}
+                            <p className="tabular-nums text-sm font-semibold text-slate-800">
+                              <span className="mr-1 text-xs font-normal text-slate-400">Recharge</span>
+                              {money(rechargeBal)}
+                            </p>
+                            <p className="tabular-nums text-xs text-slate-500">
+                              <span className="mr-1 text-slate-400">Payout</span>
+                              {money(getField(row, 'DMTBalance'))}
+                            </p>
                             {isLow && <Pill text="Low balance" tone="bg-amber-50 text-amber-700" />}
                           </div>
                           <button
@@ -316,31 +449,29 @@ export function ProviderHubScreen() {
       {/* ── Add / edit provider ──────────────────────────────────────────────── */}
       <Modal open={formOpen} onClose={() => setFormOpen(false)} title={editing ? 'Edit provider' : 'Add provider'} size="lg">
         <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
-          <Input label="Provider name *" value={form.ProviderName} onChange={setField('ProviderName')} placeholder="e.g. Payin, JaiJui DMT" />
+          <Input label="Provider name *" value={form.ProviderName} onChange={setField('ProviderName')} placeholder="e.g. Payin, JaiJui DMT, Nexmint Payout" />
           <Input label="Base URL" value={form.ProviderUrl} onChange={setField('ProviderUrl')} placeholder="https://api.example.com" />
           <Input label="Whitelisted IP" value={form.IPAddress} onChange={setField('IPAddress')} placeholder="Optional" />
           <Input label="Support number" value={form.SupportNumber} onChange={setField('SupportNumber')} placeholder="Optional helpline" />
-          {isJaiJui(form.ProviderName) && (
+          {gatewayHint && (
             <div className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-xs text-brand-700 sm:col-span-2">
-              JaiJui DMT gateway — credentials live here. Map: <b>Login</b> = registered mobile,
-              <b> API token</b> = APIToken, <b>Auth code</b> = AuthCode. Link this provider from
-              Settings → DMT Settings to use it for money transfer.
+              {gatewayHint.note}
             </div>
           )}
           <Input
-            label={isJaiJui(form.ProviderName) ? 'Login / member ID (JaiJui: registered mobile)' : 'Login / member ID'}
+            label={gatewayHint?.login.label ?? 'Login / member ID'}
             value={form.LoginID} onChange={setField('LoginID')}
-            placeholder={isJaiJui(form.ProviderName) ? 'Registered mobile number' : 'Used by the [LoginID] placeholder'}
+            placeholder={gatewayHint?.login.placeholder ?? 'Used by the [LoginID] placeholder'}
           />
           <Input
-            label={isJaiJui(form.ProviderName) ? 'API token / key (JaiJui: APIToken)' : 'API token / key'}
+            label={gatewayHint?.token.label ?? 'API token / key'}
             type="password" value={form.Token} onChange={setField('Token')}
-            placeholder={isJaiJui(form.ProviderName) ? 'JaiJui APIToken' : 'Used by the [Token] placeholder'}
+            placeholder={gatewayHint?.token.placeholder ?? 'Used by the [Token] placeholder'}
           />
           <Input
-            label={isJaiJui(form.ProviderName) ? 'Auth code (JaiJui: AuthCode)' : 'Auth code / secondary key'}
+            label={gatewayHint?.unique.label ?? 'Auth code / secondary key'}
             type="password" value={form.ProviderUniqueID} onChange={setField('ProviderUniqueID')}
-            placeholder={isJaiJui(form.ProviderName) ? 'JaiJui AuthCode' : 'Optional — used by DMT integrations'}
+            placeholder={gatewayHint?.unique.placeholder ?? 'Optional — used by DMT integrations'}
           />
           <Input label="Low balance alert (₹)" type="number" value={form.LowBalanceAmount} onChange={setField('LowBalanceAmount')} />
           {editing && callbackUrl(editing) && (
@@ -385,51 +516,6 @@ export function ProviderHubScreen() {
         </div>
       </Modal>
 
-      {/* ── Balance result ───────────────────────────────────────────────────── */}
-      <Modal open={balanceOpen} onClose={() => setBalanceOpen(false)} title={`Balance — ${balance?.ProviderName ?? ''}`}>
-        <div className="space-y-4 p-5">
-          <div className="flex items-center gap-2">
-            <Network className="size-4 text-brand-600" />
-            <Pill
-              text={String(balance?.Status ?? '—')}
-              tone={balance?.Status === 'SUCCESS' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}
-            />
-            <span className="text-sm text-slate-600">{balance?.Message}</span>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-card border border-slate-200/70 p-4">
-              <p className="text-xs text-slate-500">Recharge balance</p>
-              <p className="font-display text-xl font-bold text-slate-900">
-                {balance?.RechargeBalance != null ? money(balance.RechargeBalance) : '—'}
-              </p>
-            </div>
-            <div className="rounded-card border border-slate-200/70 p-4">
-              <p className="text-xs text-slate-500">Payout / DMT balance</p>
-              <p className="font-display text-xl font-bold text-slate-900">
-                {balance?.DMTBalance != null ? money(balance.DMTBalance) : '—'}
-              </p>
-            </div>
-          </div>
-          {balance?.ExtractedValues && Object.keys(balance.ExtractedValues).length > 0 && (
-            <div>
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Extracted values</p>
-              <div className="rounded-lg bg-slate-50 p-3 font-mono text-xs text-slate-700">
-                {Object.entries(balance.ExtractedValues).map(([k, v]) => (
-                  <p key={k}>{k} = {v}</p>
-                ))}
-              </div>
-            </div>
-          )}
-          {balance?.RawResponse && (
-            <details>
-              <summary className="cursor-pointer text-xs font-semibold text-slate-500">Raw provider reply</summary>
-              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-ink-950 p-3 font-mono text-[11px] text-emerald-300">
-                {balance.RawResponse}
-              </pre>
-            </details>
-          )}
-        </div>
-      </Modal>
     </>
   );
 }

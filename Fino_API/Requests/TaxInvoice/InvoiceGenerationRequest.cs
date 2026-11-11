@@ -26,5 +26,15 @@ namespace FintechApp.Requests.TaxInvoice
 
         /// <summary>Limit to one party, for re-running a single case.</summary>
         public int OnlyPartyUserID { get; set; }
+
+        /// <summary>
+        /// How many documents a party's top-ups become: TRANSACTION, DAILY, MONTHLY, or AUTO.
+        ///
+        /// Empty means "use the install's answer" (Key Setting <c>InvoiceConsolidation</c>), which
+        /// itself defaults to AUTO — the shipped behaviour. Commission and charge are unaffected:
+        /// they have always been one document per party per service for the whole period, because
+        /// a commission is earned over the period rather than at a moment.
+        /// </summary>
+        public string Consolidation { get; set; } = string.Empty;
     }
 }

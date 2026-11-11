@@ -23,5 +23,27 @@
         public int PasswordExpiryDays { get; set; }
         public string ProfileImagePath { get; set; } = string.Empty;
         public string WhatsAppNumber { get; set; } = string.Empty;
+
+        /// <summary>
+        /// The logins this mobile number carries, when it carries more than one.
+        ///
+        /// Empty for the overwhelming majority of accounts, and the client treats empty exactly
+        /// as it always did: sign in and go. Populated only when the person has set up a second
+        /// role (see StaticModels/LinkedProfilePolicy), and then the client asks which one to
+        /// continue as. The token issued alongside this response is always the PRIMARY's; picking
+        /// the other one re-issues through Auth/SwitchProfile.
+        /// </summary>
+        public List<LoginProfileOption> Profiles { get; set; } = new();
+    }
+
+    /// <summary>One of the roles a person may continue as after signing in.</summary>
+    public class LoginProfileOption
+    {
+        public int UserID { get; set; }
+        public int UserTypeID { get; set; }
+        public string UserType { get; set; } = string.Empty;
+        public string FirmName { get; set; } = string.Empty;
+        public string UserCode { get; set; } = string.Empty;
+        public bool IsPrimary { get; set; }
     }
 }

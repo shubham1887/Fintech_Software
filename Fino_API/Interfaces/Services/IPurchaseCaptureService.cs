@@ -19,5 +19,23 @@ namespace FintechApp.Interfaces.Services
 
         /// <summary>Purchase documents in a period, with their ITC status — the purchase register.</summary>
         Task<List<TaxInvoiceHeader>> GetPurchases(DateTime periodFrom, DateTime periodTo);
+
+        /// <summary>The purchase list as the screen shows it, with where each bill's credit stands.</summary>
+        Task<List<object>> GetPurchaseRows(DateTime periodFrom, DateTime periodTo);
+
+        /// <summary>One bill with its lines, for viewing or editing. Null when it does not exist.</summary>
+        Task<object?> GetPurchase(int taxInvoiceHeaderID);
+
+        /// <summary>Correct a captured bill. Refused once its credit has been claimed in a return.</summary>
+        Task<(PurchaseCaptureResult? Result, string Failure)> UpdatePurchase(PurchaseCaptureRequest request);
+
+        /// <summary>Remove a captured bill (soft). Refused once its credit has been claimed.</summary>
+        Task<string> DeletePurchase(int taxInvoiceHeaderID);
+
+        /// <summary>Providers, wallets, billable items and known suppliers — what the form is filled from.</summary>
+        Task<object> GetLookups();
+
+        Task<(PurchaseItemMaster? Item, string Failure)> SaveItem(PurchaseItemSaveRequest request);
+        Task<string> DeleteItem(int purchaseItemMasterID);
     }
 }

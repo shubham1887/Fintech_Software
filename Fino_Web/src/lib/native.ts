@@ -70,6 +70,26 @@ export function isNativeApp(): boolean {
   return !!window.NativeApp || document.documentElement.classList.contains('native-app');
 }
 
+/**
+ * `isNativeApp()` as a hook.
+ *
+ * The shell injects its bridge after the document loads, which can be after React's first
+ * render, so a component that only read `isNativeApp()` once would decide "browser" and never
+ * correct itself. This re-reads when the shell announces itself.
+ */
+export function useIsNativeApp(): boolean {
+  const [inApp, setInApp] = useState(isNativeApp);
+
+  useEffect(() => {
+    const recompute = () => setInApp(isNativeApp());
+    window.addEventListener('native:ready', recompute);
+    recompute();
+    return () => window.removeEventListener('native:ready', recompute);
+  }, []);
+
+  return inApp;
+}
+
 /** Short vibration on a primary action. No-op on the web. */
 export function haptic(kind: HapticKind = 'light'): void {
   try {

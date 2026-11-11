@@ -1,5 +1,19 @@
+using FintechApp.Interfaces.Services;
+
 namespace FintechApp.Requests.ApiUser
 {
+    /// <summary>
+    /// Implemented by every request on a SIGNED contract (/dmt, /payout). It is what lets one
+    /// controller base fill the signed material for all of them — see
+    /// <c>ApiUserSignedControllerBase.Bind</c> — so the signing scheme has a single
+    /// implementation instead of one copy per contract.
+    /// </summary>
+    public interface IApiUserSecuredRequest
+    {
+        /// <summary>Timestamp, nonce, signature and the raw body bytes they were computed over.</summary>
+        ApiUserSignedRequest Security { get; set; }
+    }
+
     /// <summary>
     /// Fields every /api/v1 call carries. Values arrive as raw strings straight off the query
     /// string or form body — parsing and validation belong to the gateway service, not the
@@ -7,8 +21,17 @@ namespace FintechApp.Requests.ApiUser
     /// </summary>
     public abstract class ApiUserRequestBase
     {
-        /// <summary>The API user's numeric account id, unparsed.</summary>
-        public string UserId { get; set; } = string.Empty;
+        /// <summary>
+        /// The caller's REGISTERED MOBILE NUMBER — the account identifier on every /api/v1 call,
+        /// sent as <c>mobile</c> (or the <c>X-Api-Mobile</c> header), unparsed.
+        ///
+        /// It is a mobile and not an internal account id because the mobile is the number the
+        /// retailer already knows, logs in with, and can read off their own profile, while the
+        /// numeric id exists only inside our database. It is unique (IX_UserMasters_MobileNumber)
+        /// so it identifies exactly one account. The legacy <c>userid</c> parameter still resolves
+        /// for integrations built before this change.
+        /// </summary>
+        public string Mobile { get; set; } = string.Empty;
 
         /// <summary>The API token issued on the API Access page.</summary>
         public string Token { get; set; } = string.Empty;

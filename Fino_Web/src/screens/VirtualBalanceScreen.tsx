@@ -6,7 +6,7 @@ import { apiPost } from '@/lib/apiClient';
 import { fetchList } from '@/api/list.api';
 import { getField } from '@/lib/row';
 import { apiDate, dateTime } from '@/lib/format';
-import { exportToCsv } from '@/lib/csv';
+import { useCsvDownload } from '@/lib/exportAll';
 import { useToast } from '@/components/ui/Toast';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -48,6 +48,7 @@ function rowDateKey(row: Row): string {
  * narrows by date and wallet, and Export downloads the shown rows as a spreadsheet.
  */
 export function VirtualBalanceScreen({ def }: CustomScreenProps) {
+  const downloadCsv = useCsvDownload();
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -87,7 +88,7 @@ export function VirtualBalanceScreen({ def }: CustomScreenProps) {
   };
 
   const exportRows = () =>
-    exportToCsv(
+    downloadCsv(
       rows.map((r) => ({
         'Wallet Name': getField(r, 'WalletName') ?? '',
         Date: dateTime(getField(r, 'DateTime') as string),

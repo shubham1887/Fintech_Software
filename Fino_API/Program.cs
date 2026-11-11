@@ -1,6 +1,7 @@
 ﻿// FIXED Program.cs with explicit service registrations
 using FintechApp.Data;
 using FintechApp.Helpers;
+using FintechApp.StaticModels;
 using FintechApp.Middleware;
 using FintechApp.Services;
 using FintechApp.Interfaces.Providers;
@@ -10,6 +11,7 @@ using FintechApp.Interfaces.Repositories;
 using Fino.PlanApi.Extensions;
 using Fino.JaiJuiApi.Extensions;
 using Fino.Pay1Api.Extensions;
+using Fino.NexmintApi.Extensions;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -236,15 +238,18 @@ builder.Services.AddScoped<IRechargeService, RechargeService>();
 // until a real aggregator is registered here.
 // Bank-transfer (DMT / payout) provider seam — DB-driven. DynamicBankTransferProviderClient reads the
 // gateways configured in the "DMT Settings" screen at call time and dispatches through the active one
-// (e.g. JaiJui via the Fino.JaiJuiApi library, using that row's credentials). When no real gateway row
+// (e.g. JaiJui via Fino.JaiJuiApi, Nexmint payout via Fino.NexmintApi, using that row's credentials;
+// the lowest-Sequence active row wins). When no real gateway row
 // is active it falls back to the sandbox (config DMTProvider:Mode=Simulation) or the Unconfigured client
 // (fail-and-refund) — so a production build never auto-succeeds transfers until a real provider is set up.
 builder.Services.AddScoped<FintechApp.Interfaces.Providers.IJaiJuiGatewayResolver, FintechApp.Providers.JaiJuiGatewayResolver>();
+builder.Services.AddScoped<FintechApp.Interfaces.Providers.INexmintGatewayResolver, FintechApp.Providers.NexmintGatewayResolver>();
 builder.Services.AddScoped<FintechApp.Providers.SimulationBankTransferProviderClient>();
 builder.Services.AddScoped<FintechApp.Providers.UnconfiguredBankTransferProviderClient>();
 builder.Services.AddScoped<FintechApp.Interfaces.Providers.IBankTransferProviderClient, FintechApp.Providers.DynamicBankTransferProviderClient>();
 builder.Services.AddScoped<IBankTransferService, BankTransferService>();
 builder.Services.AddScoped<IReconService, ReconService>();
+builder.Services.AddScoped<IMenuVisibilityService, MenuVisibilityService>();
 builder.Services.AddScoped<IMenuService, MenuService>();
 // Plan / DTH / R-Offer data provider (planapi.in) — separate Fino.PlanApi library
 builder.Services.AddPlanApi();
@@ -254,6 +259,10 @@ builder.Services.AddJaiJuiApi();
 // Pay1 signs every call with sha1(partner_id + trans_id + api_key), which a URL template
 // cannot express, so its protocol lives in the library and the gateway calls into it.
 builder.Services.AddPay1Api();
+// Nexmint payout / fund transfer (api.nexmint.in) - separate Fino.NexmintApi library.
+// Every call carries two HS256 JWTs that expire five seconds after they are signed, so the
+// protocol cannot be a URL template either; it lives in the library.
+builder.Services.AddNexmintApi();
 builder.Services.AddScoped<FintechApp.Interfaces.Providers.ITransactionProviderClient, FintechApp.Providers.DynamicTransactionProviderClient>();
 // Automated settlement sweeps, scheduled by Hangfire (see Helpers/HangfireSetup.cs): the pending
 // RECHARGE and DMT status checks, plus the held-DMT release. The schedule lives in SQL, so one tick
@@ -270,6 +279,7 @@ builder.Services.AddScoped<IDMTBankService, DMTBankService>();
 builder.Services.AddScoped<ISlabMasterService, SlabMasterService>();
 builder.Services.AddScoped<IVerificationDocumentService, VerificationDocumentService>();
 builder.Services.AddScoped<ISlabDetailService, SlabDetailService>();
+builder.Services.AddScoped<ISlabDelegationService, SlabDelegationService>();
 builder.Services.AddScoped<IChannelSlabMasterService, ChannelSlabMasterService>();
 builder.Services.AddScoped<IChannelSlabDetailService, ChannelSlabDetailService>();
 builder.Services.AddScoped<IProviderConfigurationService, ProviderConfigurationService>();
@@ -315,6 +325,9 @@ builder.Services.AddScoped<IUserWalletMappingService, UserWalletMappingService>(
 builder.Services.AddScoped<IUserWalletMasterService, UserWalletMasterService>();
 builder.Services.AddScoped<IUserServiceMappingService, UserServiceMappingService>();
 builder.Services.AddScoped<IUserServiceAccessService, UserServiceAccessService>();
+// The scheduled maintenance window. Registered before the access service that consumes it only
+// for readability - the container resolves either order.
+builder.Services.AddScoped<ISystemDowntimeService, SystemDowntimeService>();
 builder.Services.AddScoped<IKycApprovalService, KycApprovalService>();
 builder.Services.AddScoped<IProviderStateConfigurationService, ProviderStateConfigurationService>();
 builder.Services.AddScoped<IReconciliationSettingService, ReconciliationSettingService>();
@@ -336,6 +349,7 @@ builder.Services.AddHostedService<ApiUserCallbackBackgroundService>();
 // Adding a new one: see Providers/README.md.
 builder.Services.AddScoped<ICodedProvider, FintechApp.Providers.Coded.Pay1CodedProvider>();
 builder.Services.AddScoped<ICodedProvider, FintechApp.Providers.Coded.JaiJuiCodedProvider>();
+builder.Services.AddScoped<ICodedProvider, FintechApp.Providers.Coded.NexmintCodedProvider>();
 builder.Services.AddScoped<ICodedProviderRegistry, FintechApp.Providers.CodedProviderRegistry>();
 
 // ── Inbound provider callbacks: one shared address, /api/Callback/p/{CallbackKey} ──
@@ -343,6 +357,7 @@ builder.Services.AddScoped<ICodedProviderRegistry, FintechApp.Providers.CodedPro
 // settlement and logging to every upstream. Parser ORDER IS THE MATCH ORDER — a provider with
 // its own format goes above GenericProviderCallbackParser, which claims everything that is left.
 builder.Services.AddScoped<IProviderCallbackParser, FintechApp.Services.Callbacks.Pay1CallbackParser>();
+builder.Services.AddScoped<IProviderCallbackParser, FintechApp.Services.Callbacks.NexmintCallbackParser>();
 builder.Services.AddScoped<IProviderCallbackParser, FintechApp.Services.Callbacks.GenericProviderCallbackParser>();
 builder.Services.AddScoped<IProviderCallbackRouter, ProviderCallbackRouter>();
 
@@ -420,6 +435,7 @@ builder.Services.AddScoped<IDMTBankRepository, DMTBankRepository>();
 builder.Services.AddScoped<ISlabMasterRepository, SlabMasterRepository>();
 builder.Services.AddScoped<IVerificationDocumentConfigRepository, VerificationDocumentConfigRepository>();
 builder.Services.AddScoped<ISlabDetailRepository, SlabDetailRepository>();
+builder.Services.AddScoped<ISlabCommissionAuditRepository, SlabCommissionAuditRepository>();
 builder.Services.AddScoped<IChannelSlabMasterRepository, ChannelSlabMasterRepository>();
 builder.Services.AddScoped<IChannelSlabDetailRepository, ChannelSlabDetailRepository>();
 builder.Services.AddScoped<IProviderConfigurationRepository, ProviderConfigurationRepository>();
@@ -510,6 +526,9 @@ builder.Services.AddScoped<ICashCollectionMasterRepository, CashCollectionMaster
 builder.Services.AddScoped<ICashCollectionMasterService, CashCollectionMasterService>();
 builder.Services.AddScoped<ICashCollectionDetailRepository, CashCollectionDetailRepository>();
 builder.Services.AddScoped<ICashCollectionDetailService, CashCollectionDetailService>();
+// The one place an outstanding balance moves — see OutstandingService's own notes for why the
+// fund flows, the collection screen and the admin adjustments all go through a single service.
+builder.Services.AddScoped<IOutstandingService, OutstandingService>();
 builder.Services.AddScoped<ICircleAPIMasterRepository, CircleAPIMasterRepository>();
 builder.Services.AddScoped<ICircleAPIMasterService, CircleAPIMasterService>();
 builder.Services.AddScoped<ICircleWiseOperatorLimitRepository, CircleWiseOperatorLimitRepository>();
@@ -782,12 +801,91 @@ builder.Services.AddScoped<ICreditNoteService, CreditNoteService>();
 // e-invoice (IRN) queue. The gateway is an interface because each reseller registers with its own
 // GSP; the default refuses loudly rather than pretending to succeed, because a document marked
 // Registered with no IRN would drop off the deadline alert that is meant to catch it.
-builder.Services.AddScoped<IEInvoiceGateway, NotConfiguredEInvoiceGateway>();
+// e-invoice (IRP) gateway, chosen from appsettings "EInvoice". A reseller fills in its GSP / NIC
+// credentials after deployment and the real gateway takes over with NO rebuild; until then the
+// not-configured default stays wired in and fails loudly rather than pretending to register. The
+// NotConfigured class is never removed - it is the correct default for a client not yet on
+// e-invoicing, and for every fresh install.
+builder.Services.Configure<EInvoiceSettings>(builder.Configuration.GetSection(EInvoiceSettings.Section));
+var eInvoiceSettings = builder.Configuration.GetSection(EInvoiceSettings.Section).Get<EInvoiceSettings>() ?? new EInvoiceSettings();
+builder.Services.AddSingleton(eInvoiceSettings);
+builder.Services.AddHttpClient("einvoice");
+if (eInvoiceSettings.IsConfigured)
+    builder.Services.AddScoped<IEInvoiceGateway, GspEInvoiceGateway>();
+else
+    builder.Services.AddScoped<IEInvoiceGateway, NotConfiguredEInvoiceGateway>();
 builder.Services.AddScoped<IEInvoiceService, EInvoiceService>();
 // Rule administration. Separate from the engine on purpose: the engine only ever reads, and a
 // rule is never edited in place - it is superseded, so every figure already stamped on a
 // transaction can still be explained by the rule that was live when it was stamped.
 builder.Services.AddScoped<ITaxRuleAdminService, TaxRuleAdminService>();
+// Phase 3 — purchase reconciliation. A purchase is a TaxInvoiceHeader (Direction=PURCHASE);
+// capture records it with the supplier's own number and tax, 2B is imported as a snapshot, the
+// recon sorts both into four buckets within a paisa, and the ITC register carries the two
+// deadlines (Rule 37's 180 days and Section 16(4)'s 30-November) that can take a credit away.
+builder.Services.AddScoped<IPurchaseCaptureService, PurchaseCaptureService>();
+builder.Services.AddScoped<IGstr2bImportService, Gstr2bImportService>();
+builder.Services.AddScoped<IPurchaseReconService, PurchaseReconService>();
+builder.Services.AddScoped<IItcRegisterService, ItcRegisterService>();
+// Phase 4 — the double-entry ledger. The posting engine runs off an outbox so a posting that
+// cannot be made is a visible, retried row rather than a number quietly wrong; the period lock
+// seals a filed month; the integrity checks tie the ledger back to the wallets and provider stock.
+builder.Services.AddScoped<IPeriodLockService, PeriodLockService>();
+builder.Services.AddScoped<IChartOfAccountsService, ChartOfAccountsService>();
+builder.Services.AddScoped<ILedgerPostingService, LedgerPostingService>();
+builder.Services.AddScoped<ILedgerIntegrityService, LedgerIntegrityService>();
+// What actually FEEDS the two of them: the settlement hook that stamps the tax on a settled
+// transaction and enqueues the business event. Without it the ledger stays empty and the integrity
+// checks compare zero against the real wallets.
+builder.Services.AddScoped<ISettlementAccountingService, SettlementAccountingService>();
+// Phase 5 — bank reconciliation. The statement the bank gave us against the ledger's own Bank
+// lines; the match is persisted so a ledger line stays reconciled across later statements.
+builder.Services.AddScoped<IBankAccountService, BankAccountService>();
+builder.Services.AddScoped<IBankStatementImportService, BankStatementImportService>();
+builder.Services.AddScoped<IBankReconService, BankReconService>();
+// Phase 6 — the returns. All three are derived from documents already issued; 3B and 9 are both
+// built ON TOP of the GSTR-1 build rather than from a second query, so the three can never
+// disagree about which documents belong in the period.
+builder.Services.AddScoped<IGstr1Service, Gstr1Service>();
+builder.Services.AddScoped<IGstr3bService, Gstr3bService>();
+// One month of GST as a single answer (the GST Returns page), and the "upload 2B, the rest
+// follows" act behind its one button.
+builder.Services.AddScoped<FintechApp.Services.IGstMonthService, FintechApp.Services.GstMonthService>();
+builder.Services.AddScoped<IGstr9Service, Gstr9Service>();
+builder.Services.AddScoped<IGstReturnFilingService, GstReturnFilingService>();
+// The place of supply every document is stamped with. Derived from what onboarding already
+// captured rather than asked for again — and empty when genuinely unknown, never "00", which
+// looks like a state, sends the supply to IGST and is rejected by the portal.
+builder.Services.AddScoped<IPartyStateResolver, PartyStateResolver>();
+builder.Services.AddScoped<IPartyStateService, PartyStateService>();
+// How a commission is taxed — inclusive or exclusive, on what, and whether TDS is deducted. These
+// were literals in the code: every invoice path passed "tax inclusive = true", and TDS was worked
+// out and stamped but never withheld from anybody.
+builder.Services.AddScoped<ICommissionTaxResolver, CommissionTaxResolver>();
+builder.Services.AddScoped<ICommissionTaxProfileService, CommissionTaxProfileService>();
+builder.Services.AddScoped<ITdsDeductionService, TdsDeductionService>();
+
+// The GST on a charge, per band: a provider's rate card and a retailer's slab each carry their own
+// INCLUSIVE / EXCLUSIVE / NO GST decision per amount band, falling through to the profiles above
+// when a band does not say. One resolver, one formula, and the figures stamped on the transaction.
+builder.Services.AddScoped<IChargeGstResolver, ChargeGstResolver>();
+
+// How much TDS comes off a commission and whose: one rule per decision, matched most specific
+// first (user+service -> user -> role+service -> role -> service -> house), as a percentage or a
+// flat figure. Gated by the Key Setting master switch, which is OFF until somebody turns it on
+// because turning it on withholds real money from real people.
+builder.Services.AddScoped<ITdsRuleResolver, TdsRuleResolver>();
+builder.Services.AddScoped<ITdsAdminService, TdsAdminService>();
+
+// What GST a period collected, split by inclusive / exclusive, beside the output tax the returns
+// are built from - and every difference between the two named rather than netted away.
+builder.Services.AddScoped<IGstCollectionReportService, GstCollectionReportService>();
+
+// Bank reconciliation configuration: the banks pulled from Payment Modes, how each one writes its
+// statement (PDF included), and what a line on it means - stock bought, a retailer's deposit, an
+// expense. Matching proves a line happened; these say what it was.
+builder.Services.AddScoped<IBankLineClassifier, BankLineClassifier>();
+builder.Services.AddScoped<IBankStatementConfigService, BankStatementConfigService>();
 builder.Services.AddScoped<ITrustableDeviceService, TrustableDeviceService>();
 builder.Services.AddScoped<IUserMerchantMasterRepository, UserMerchantMasterRepository>();
 builder.Services.AddScoped<IUserMerchantMasterService, UserMerchantMasterService>();

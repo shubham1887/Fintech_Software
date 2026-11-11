@@ -20,15 +20,38 @@ namespace FintechApp.Interfaces.Services
         Task<string> IsAppActivate(UserBooleanToggleRequest request, int currentUserID);
         Task<string> IsWebActivate(UserBooleanToggleRequest request, int currentUserID);
         Task<string> IsInvoiceActivate(UserBooleanToggleRequest request, int currentUserID);
-        Task<string> BulkUpdate(UserBulkUpdateRequest request, int currentUserID);
+        // Returns (failureMessage, summary): the summary carries "N updated, M skipped and why"
+        // so a partly-applied batch reads as the success it is rather than as an error.
+        Task<(string failureMessage, string summary)> BulkUpdate(UserBulkUpdateRequest request, int currentUserID);
         Task<string> SendPassword(UserSendPasswordRequest request, int currentUserID);
         Task<string> AddHoldBalance(UserAddHoldBalanceRequest request, int currentUserID);
+
+        // The hold report — every hold placed or released, scoped to what the caller may see.
+        Task<(string failureMessage, Responses.User.WalletHoldHistoryWrapper data)> HoldHistory(
+            WalletHoldHistoryRequest request, int callerUserID, int callerUserTypeID);
+
+        // Move one user (and their branch) under a new parent. Returns (failure, summary) so the
+        // reply can name who moved where, and how many travelled with them.
+        Task<(string failureMessage, string summary)> TransferUsers(UserTransferRequest request, int currentUserID);
+
+        // Who may legally become a given user's parent — drives the "New parent" picker so the
+        // User Transfer screen cannot offer a move the tier rules would refuse.
+        Task<(string failureMessage, List<UserDDLResponse> data)> SelectEligibleParents(
+            UserSelectByIDRequest request, int currentUserID);
+
+        // The user change report — every change made to a user record, with who, why and from where.
+        Task<(string failureMessage, Responses.User.UserChangeHistoryWrapper data)> ChangeHistory(
+            UserChangeHistoryRequest request, int callerUserID, int callerUserTypeID);
         Task<string> Deactivate2FAWithOTP(UserDeactivate2FARequest request, int currentUserID);
         Task<(string failureMessage, UserDetailViewModel? data)> SelectByID(UserSelectByIDRequest request, int currentUserID);
 
         // ── Self-service profile: the caller's OWN record, never anybody else's ─────
         Task<(string failureMessage, UserDetailViewModel? data)> SelectProfile(int currentUserID);
         Task<string> UpdateProfile(UserProfileUpdateRequest request, int currentUserID);
+
+        // One mobile number, two roles — see StaticModels/LinkedProfilePolicy.
+        Task<(string failureMessage, LinkedProfilesResponse data)> GetLinkedProfiles(int currentUserID);
+        Task<(string failureMessage, LinkedProfilesResponse data)> CreateLinkedProfile(CreateLinkedProfileRequest request, int currentUserID);
         Task<(string failureMessage, UserListWrapper data)> Select(UserSelectRequest request, int currentUserID, int currentUserTypeID = 0);
         Task<(string failureMessage, List<UserDDLResponse> data)> SelectForDDL(UserDDLRequest request, int currentUserID);
         Task<(string failureMessage, List<UserDDLResponse> data)> SelectForDDLWithUserType(UserDDLRequest request, int currentUserID);

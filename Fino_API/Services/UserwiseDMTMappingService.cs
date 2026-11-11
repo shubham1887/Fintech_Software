@@ -74,9 +74,15 @@ namespace FintechApp.Services
         {
             UserwiseDMTMappingID = e.UserwiseDMTMappingID,
             UserID = e.UserID,
+            UserName = e.UserMaster?.PersonName ?? string.Empty,
+            FirmName = e.UserMaster?.FirmName ?? string.Empty,
+            MobileNumber = e.UserMaster?.MobileNumber ?? string.Empty,
             ServiceID = e.ServiceID,
+            ServiceName = e.ServiceMaster?.Name ?? string.Empty,
             OperatorID = e.OperatorID,
+            OperatorName = e.OperatorMaster?.OperatorName ?? string.Empty,
             ProviderID = e.ProviderID,
+            ProviderName = e.ProviderMaster?.ProviderName ?? string.Empty,
             DateTime = e.DateTime,
             UpdatedateTime = e.UpdatedateTime
         };

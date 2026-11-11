@@ -14,7 +14,22 @@ export interface RuntimeConfig {
   appName?: string;
   tagline?: string;
   logoUrl?: string;
+  /**
+   * The client's square app artwork (the Android launcher tile). Shown INSTEAD of the wide logo
+   * inside the phone app, where a 3:1 wordmark has nowhere to go and the icon is what people
+   * already tapped to get there. Optional: without it the app shows the wide logo as before.
+   */
+  appIconUrl?: string;
   theme?: string;
+  /**
+   * Per-client colours, normally written by the installer after reading the client's logo, so a
+   * fresh deployment already looks like the company it belongs to instead of like the demo.
+   * `brandColor` seeds the whole 50-950 brand ramp; the other two paint the dark surfaces.
+   * All three sit below the admin's published theme and the user's own Theme Studio choices.
+   */
+  brandColor?: string;  // hex, e.g. "#1d6ff2"
+  navbarColor?: string; // hex — sidebar
+  appbarColor?: string; // hex — app bar / mobile header
   loginHeadline?: string;
   loginSubtext?: string;
   // Deployment — the resale knobs

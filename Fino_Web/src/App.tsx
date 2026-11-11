@@ -7,8 +7,9 @@ import { AuthProvider } from '@/features/auth/AuthContext';
 import { UISettingsProvider } from '@/theme/UISettingsProvider';
 import { ToastProvider } from '@/components/ui/Toast';
 import { ProtectedRoute } from '@/routes/ProtectedRoute';
+import { AdminRoute } from '@/routes/AdminRoute';
 import { AppShell } from '@/components/layout/AppShell';
-import { Spinner } from '@/components/ui/Spinner';
+import { BrandLoading } from '@/components/ui/BrandMark';
 import LoginPage from '@/pages/LoginPage';
 import ForgotPasswordPage from '@/pages/ForgotPasswordPage';
 import RegisterPage from '@/pages/RegisterPage';
@@ -31,13 +32,10 @@ function SiteRedirect() {
   return <Navigate to={`/${slug ?? ''}`} replace />;
 }
 
-/** Centered fallback while a lazy route chunk loads. */
+/** Centered fallback while a lazy route chunk loads - branded, because in the phone app this is
+ *  the first thing shown after the native splash hands over. */
 function RouteFallback() {
-  return (
-    <div className="flex min-h-[60vh] items-center justify-center">
-      <Spinner className="size-6 text-brand-500" />
-    </div>
-  );
+  return <BrandLoading />;
 }
 
 export default function App() {
@@ -65,8 +63,11 @@ export default function App() {
                       <Route path="/recharge" element={<RechargePage />} />
                       <Route path="/dmt" element={<DmtPage />} />
                       <Route path="/transactions" element={<TransactionsPage />} />
-                      <Route path="/appearance" element={<AppearancePage />} />
-                      <Route path="/theme" element={<AppearancePage />} />
+                      {/* Network-wide branding, not a personal preference — operator only. */}
+                      <Route element={<AdminRoute />}>
+                        <Route path="/appearance" element={<AppearancePage />} />
+                        <Route path="/theme" element={<AppearancePage />} />
+                      </Route>
                       <Route path="/profile" element={<ProfilePage />} />
                       <Route path="/coming-soon" element={<PlaceholderPage />} />
                       <Route path="/s/*" element={<ScreenHost />} />

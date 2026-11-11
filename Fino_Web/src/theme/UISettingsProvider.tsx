@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getUISettings, toSettingsMap } from '@/api/uisettings.api';
 import { useAuth } from '@/features/auth/AuthContext';
 import { setServerTheme } from './themeEngine';
+import { resolveMobileLayout, type MobileLayout } from './mobileLayouts';
 
 export type Orientation = 'vertical' | 'horizontal';
 
@@ -12,6 +13,11 @@ interface UISettingsValue {
   settings: Record<string, string>;
   orientation: Orientation;
   setOrientation: (o: Orientation) => void;
+  /**
+   * The phone / Android app layout the admin published. Resolved here so every mobile
+   * component reads one object instead of re-parsing settings keys.
+   */
+  mobileLayout: MobileLayout;
   reload: () => void;
 }
 
@@ -47,9 +53,11 @@ export function UISettingsProvider({ children }: { children: ReactNode }) {
     setOverride(o);
   }, []);
 
+  const mobileLayout = useMemo(() => resolveMobileLayout(settings), [settings]);
+
   const value = useMemo<UISettingsValue>(
-    () => ({ settings, orientation, setOrientation, reload: () => refetch() }),
-    [settings, orientation, setOrientation, refetch],
+    () => ({ settings, orientation, setOrientation, mobileLayout, reload: () => refetch() }),
+    [settings, orientation, setOrientation, mobileLayout, refetch],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
